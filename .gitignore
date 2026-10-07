@@ -1,0 +1,89 @@
+# ==================================================
+# Node / Next.js
+# ==================================================
+
+node_modules/
+.next/
+out/
+dist/
+.npm/
+.pnpm-store/
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ==================================================
+# Rust / Cargo
+# ==================================================
+
+target/
+**/target/
+
+# Keep Cargo.lock for applications
+# !Cargo.lock
+
+# ==================================================
+# Tauri
+# ==================================================
+
+src-tauri/target/
+**/src-tauri/target/
+
+# ==================================================
+# Environment variables
+# ==================================================
+
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+
+# Example environment files ARE allowed
+!.env.example
+
+# ==================================================
+# Databases / local data
+# ==================================================
+
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# ==================================================
+# IDE / Editors
+# ==================================================
+
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+.idea/
+
+# ==================================================
+# Operating systems
+# ==================================================
+
+.DS_Store
+Thumbs.db
+
+# ==================================================
+# Temporary files
+# ==================================================
+
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# ==================================================
+# Coverage
+# ==================================================
+
+coverage/
+*.profraw
