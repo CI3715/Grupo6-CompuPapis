@@ -41,20 +41,109 @@ El servidor expone el endpoint:
 
 La aplicación debe utilizarlo para verificar la conexión y mostrar el estado, mensaje, versión y tiempo de respuesta del servidor.
 
-## Estructura
+## Instalación y ejecución
+
+### Requisitos
+
+Para ejecutar el proyecto es necesario tener instalado:
+
+- Git
+- Node.js
+- npm
+- Rust
+- Cargo
+
+En Linux también son necesarias las dependencias del sistema requeridas por Tauri 2.
+
+Una vez clonado el repositorio:
+
+```bash
+git clone https://github.com/CI3715/Grupo6-CompuPapis.git
+cd cuentas-claras
+```
+
+### Frontend
+
+La aplicación se encuentra en la carpeta `app`.
+
+Primero se deben instalar las dependencias:
+
+```bash
+cd app
+npm install
+```
+
+#### Ejecutar con Next.js
+
+Para ejecutar únicamente la interfaz web:
+
+```bash
+npm run dev
+```
+
+La aplicación estará disponible normalmente en:
 
 ```text
-cuentas-claras/
-├── app/
-├── server/
-├── docs/
-│   └── adr/
-├── .github/
-│   └── workflows/
-├── .gitignore
-├── LICENSE
-└── README.md
+http://localhost:3000
 ```
+
+#### Ejecutar como aplicación de escritorio con Tauri
+
+Para ejecutar la aplicación completa utilizando Tauri:
+
+```bash
+npm run tauri dev
+```
+
+Tauri iniciará automáticamente el servidor de desarrollo de Next.js y abrirá la aplicación en una ventana de escritorio.
+
+#### Generar el frontend estático
+
+```bash
+npm run build
+```
+
+El resultado se genera en:
+
+```text
+app/out/
+```
+
+### Backend
+
+El servidor se encuentra en la carpeta `server` y está desarrollado en Rust utilizando Axum.
+
+Desde la raíz del repositorio:
+
+```bash
+cd server
+cargo run
+```
+
+El servidor se ejecutará en:
+
+```text
+http://127.0.0.1:8000
+```
+
+Para verificar que el servidor está funcionando:
+
+```bash
+curl http://127.0.0.1:8000/ping
+```
+
+La respuesta tendrá la siguiente estructura:
+
+```json
+{
+  "estado": "ok",
+  "mensaje": "Servidor Cuentas Claras activo",
+  "version": "0.1.0",
+  "timestamp": "<fecha y hora de la respuesta>"
+}
+```
+
+El campo `timestamp` se genera automáticamente al momento de cada solicitud.
 
 ## Estudiantes
 
