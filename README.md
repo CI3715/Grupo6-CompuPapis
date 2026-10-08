@@ -61,7 +61,7 @@ cuentas-claras/
 - Maikel Delgado — `16-10287`
 - Gabriel Orejanera — `18-10292`
 - Keyber Sequera — `16-11120`
-- Gabriel De Ornelas — `18-10641`
+- Gabriel De Ornelas — `15-10377`
 - Elías El Jaovich — `18-10641`
 - Luis Isea — `19-10175` [@lmisea](https://github.com/lmisea)
 
