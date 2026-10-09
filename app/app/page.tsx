@@ -1,5 +1,6 @@
 "use client";
 
+import { invoke } from "@tauri-apps/api/core";
 import { useState } from "react";
 
 type PingResponse = {
@@ -7,11 +8,11 @@ type PingResponse = {
   mensaje: string;
   version: string;
   timestamp: string;
+  latencia_ms: number;
 };
 
 export default function Home() {
   const [datos, setDatos] = useState<PingResponse | null>(null);
-  const [latencia, setLatencia] = useState<number | null>(null);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -19,33 +20,22 @@ export default function Home() {
     setCargando(true);
     setError(null);
     setDatos(null);
-    setLatencia(null);
-
-    const inicio = performance.now();
 
     try {
-      const res = await fetch("http://127.0.0.1:8000/ping");
-
-      if (!res.ok) {
-        throw new Error(`El servidor respondió con código HTTP ${res.status}`);
-      }
-
-      const data: PingResponse = await res.json();
-      const fin = performance.now();
-
+      const data = await invoke<PingResponse>("ping_servidor");
       setDatos(data);
-      setLatencia(Math.round(fin - inicio));
-    } catch (err) {
-      setError(
-        "No se pudo conectar con el servidor Rust. Verifica que esté encendido en http://127.0.0.1:8000."
-      );
+      console.log("Respuesta del servidor:", data);
+    } catch (error) {
+      setError(String(error));
     } finally {
       setCargando(false);
     }
   }
 
   return (
-    <main style={{ padding: "2rem", fontFamily: "sans-serif", maxWidth: "480px" }}>
+    <main
+      style={{ padding: "2rem", fontFamily: "sans-serif", maxWidth: "480px" }}
+    >
       <h1>Prueba de Conexión (Ping)</h1>
 
       <button
@@ -93,7 +83,9 @@ export default function Home() {
             color: "#24292e",
           }}
         >
-          <h2 style={{ marginTop: 0, fontSize: "1.1rem" }}>Respuesta del Servidor</h2>
+          <h2 style={{ marginTop: 0, fontSize: "1.1rem" }}>
+            Respuesta del Servidor
+          </h2>
 
           <p>
             <strong>Estado:</strong>{" "}
@@ -108,10 +100,11 @@ export default function Home() {
             <strong>Versión:</strong> {datos.version}
           </p>
           <p>
-            <strong>Latencia:</strong> {latencia} ms
+            <strong>Latencia:</strong> {datos.latencia_ms} ms
           </p>
           <p style={{ fontSize: "0.85rem", color: "#57606a" }}>
-            <strong>Timestamp:</strong> {new Date(datos.timestamp).toLocaleString()}
+            <strong>Timestamp:</strong>{" "}
+            {new Date(datos.timestamp).toLocaleString()}
           </p>
         </div>
       )}

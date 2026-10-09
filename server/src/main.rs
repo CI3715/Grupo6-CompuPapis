@@ -1,6 +1,5 @@
 use axum::{Json, Router, routing::get};
 use serde::Serialize;
-use tower_http::cors::{Any, CorsLayer};
 
 #[derive(Serialize)]
 struct PingResponse {
@@ -21,16 +20,7 @@ async fn ping() -> Json<PingResponse> {
 
 #[tokio::main]
 async fn main() {
-    // Configuración permissiva de CORS para desarrollo
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
-
-    // Aplicar la capa de CORS a la aplicación
-    let app = Router::new()
-        .route("/ping", get(ping))
-        .layer(cors);
+    let app = Router::new().route("/ping", get(ping));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8000")
         .await

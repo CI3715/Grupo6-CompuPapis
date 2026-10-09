@@ -52,54 +52,89 @@ Para ejecutar el proyecto es necesario tener instalado:
 - npm
 - Rust
 - Cargo
+- Dependencias del sistema requeridas por Tauri 2
 
-En Linux también son necesarias las dependencias del sistema requeridas por Tauri 2.
-
-Una vez clonado el repositorio:
+Clonar el repositorio:
 
 ```bash
-git clone https://github.com/CI3715/Grupo6-CompuPapis.git
+git clone https://github.com/CI3715/Grupo6-CompuPapis.git cuentas-claras
 cd cuentas-claras
 ```
 
-### Frontend
-
-La aplicación se encuentra en la carpeta `app`.
-
-Primero se deben instalar las dependencias:
+### Instalar las dependencias del frontend
 
 ```bash
 cd app
 npm install
 ```
 
-#### Ejecutar con Next.js
+## Ejecutar el proyecto
 
-Para ejecutar únicamente la interfaz web:
+Para utilizar la aplicación completa es necesario ejecutar el servidor y la aplicación de escritorio en terminales separadas.
+
+### Backend
+
+En una terminal:
 
 ```bash
+cd server
+cargo run
+```
+
+El servidor estará disponible en:
+
+```text
+http://127.0.0.1:8000
+```
+
+El endpoint de prueba puede verificarse con:
+
+```bash
+curl http://127.0.0.1:8000/ping
+```
+
+### Aplicación de escritorio
+
+En otra terminal:
+
+```bash
+cd app
+npm run tauri dev
+```
+
+Este es el modo recomendado para desarrollar y ejecutar Cuentas Claras.
+
+Tauri inicia el servidor de desarrollo de Next.js y abre la aplicación como una ventana de escritorio. La comunicación con el backend se realiza mediante comandos de Tauri:
+
+```text
+Next.js → Tauri/Rust → Axum → Tauri/Rust → Next.js
+```
+
+### Ejecutar únicamente Next.js
+
+También es posible iniciar únicamente la interfaz web:
+
+```bash
+cd app
 npm run dev
 ```
 
-La aplicación estará disponible normalmente en:
+La interfaz estará disponible en:
 
 ```text
 http://localhost:3000
 ```
 
-#### Ejecutar como aplicación de escritorio con Tauri
-
-Para ejecutar la aplicación completa utilizando Tauri:
+Este modo sirve para trabajar únicamente en la parte visual del frontend. Las funcionalidades que utilizan comandos de Tauri, como la comunicación con el backend mediante `invoke()`, requieren ejecutar la aplicación con:
 
 ```bash
 npm run tauri dev
 ```
 
-Tauri iniciará automáticamente el servidor de desarrollo de Next.js y abrirá la aplicación en una ventana de escritorio.
-
-#### Generar el frontend estático
+### Generar el frontend estático
 
 ```bash
+cd app
 npm run build
 ```
 
@@ -109,49 +144,44 @@ El resultado se genera en:
 app/out/
 ```
 
-### Backend
+## Formato y lint
 
-El servidor se encuentra en la carpeta `server` y está desarrollado en Rust utilizando Axum.
-
-Desde la raíz del repositorio:
+Desde `app`:
 
 ```bash
-cd server
-cargo run
+npm run format
 ```
 
-El servidor se ejecutará en:
+formatea tanto el frontend como los proyectos de Rust.
 
-```text
-http://127.0.0.1:8000
-```
-
-Para verificar que el servidor está funcionando:
+Para verificar el formato sin modificar archivos:
 
 ```bash
-curl http://127.0.0.1:8000/ping
+npm run format:check
 ```
 
-La respuesta tendrá la siguiente estructura:
+Para ejecutar ESLint:
 
-```json
-{
-  "estado": "ok",
-  "mensaje": "Servidor Cuentas Claras activo",
-  "version": "0.1.0",
-  "timestamp": "<fecha y hora de la respuesta>"
-}
+```bash
+npm run lint
 ```
 
-El campo `timestamp` se genera automáticamente al momento de cada solicitud.
+También se pueden formatear las partes por separado:
+
+```bash
+npm run format:front
+npm run format:tauri
+npm run format:back
+npm run format:rust
+```
 
 ## Estudiantes
 
 - Maikel Delgado — `16-10287`
-- Gabriel Orejarena — `18-10292`
-- Keyber Sequera — `16-11120`
-- Gabriel De Ornelas — `15-10377`
-- Elías El Jaovich — `18-10641`
+- Gabriel Orejarena — `18-10292` [@Arnold-Wesker](https://github.com/Arnold-Wesker)
+- Keyber Sequera — `16-11120` [@keybersequera8](https://github.com/keybersequera8)
+- Gabriel De Ornelas — `15-10377` [@gabodornelas](https://github.com/gabodornelas)
+- Elías El Jaovich — `18-10641` [@ElJaovich](https://github.com/ElJaovich)
 - Luis Isea — `19-10175` [@lmisea](https://github.com/lmisea)
 
 ## Licencia

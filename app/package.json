@@ -6,12 +6,20 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
-    "tauri": "tauri"
+    "lint": "eslint . --max-warnings 0",
+    "tauri": "tauri",
+    "format:front": "prettier --write .",
+    "format:tauri": "cargo fmt --manifest-path src-tauri/Cargo.toml",
+    "format:back": "cargo fmt --manifest-path ../server/Cargo.toml",
+    "format:rust": "npm run format:tauri && npm run format:back",
+    "format": "npm run format:front && npm run format:rust",
+    "format:check:front": "prettier --check .",
+    "format:check:tauri": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
+    "format:check:back": "cargo fmt --manifest-path ../server/Cargo.toml -- --check",
+    "format:check": "npm run format:check:front && npm run format:check:tauri && npm run format:check:back"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.1",
-    "axios": "^1.20.0",
     "next": "16.4.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"
@@ -24,6 +32,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.0",
+    "prettier": "^3.9.9",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
