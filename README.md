@@ -148,7 +148,7 @@ El campo `timestamp` se genera automáticamente al momento de cada solicitud.
 ## Estudiantes
 
 - Maikel Delgado — `16-10287`
-- Gabriel Orejanera — `18-10292`
+- Gabriel Orejarena — `18-10292`
 - Keyber Sequera — `16-11120`
 - Gabriel De Ornelas — `15-10377`
 - Elías El Jaovich — `18-10641`
