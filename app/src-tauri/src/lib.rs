@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
+struct AppState {
+    http_client: reqwest::Client,
+}
+
 #[derive(Debug, Deserialize)]
 struct PingResponse {
     estado: String,
@@ -19,10 +23,13 @@ struct PingResult {
 }
 
 #[tauri::command]
-async fn ping_servidor() -> Result<PingResult, String> {
+async fn ping_servidor(state: tauri::State<'_, AppState>) -> Result<PingResult, String> {
     let inicio = Instant::now();
 
-    let respuesta = reqwest::get("http://127.0.0.1:8000/ping")
+    let respuesta = state
+        .http_client
+        .get("http://127.0.0.1:8000/ping")
+        .send()
         .await
         .map_err(|error| format!("No se pudo conectar con el servidor: {error}"))?;
 
@@ -51,7 +58,10 @@ async fn ping_servidor() -> Result<PingResult, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let http_client = reqwest::Client::new();
+
     tauri::Builder::default()
+        .manage(AppState { http_client })
         .invoke_handler(tauri::generate_handler![ping_servidor])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
