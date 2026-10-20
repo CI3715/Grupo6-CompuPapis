@@ -28,3 +28,4 @@ reqwest = { version = "0.13.5", default-features = false, features = ["json", "r
 rust_decimal = {version = "1.36.0", features = ["serde"]}
 # Definicion de errores personalizados:
 thiserror = "2.0"
+fmt = "0.1.0"
