@@ -3,6 +3,9 @@
   --bg-card: #FFFFFF;
   --text-main: #0F172A;
   --text-secondary: #334155;
+  --text-success: #15803D;
+  --text-danger: #DC2626;
+  --text-ajust: #dcc726;
   --text-muted: #64748B;
   --border-subtle: #E2E8F0;
   --border-hover: #CBD5E1;
@@ -112,6 +115,26 @@ body {
 
 .btn-secondary:hover {
   background-color: var(--text-main);
+}
+
+.btn-danger {
+  background-color: transparent;
+  color:var(--text-danger);
+}
+
+.btn-danger:hover {
+  background-color: #F1F5F9;
+  color: var(--text-danger);
+}
+
+.btn-success {
+  background-color: transparent;
+  color: var(--text-success);
+}
+
+.btn-success:hover {
+  background-color: #F1F5F9;
+  color: var(--text-success);
 }
 
 .btn-ghost {
@@ -226,7 +249,7 @@ body {
 
 .subtotals-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 16px;
 }
 
@@ -374,4 +397,113 @@ body {
   color: var(--text-muted);
   max-width: 420px;
   margin: 0 auto 20px auto;
+}
+
+/* Layout Principal */
+.app-wrapper {
+  display: flex;
+  height: 100vh;
+  width: 100%;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.layout-single {
+  justify-content: center;
+}
+
+.layout-single .sidebar-cuentas {
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.layout-split .sidebar-cuentas {
+  width: 350px;
+  min-width: 350px;
+  border-right: 1px solid #eaeaea;
+  background-color: #f9f9f9;
+}
+
+.sidebar-cuentas, .content-detalle {
+  height: 100%;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.content-detalle {
+  flex: 1;
+  background-color: #ffffff;
+}
+
+/* Estado activo de la tarjeta */
+.account-card-active {
+  border: 2px solid #0056b3;
+  background-color: #f0f7ff;
+}
+
+/* Contenedor principal del encabezado de detalle */
+.detalle-header {
+  display: flex;
+  flex-direction: column;
+  gap: 24px; /* Espacio entre el bloque de texto y los botones */
+  padding-bottom: 24px;
+  margin-bottom: 32px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* La fila superior donde están el nombre y el saldo */
+.detalle-header-top {
+  display: flex;
+  justify-content: space-between; /* Nombre a la izquierda, saldo a la derecha */
+  align-items: flex-start; 
+  flex-wrap: wrap; /* Por si la pantalla es muy pequeña */
+  gap: 20px;
+}
+
+/* Información izquierda */
+.detalle-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.detalle-titulo {
+  font-size: 28px; /* Un poco más grande para darle peso */
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 0; /* Quitamos el margin-bottom viejo */
+}
+
+/* Información derecha (Saldo) */
+.detalle-saldo {
+  text-align: right; /* Alinea los textos del bloque hacia la derecha */
+}
+
+.detalle-subtitulo {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.saldo-gigante {
+  font-size: 48px;
+  font-weight: 800;
+  color: var(--text-main);
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+}
+
+/* Botones alineados a la derecha */
+.acciones-movimientos {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
 }
