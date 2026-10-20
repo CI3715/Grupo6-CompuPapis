@@ -1,10 +1,17 @@
+//! Punto de entrada de la libreria principal de la aplicacion Tauri.
+
+// Modulo de dominio con entidades y logica de negocio
+pub mod dominio;
+
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
+// Estado compartido que mantiene el cliente HTTP para verificar el servidor
 struct AppState {
     http_client: reqwest::Client,
 }
 
+// Estructura de datos recibida desde  el endpoint de salud del servidor
 #[derive(Debug, Deserialize)]
 struct PingResponse {
     estado: String,
@@ -13,6 +20,7 @@ struct PingResponse {
     timestamp: String,
 }
 
+// Respuesta enviada a la interfaz de usuario con la latencia calculada
 #[derive(Debug, Serialize)]
 struct PingResult {
     estado: String,
@@ -22,6 +30,7 @@ struct PingResult {
     latencia_ms: u64,
 }
 
+// Comando para comprobar conexion con el servidor
 #[tauri::command]
 async fn ping_servidor(state: tauri::State<'_, AppState>) -> Result<PingResult, String> {
     let inicio = Instant::now();
@@ -56,6 +65,7 @@ async fn ping_servidor(state: tauri::State<'_, AppState>) -> Result<PingResult, 
     })
 }
 
+// Configura el restado local, registra comandos e inicia la aplicacion Tauri
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let http_client = reqwest::Client::new();

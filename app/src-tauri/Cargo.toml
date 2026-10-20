@@ -24,3 +24,7 @@ log = "0.4"
 tauri = { version = "2.12.1", features = [] }
 tauri-plugin-log = "2"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }
+# Artimetica decimal exacta para calculo de dinero:
+rust_decimal = {version = "1.36.0", features = ["serde"]}
+# Definicion de errores personalizados:
+thiserror = "2.0"
