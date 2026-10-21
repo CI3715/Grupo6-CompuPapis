@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use thiserror::Error;
 
-use super::moneda::CodigoMoneda;
-use super::monto::Monto;
+use super::moneda::{CodigoMoneda, ErrorMoneda};
+use super::monto::{ErrorMonto, Monto};
 
 // Tipos de cuenta admitidos
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -26,13 +26,57 @@ pub enum ErrorCuenta {
     #[error("El campo 'nombre' es invalido: el nombre no puede estar vacio")]
     NombreVacio,
 
-    // Rechaza tipos de cuenta que no pertenecen al alcance actual
+    // Rechaza nombres repetidos sin distinguir mayusculas ni espacios laterales
+    #[error("El campo 'nombre' es invalido: ya existe una cuenta con el nombre '{0}'")]
+    NombreDuplicado(String),
+
+    // Rechaza tipos de cuenta que no existen en el catalogo admitido
     #[error("El campo 'tipo' es invalido: el tipo de cuenta {0} no es reconocido")]
     TipoInvalido(String),
+
+    // Rechaza codigos de moneda que no existen en el catalogo admitido
+    #[error("El campo 'moneda' es invalido: la moneda {0} no es reconocida")]
+    MonedaInvalida(String),
 
     // Rechaza saldos iniciales menores a cero
     #[error("El campo 'saldo_inicial' es invalido: no puede ser negativo")]
     SaldoInicialNegativo,
+
+    // Rechaza saldos iniciales con mas decimales que los de su moneda
+    #[error(
+        "El campo 'saldo_inicial' es invalido: la moneda '{moneda}' admite maximo {maximo} decimales, pero se recibieron {recibidos}"
+    )]
+    ExcesoDecimalesSaldoInicial {
+        moneda: CodigoMoneda,
+        maximo: u32,
+        recibidos: u32,
+    },
+}
+
+impl From<ErrorMoneda> for ErrorCuenta {
+    // Convierte un error de moneda en error del campo 'moneda'
+    fn from(error: ErrorMoneda) -> Self {
+        match error {
+            ErrorMoneda::MonedaDesconocida(codigo) => ErrorCuenta::MonedaInvalida(codigo),
+        }
+    }
+}
+
+impl From<ErrorMonto> for ErrorCuenta {
+    // Convierte un error de escala en error del campo 'saldo_inicial'
+    fn from(error: ErrorMonto) -> Self {
+        match error {
+            ErrorMonto::EscalaInvalida {
+                moneda,
+                maximo,
+                recibidos,
+            } => ErrorCuenta::ExcesoDecimalesSaldoInicial {
+                moneda,
+                maximo,
+                recibidos,
+            },
+        }
+    }
 }
 
 impl TipoCuenta {
@@ -110,6 +154,56 @@ impl Cuenta {
         })
     }
 
+    // Verifica que el nombre no se repita ignorando mayusculas y espacios
+    pub fn validar_nombre_unico(
+        nombre: &str,
+        cuentas_existentes: &[Self],
+    ) -> Result<(), ErrorCuenta> {
+        // Normaliza el nombre nuevo quitando espacios laterales y usando minusculas
+        let nombre_normalizado = nombre.trim().to_lowercase();
+        if nombre_normalizado.is_empty() {
+            return Err(ErrorCuenta::NombreVacio);
+        }
+
+        // Compara cada cuenta existente usando la misma normalizacion
+        let existe_duplicada = cuentas_existentes
+            .iter()
+            .any(|cuenta| cuenta.nombre().trim().to_lowercase() == nombre_normalizado);
+
+        if existe_duplicada {
+            return Err(ErrorCuenta::NombreDuplicado(nombre.trim().to_string()));
+        }
+
+        Ok(())
+    }
+
+    // Construye una cuenta validando todos los criterios y unicidad del nombre
+    pub fn crear_validada(
+        id: String,
+        nombre: String,
+        tipo: &str,
+        moneda: &str,
+        saldo_inicial: Decimal,
+        cuentas_existentes: &[Self],
+    ) -> Result<Self, ErrorCuenta> {
+        // Valida que el nombre no este vacio ni duplicado
+        Self::validar_nombre_unico(&nombre, cuentas_existentes)?;
+
+        // Valida el tipo de cuena y el codigo de moneda
+        let tipo_validado = TipoCuenta::desde_string(tipo)?;
+        let codigo_moneda = CodigoMoneda::desde_string(moneda)?;
+
+        // Valida que el saldo inicial no sea negativo antes de crear Monto
+        if saldo_inicial < Decimal::ZERO {
+            return Err(ErrorCuenta::SaldoInicialNegativo);
+        }
+
+        // Valida que la escala decimal respecte los decimales de la moneda
+        let monto_inicial = Monto::nuevo(saldo_inicial, codigo_moneda)?;
+
+        Self::nueva(id, nombre, tipo_validado, monto_inicial)
+    }
+
     // Devuelve el id de la cuenta
     pub fn id(&self) -> &str {
         &self.id
@@ -183,6 +277,52 @@ mod tests {
     }
 
     #[test]
+    fn rechaza_cuenta_con_nombre_duplicado_ignorando_mayusculas_y_espacios() {
+        // Verifica "cartera" y "Cartera" se detecten como duplicados
+        let saldo = Cuenta::crear_validada(
+            String::from("cta-01"),
+            String::from("Cartera"),
+            "Efectivo",
+            "VES",
+            Decimal::ZERO,
+            &[],
+        )
+        .unwrap();
+
+        let resultado = Cuenta::crear(
+            String::from("cta-02"),
+            String::from("  cArTeRa  "),
+            "Banco",
+            "USD",
+            Decimal::ZERO,
+            &[existente],
+        );
+
+        assert_eq!(
+            resultado,
+            Err(ErrorCuenta::NombreDuplicado(String::from("cArTeRa")))
+        );
+    }
+
+    #[test]
+    fn rechaza_cuenta_con_moneda_fuera_del_catalogo() {
+        // Verifica rechazo de codigos desconocidos
+        let resultado = Cuenta::crear_validada(
+            String::from("cta-03"),
+            String::from("Cuenta extranjera"),
+            "Banco",
+            "COP",
+            Decimal::ZERO,
+            &[],
+        );
+
+        assert_eq!(
+            resultado,
+            Err(ErrorCuenta::MonedaInvalida(String::from("COP")))
+        );
+    }
+
+    #[test]
     fn rechaza_cuenta_con_saldo_inicial_negativo() {
         // Verifica rechazo con el saldo inicial menor a cero
         let saldo_negativo =
@@ -196,6 +336,29 @@ mod tests {
         .unwrap();
 
         assert_eq!(resultado, Err(ErrorCuenta::SaldoInicialNegativo));
+    }
+
+    #[test]
+    fn rechaza_cuenta_con_exceso_de_decimales_en_saldo_inicial() {
+        // Verifica rechazo de numeros con mas decimales de los permitidos
+        let cantidad = Decimal::from_str("10.555").unwrap();
+        let resultado = Cuenta::crear_validada(
+            String::from("cta-05"),
+            String::from("Ahorros dolares"),
+            "Banco",
+            "USD",
+            cantidad,
+            &[],
+        );
+
+        assert_eq!(
+            resultado,
+            Err(ErrorCuenta::ExcesoDecimalSaldoInicial {
+                moneda: CodigoMoneda::USD,
+                maximo: 2,
+                recibidos: 3,
+            })
+        );
     }
 
     #[test]
