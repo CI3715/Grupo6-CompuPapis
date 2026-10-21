@@ -239,7 +239,7 @@ impl Cuenta {
 mod tests {
     // Prueba unitarias de dominio
     use std::str::FromStr;
-    use supper::*;
+    use super::*;
 
     #[test]
     fn crea_cuenta_valida_y_conserva_moneda_inmutable() {
@@ -270,8 +270,7 @@ mod tests {
             String::from("   "),
             TipoCuenta::Banco,
             saldo,
-        )
-        .unwrap();
+        );
 
         assert_eq!(resultado, Err(ErrorCuenta::NombreVacio));
     }
@@ -279,7 +278,7 @@ mod tests {
     #[test]
     fn rechaza_cuenta_con_nombre_duplicado_ignorando_mayusculas_y_espacios() {
         // Verifica "cartera" y "Cartera" se detecten como duplicados
-        let saldo = Cuenta::crear_validada(
+        let existente = Cuenta::crear_validada(
             String::from("cta-01"),
             String::from("Cartera"),
             "Efectivo",
@@ -289,7 +288,7 @@ mod tests {
         )
         .unwrap();
 
-        let resultado = Cuenta::crear(
+        let resultado = Cuenta::crear_validada(
             String::from("cta-02"),
             String::from("  cArTeRa  "),
             "Banco",
@@ -332,8 +331,7 @@ mod tests {
             String::from("Billetera cripto"),
             TipoCuenta::BilleteraDigital,
             saldo_negativo,
-        )
-        .unwrap();
+        );
 
         assert_eq!(resultado, Err(ErrorCuenta::SaldoInicialNegativo));
     }
@@ -353,7 +351,7 @@ mod tests {
 
         assert_eq!(
             resultado,
-            Err(ErrorCuenta::ExcesoDecimalSaldoInicial {
+            Err(ErrorCuenta::ExcesoDecimalesSaldoInicial {
                 moneda: CodigoMoneda::USD,
                 maximo: 2,
                 recibidos: 3,
@@ -365,7 +363,7 @@ mod tests {
     fn permite_crear_cuenta_con_saldo_inicial_cero() {
         // Verifica que un saldo inicial de cero sea valido
         let saldo_cero = Monto::nuevo(Decimal::ZERO, CodigoMoneda::EUR).unwrap();
-        let resultado = Cuenta::nueva(
+        let cuenta = Cuenta::nueva(
             String::from("cta-04"),
             String::from("Ahorros euro"),
             TipoCuenta::Banco,

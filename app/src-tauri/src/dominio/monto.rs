@@ -77,7 +77,7 @@ mod tests {
     fn rechaza_monto_con_exceso_de_decimales() {
         // Verifica rechazo cuando la cantidad supera los decimales de USD
         let cantidad = Decimal::from_str("10.555").unwrap();
-        let monto = Monto::nuevo(cantidad, CodigoMoneda::USD);
+        let resultado = Monto::nuevo(cantidad, CodigoMoneda::USD);
 
         assert_eq!(
             resultado,

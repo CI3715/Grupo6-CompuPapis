@@ -6,6 +6,8 @@ pub mod moneda;
 pub mod monto;
 // Submodulo con la entidad Cuenta y tipos de cuentas soportados
 pub mod cuenta;
+// Submodulo con los eventos del libro personal
+pub mod evento;
 
 // Exporta los tipos de moneda para simplificar el uso en otros modulos
 pub use moneda::{CodigoMoneda, ErrorMoneda, Moneda};
@@ -13,3 +15,5 @@ pub use moneda::{CodigoMoneda, ErrorMoneda, Moneda};
 pub use monto::{ErrorMonto, Monto};
 // Exporta los tipos de cuenta para su uso externo
 pub use cuenta::{Cuenta, ErrorCuenta, TipoCuenta};
+// Exporta el evento CuentaCreada y su tipo de error asociado
+pub use evento::{CuentaCreada, ErrorEvento, TIPO_EVENTO_CUENTA_CREADA};
