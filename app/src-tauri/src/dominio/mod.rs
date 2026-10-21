@@ -4,10 +4,12 @@
 pub mod moneda;
 // Submodulo con el objeto de valor Monto y sus validaciones
 pub mod monto;
+// Submodulo con la entidad Cuenta y tipos de cuentas soportados
+pub mod cuenta;
 
 // Exporta los tipos de moneda para simplificar el uso en otros modulos
 pub use moneda::{CodigoMoneda, ErrorMoneda, Moneda};
 // Exporta monto y su error para uso directo en el dominio
 pub use monto::{ErrorMonto, Monto};
-
-// Pendiente por crear el modulo cuenta
+// Exporta los tipos de cuenta para su uso externo
+pub use cuenta::{Cuenta, ErrorCuenta, TipoCuenta};
