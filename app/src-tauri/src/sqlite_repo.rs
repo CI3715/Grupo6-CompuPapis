@@ -24,7 +24,21 @@ impl RepositorioSqlite {
             [],
         )
         .map_err(|e| e.to_string())?;
+       
+        conn.execute_batch(
+            "CREATE TRIGGER IF NOT EXISTS impedir_modificar_eventos
+             BEFORE UPDATE ON eventos_libro
+             BEGIN
+                 SELECT RAISE(ABORT, 'Los eventos no pueden modificarse');
+             END;
 
+             CREATE TRIGGER IF NOT EXISTS impedir_eliminar_eventos
+             BEFORE DELETE ON eventos_libro
+             BEGIN
+                 SELECT RAISE(ABORT, 'Los eventos no pueden eliminarse');
+             END;"
+        )
+        .map_err(|e| e.to_string())?;
         Ok(Self { ruta_db })
     }
 
@@ -85,5 +99,54 @@ impl RepositorioEventos for RepositorioSqlite {
             });
         }
         Ok(eventos)
+    }
+}
+
+#[cfg(test)]
+mod pruebas {
+    use super::*;
+    use crate::domain::ejecutar_crear_cuenta;
+
+    #[test]
+    fn probar_inmutabilidad_eventos() {
+        
+        // Creamos una BD de prueba
+        let ruta = std::env::temp_dir().join(
+            format!("prueba_{}.db", uuid::Uuid::new_v4())
+        );
+
+        let mut repo = RepositorioSqlite::inicializar(ruta.clone()).unwrap();
+
+        // Creamos una cuenta y guardamos su evento
+        ejecutar_crear_cuenta(
+            &mut repo, "Cartera", "efectivo",
+            "VES", "100.00", "prueba"
+        ).unwrap();
+
+        let conn = Connection::open(&ruta).unwrap();
+
+        // Vemos si se puede cambiar el evento
+        let cambiar = conn.execute(
+            "UPDATE eventos_libro SET tipo = 'Otro' WHERE tipo = 'CuentaCreada'",
+            []
+        );
+        assert!(cambiar.is_err());
+
+        // Vemos si se puede borrar el evento
+        let borrar = conn.execute(
+            "DELETE FROM eventos_libro WHERE tipo = 'CuentaCreada'",
+            []
+        );
+        assert!(borrar.is_err());
+
+        // Vemos si el evento sigue guardado
+        let eventos = repo.obtener_eventos().unwrap();
+        assert_eq!(eventos.len(), 1);
+        assert_eq!(eventos[0].tipo, "CuentaCreada");
+
+        // Borramos la BD de prueba
+        drop(conn);
+        drop(repo);
+        std::fs::remove_file(ruta).unwrap();
     }
 }

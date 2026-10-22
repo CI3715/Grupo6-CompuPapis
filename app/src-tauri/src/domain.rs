@@ -298,3 +298,79 @@ impl RepositorioEventos for RepositorioEnMemoria {
         Ok(self.eventos.clone())
     }
 }
+
+#[test]
+fn probar_crear_cuentas() {
+    let mut repo = RepositorioEnMemoria::default();
+
+    // Creamos una cuenta
+    let cuenta = ejecutar_crear_cuenta(
+        &mut repo, "Cartera", "efectivo", "VES", "100.25", "prueba"
+    ).unwrap();
+
+    // Vemos si los datos estan bien
+    assert_eq!(cuenta.moneda(), "VES");
+    assert_eq!(cuenta.saldo().moneda(), "VES");
+    assert_eq!(cuenta.saldo().cantidad().to_string(), "100.25");
+
+    // Revisamos los casos que deben dar error
+    let casos = [
+        ("", "efectivo", "VES", "100", "nombre"),
+        ("   ", "efectivo", "VES", "100", "nombre"),
+        ("CARTERA", "efectivo", "VES", "100", "nombre"),
+        ("Otra", "tarjeta", "VES", "100", "tipo"),
+        ("Otra", "efectivo", "ABC", "100", "moneda"),
+        ("Otra", "efectivo", "VES", "-10", "saldo_inicial"),
+        ("Otra", "efectivo", "VES", "10.555", "saldo_inicial"),
+    ];
+
+    for (nombre, tipo, moneda, saldo, campo) in casos {
+        let resp = ejecutar_crear_cuenta(
+            &mut repo, nombre, tipo, moneda, saldo, "prueba"
+        );
+
+        assert!(resp.is_err());
+        assert_eq!(resp.unwrap_err().campo, campo);
+    }
+
+    // Solo se debe guardar la primera cuenta
+    assert_eq!(repo.obtener_eventos().unwrap().len(), 1);
+
+    // Creamos las otras cuentas
+    ejecutar_crear_cuenta(
+        &mut repo, "Banco", "banco", "USD", "0.10", "prueba"
+    ).unwrap();
+
+    ejecutar_crear_cuenta(
+        &mut repo, "Ahorros", "banco", "USD", "0.20", "prueba"
+    ).unwrap();
+
+    ejecutar_crear_cuenta(
+        &mut repo, "Billetera", "billetera digital", "USDT", "0", "prueba"
+    ).unwrap();
+
+    // Vemos las cuentas y los subtotales
+    let lista = ejecutar_listar_cuentas(&repo).unwrap();
+
+    assert_eq!(lista.cuentas.len(), 4);
+    assert_eq!(lista.subtotales.len(), 3);
+
+    let usd = lista.subtotales.iter()
+        .find(|dato| dato.codigo == "USD").unwrap();
+
+    assert_eq!(usd.subtotal, "0.30");
+
+    // Vemos si la cuenta sigue usando VES
+    let cartera = lista.cuentas.iter()
+        .find(|c| c.nombre() == "Cartera").unwrap();
+
+    assert_eq!(cartera.moneda(), "VES");
+    assert_eq!(cartera.saldo().moneda(), "VES");
+
+    // Agregamos el mismo evento otra vez
+    let eventos = repo.obtener_eventos().unwrap();
+    let mut repetidos = eventos.clone();
+    repetidos.push(eventos[0].clone());
+
+    assert_eq!(proyectar_cuentas(&repetidos).len(), 4);
+}

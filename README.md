@@ -70,7 +70,7 @@ npm install
 
 ## Ejecutar el proyecto
 
-Para utilizar la aplicación completa es necesario ejecutar el servidor y la aplicación de escritorio en terminales separadas.
+Para crear y ver las cuentas solo necesitamos abrir la app, el servidor se usa aparte para probar el /ping de la Entrega 1.
 
 ### Backend
 
@@ -143,6 +143,23 @@ El resultado se genera en:
 ```text
 app/out/
 ```
+
+## Entrega 2 - BD y Pruebas
+
+### BD local
+
+Para guardar las cuentas usamos el archivo `cuentas_claras.sqlite` en `app_data_dir` de Tauri, la ubicación cambia segun el sistema y si el archivo no existe, se crea cuando abrimos la app.
+
+### Pruebas
+
+Para hacer las pruebas de Rust, entramos en la carpeta de Tauri:
+
+```bash
+cd app/src-tauri
+cargo test
+```
+
+Con estas pruebas revisamos que los datos incorrectos den error, que los subtotales salgan bien, que no se repitan las cuentas y que no se puedan cambiar ni borrar los eventos.
 
 ## Formato y lint
 
