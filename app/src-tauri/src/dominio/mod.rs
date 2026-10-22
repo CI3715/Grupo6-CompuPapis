@@ -15,5 +15,5 @@ pub use moneda::{CodigoMoneda, ErrorMoneda, Moneda};
 pub use monto::{ErrorMonto, Monto};
 // Exporta los tipos de cuenta para su uso externo
 pub use cuenta::{Cuenta, ErrorCuenta, TipoCuenta};
-// Exporta el evento CuentaCreada y su tipo de error asociado
-pub use evento::{CuentaCreada, ErrorEvento, TIPO_EVENTO_CUENTA_CREADA};
+// Exporta eventos y el contenedor del libro personal
+pub use evento::{CuentaCreada, ErrorEvento, LibroPersonal, TIPO_EVENTO_CUENTA_CREADA};

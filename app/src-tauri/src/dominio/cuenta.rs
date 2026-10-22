@@ -146,7 +146,7 @@ impl Cuenta {
 
         // El saldo actual inicia igual al saldo inicial
         Ok(Self {
-            id,
+            id: id.trim().to_string(),
             nombre: nombre_limpio.to_string(),
             tipo,
             saldo_inicial,
@@ -175,6 +175,16 @@ impl Cuenta {
         }
 
         Ok(())
+    }
+
+    // Valida que el nombre de esta cuenta no exista en la lista
+    pub fn validar_unicidad(&self, cuentas_existentes: &[Self]) -> Result<(), ErrorCuenta> {
+        Self::validar_nombre_unico(&self.nombre, cuentas_existentes)
+    }
+
+    // Compara si la cuenta tiene el identificador que le corresponde
+    pub fn mismo_id(&self, id_cuenta: &str) -> bool {
+        self.id == id_cuenta.trim()
     }
 
     // Construye una cuenta validando todos los criterios y unicidad del nombre
@@ -238,8 +248,8 @@ impl Cuenta {
 #[cfg(test)]
 mod tests {
     // Prueba unitarias de dominio
-    use std::str::FromStr;
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn crea_cuenta_valida_y_conserva_moneda_inmutable() {
@@ -373,5 +383,33 @@ mod tests {
 
         assert_eq!(cuenta.saldo_actual().cantidad(), Decimal::ZERO);
         assert_eq!(cuenta.moneda(), CodigoMoneda::EUR);
+    }
+
+    #[test]
+    fn verifica_unicidad_e_identificador_de_cuenta_en_lista() {
+        // Verifica comparacion de id y validacion de unicidad de instancia
+        let existente = Cuenta::crear_validada(
+            String::from("cta-01"),
+            String::from("Cartera"),
+            "Efectivo",
+            "VES",
+            Decimal::ZERO,
+            &[],
+        )
+        .unwrap();
+
+        let duplicada = Cuenta::nueva(
+            String::from("cta-02"),
+            String::from("cartera"),
+            TipoCuenta::Banco,
+            Monto::nuevo(Decimal::ZERO, CodigoMoneda::USD).unwrap(),
+        )
+        .unwrap();
+
+        assert!(existente.mismo_id(" cta-01 "));
+        assert_eq!(
+            duplicada.validar_unicidad(&[existente]),
+            Err(ErrorCuenta::NombreDuplicado(String::from("cartera")))
+        );
     }
 }

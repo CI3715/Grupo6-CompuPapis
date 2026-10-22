@@ -187,6 +187,86 @@ impl CuentaCreada {
     }
 }
 
+// Contenedor del libro personal que reconstruye cuentas desde eventos
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LibroPersonal {
+    // Historial de eventos aplicados en orden de llegada
+    eventos: Vec<CuentaCreada>,
+    // Lista de cuentas vigentes proyectada desde los eventos
+    cuentas: Vec<Cuenta>,
+}
+
+impl LibroPersonal {
+    // Crea un libro personal vacio sin eventos ni cuentas
+    pub fn nuevo() -> Self {
+        Self::default()
+    }
+
+    // Construye el libro personal aplicando una secuencia de eventos
+    pub fn desde_eventos(eventos: &[CuentaCreada]) -> Result<Self, ErrorEvento> {
+        let mut libro = Self::nuevo();
+        libro.aplicar_eventos(eventos)?;
+        Ok(libro)
+    }
+
+    // Verifica si un evento ya fue registrado usando su identificador
+    pub fn contiene_evento(&self, id_evento: &str) -> bool {
+        let id_limpio = id_evento.trim();
+        self.eventos
+            .iter()
+            .any(|registrado| registrado.id_evento() == id_limpio)
+    }
+
+    // Aplica un evento CuentaCreada asegurando idempotencia
+    pub fn aplicar_cuenta_creada(&mut self, evento: CuentaCreada) -> Result<(), ErrorEvento> {
+        // Ignora el evento si su identificador ya fue aplicado antes
+        if self.contiene_evento(evento.id_evento()) {
+            return Ok(());
+        }
+
+        // Ignora creacion si el identificador de cuenta ya existe
+        if self
+            .cuentas
+            .iter()
+            .any(|cuenta| cuenta.mismo_id(evento.id_cuenta()))
+        {
+            return Ok(());
+        }
+
+        // Construye y valida la cuenta antes de modificar el estado
+        let nueva_cuenta = evento.a_cuenta()?;
+        nueva_cuenta.validar_unicidad(&self.cuentas)?;
+
+        self.cuentas.push(nueva_cuenta);
+        self.eventos.push(evento);
+        Ok(())
+    }
+
+    // Aplica en orden una lista de eventos CuentaCreada
+    pub fn aplicar_eventos(&mut self, eventos: &[CuentaCreada]) -> Result<(), ErrorEvento> {
+        for evento in eventos {
+            self.aplicar_cuenta_creada(evento.clone())?;
+        }
+        Ok(())
+    }
+
+    // Genera la lista de cuentas vigentes desde una secuencia de eventos
+    pub fn proyectar_cuentas(eventos: &[CuentaCreada]) -> Result<Vec<Cuenta>, ErrorEvento> {
+        let libro = Self::desde_eventos(eventos)?;
+        Ok(libro.cuentas)
+    }
+
+    // Devuelve una vista de solo lectura de los eventos registrados
+    pub fn eventos(&self) -> &[CuentaCreada] {
+        &self.eventos
+    }
+
+    // Devuelve una vista de solo lectura de las cuentas vigentes
+    pub fn cuentas(&self) -> &[Cuenta] {
+        &self.cuentas
+    }
+}
+
 #[cfg(test)]
 mod tests {
     // Pruebas unitarias para verificar la creacion e inmutabilidad de CuentaCreada
@@ -266,5 +346,125 @@ mod tests {
         // Comprueba en compilacion que el evento soporta serializacion con serde
         fn exigir_serde<T: Serialize + for<'de> Deserialize<'de>>() {}
         exigir_serde::<CuentaCreada>();
+    }
+
+    #[test]
+    fn proyecta_lista_de_cuentas_vigentes_desde_secuencia_de_eventos() {
+        // Verifica que proyectar varios eventos reconstruya las cuentas vigentes
+        let ev1 = CuentaCreada::nuevo(
+            String::from("evento-01"),
+            String::from("2026-10-21"),
+            String::from("pc-local"),
+            String::from("cta-01"),
+            String::from("Cartera"),
+            TipoCuenta::Efectivo,
+            CodigoMoneda::VES,
+            Decimal::from_str("1250.50").unwrap(),
+        )
+        .unwrap();
+
+        let ev2 = CuentaCreada::nuevo(
+            String::from("evento-02"),
+            String::from("2026-10-21"),
+            String::from("pc-local"),
+            String::from("cta-02"),
+            String::from("Cuenta nomina"),
+            TipoCuenta::Banco,
+            CodigoMoneda::USD,
+            Decimal::from_str("300.00").unwrap(),
+        )
+        .unwrap();
+
+        let ev3 = CuentaCreada::nuevo(
+            String::from("evento-03"),
+            String::from("2026-10-21"),
+            String::from("pc-local"),
+            String::from("cta-03"),
+            String::from("Billetera cripto"),
+            TipoCuenta::BilleteraDigital,
+            CodigoMoneda::USDT,
+            Decimal::from_str("50.00").unwrap(),
+        )
+        .unwrap();
+
+        let cuentas = LibroPersonal::proyectar_cuentas(&[ev1, ev2, ev3]).unwrap();
+
+        assert_eq!(cuentas.len(), 3);
+        assert_eq!(cuentas[0].nombre(), "Cartera");
+        assert_eq!(cuentas[1].nombre(), "Cuenta nomina");
+        assert_eq!(cuentas[2].nombre(), "Billetera cripto");
+    }
+
+    #[test]
+    fn garantiza_idempotencia_al_aplicar_mismo_evento_dos_veces() {
+        // Verifica que aplicar dos veces el mismo evento no duplique estado
+        let saldo = Decimal::from_str("300.00").unwrap();
+        let evento = CuentaCreada::nuevo(
+            String::from("evento-unico-01"),
+            String::from("2026-10-21"),
+            String::from("pc-local"),
+            String::from("cta-01"),
+            String::from("Cuenta nomina"),
+            TipoCuenta::Banco,
+            CodigoMoneda::USD,
+            saldo,
+        )
+        .unwrap();
+
+        let mut libro_una_vez = LibroPersonal::nuevo();
+        libro_una_vez.aplicar_cuenta_creada(evento.clone()).unwrap();
+
+        let mut libro_dos_veces = LibroPersonal::nuevo();
+        libro_dos_veces
+            .aplicar_eventos(&[evento.clone(), evento])
+            .unwrap();
+
+        assert_eq!(libro_dos_veces, libro_una_vez);
+        assert_eq!(libro_dos_veces.cuentas().len(), 1);
+        assert_eq!(libro_dos_veces.eventos().len(), 1);
+        assert_eq!(
+            libro_dos_veces.cuentas()[0].saldo_actual().cantidad(),
+            saldo
+        );
+    }
+
+    #[test]
+    fn rechaza_evento_nuevo_con_nombre_de_cuenta_duplicado() {
+        // Verifica que un evento nuevo con nombre repetido sea rechazado
+        let ev1 = CuentaCreada::nuevo(
+            String::from("evento-01"),
+            String::from("2026-10-21"),
+            String::from("pc-local"),
+            String::from("cta-01"),
+            String::from("Cartera"),
+            TipoCuenta::Efectivo,
+            CodigoMoneda::VES,
+            Decimal::ZERO,
+        )
+        .unwrap();
+
+        let ev2_nombre_repetido = CuentaCreada::nuevo(
+            String::from("evento-02"),
+            String::from("2026-10-21"),
+            String::from("pc-local"),
+            String::from("cta-02"),
+            String::from(" cArTeRa "),
+            TipoCuenta::Banco,
+            CodigoMoneda::USD,
+            Decimal::ZERO,
+        )
+        .unwrap();
+
+        let mut libro = LibroPersonal::desde_eventos(&[ev1]).unwrap();
+        let resultado = libro.aplicar_cuenta_creada(ev2_nombre_repetido);
+
+        assert_eq!(
+            resultado,
+            Err(ErrorEvento::CuentaInvalida(ErrorCuenta::NombreDuplicado(
+                String::from("cArTeRa")
+            )))
+        );
+        assert_eq!(libro.cuentas().len(), 1);
+        assert_eq!(libro.eventos().len(), 1);
     }
 }
