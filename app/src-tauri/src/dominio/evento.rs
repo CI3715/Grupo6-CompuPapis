@@ -327,7 +327,7 @@ mod tests {
     #[test]
     fn rechaza_evento_con_identificador_o_metadatos_vacios() {
         // Verifica que no se creen eventos sin identificador unico
-        let resultado = CuentaCreada::nuevo(
+        let err_id = CuentaCreada::nuevo(
             String::from("  "),
             String::from("2026-10-21"),
             String::from("pc-ubuntu"),
@@ -336,9 +336,85 @@ mod tests {
             TipoCuenta::BilleteraDigital,
             CodigoMoneda::USDT,
             Decimal::ZERO,
-        );
+        )
+        .unwrap_err();
+        assert_eq!(err_id, ErrorEvento::IdEventoVacio);
+        assert!(err_id.to_string().contains("id_evento"));
 
-        assert_eq!(resultado, Err(ErrorEvento::IdEventoVacio));
+        // Verifica que no se creen eventos sin momento registrado
+        let err_momento = CuentaCreada::nuevo(
+            String::from("evento-03"),
+            String::from(" "),
+            String::from("pc-ubuntu"),
+            String::from("cta-03"),
+            String::from("Billetera USDT"),
+            TipoCuenta::BilleteraDigital,
+            CodigoMoneda::USDT,
+            Decimal::ZERO,
+        )
+        .unwrap_err();
+        assert_eq!(err_momento, ErrorEvento::MomentoRegistroVacio);
+        assert!(err_momento.to_string().contains("momento_registro"));
+
+        // Verifica que no se creen eventos sin dispositivo
+        let err_dispositivo = CuentaCreada::nuevo(
+            String::from("evento-03"),
+            String::from("2026-10-21"),
+            String::from(""),
+            String::from("cta-03"),
+            String::from("Billetera USDT"),
+            TipoCuenta::BilleteraDigital,
+            CodigoMoneda::USDT,
+            Decimal::ZERO,
+        )
+        .unwrap_err();
+        assert_eq!(err_dispositivo, ErrorEvento::DispositivoOrigenVacio);
+        assert!(err_dispositivo.to_string().contains("dispositivo_origen"));
+
+        // Verifica que no se creen eventos sin identificador de cuenta
+        let err_cuenta = CuentaCreada::nuevo(
+            String::from("evento-03"),
+            String::from("2026-10-21"),
+            String::from("pc-ubuntu"),
+            String::from(" "),
+            String::from("Billetera USDT"),
+            TipoCuenta::BilleteraDigital,
+            CodigoMoneda::USDT,
+            Decimal::ZERO,
+        )
+        .unwrap_err();
+        assert_eq!(err_cuenta, ErrorEvento::IdCuentaVacio);
+        assert!(err_cuenta.to_string().contains("id_cuenta"));
+    }
+
+    #[test]
+    fn propaga_errores_de_validacion_de_cuenta_en_evento() {
+        // Verifica que errores de cuenta en el evento identifiquen el campo
+        let err_decimales = CuentaCreada::nuevo(
+            String::from("evento-04"),
+            String::from("2026-10-21"),
+            String::from("pc-ubuntu"),
+            String::from("cta-04"),
+            String::from("Ahorros"),
+            TipoCuenta::Banco,
+            CodigoMoneda::USD,
+            Decimal::from_str("10.555").unwrap(),
+        )
+        .unwrap_err();
+        assert!(err_decimales.to_string().contains("saldo_inicial"));
+
+        let err_nombre = CuentaCreada::nuevo(
+            String::from("evento-05"),
+            String::from("2026-10-21"),
+            String::from("pc-ubuntu"),
+            String::from("cta-05"),
+            String::from(" "),
+            TipoCuenta::Efectivo,
+            CodigoMoneda::VES,
+            Decimal::ZERO,
+        )
+        .unwrap_err();
+        assert!(err_nombre.to_string().contains("nombre"));
     }
 
     #[test]
@@ -398,8 +474,10 @@ mod tests {
     #[test]
     fn garantiza_idempotencia_al_aplicar_mismo_evento_dos_veces() {
         // Verifica que aplicar dos veces el mismo evento no duplique estado
-        let saldo = Decimal::from_str("300.00").unwrap();
-        let evento = CuentaCreada::nuevo(
+        let saldo_usd = Decimal::from_str("300.00").unwrap();
+        let saldo_ves = Decimal::from_str("1250.50").unwrap();
+
+        let evento_usd = CuentaCreada::nuevo(
             String::from("evento-unico-01"),
             String::from("2026-10-21"),
             String::from("pc-local"),
@@ -407,24 +485,51 @@ mod tests {
             String::from("Cuenta nomina"),
             TipoCuenta::Banco,
             CodigoMoneda::USD,
-            saldo,
+            saldo_usd,
         )
         .unwrap();
 
-        let mut libro_una_vez = LibroPersonal::nuevo();
-        libro_una_vez.aplicar_cuenta_creada(evento.clone()).unwrap();
+        let evento_ves = CuentaCreada::nuevo(
+            String::from("evento-unico-02"),
+            String::from("2026-10-21"),
+            String::from("pc-local"),
+            String::from("cta-02"),
+            String::from("Cartera"),
+            TipoCuenta::Efectivo,
+            CodigoMoneda::VES,
+            saldo_ves,
+        )
+        .unwrap();
 
+        // Aplica cada evento una vez en el primer libro
+        let mut libro_una_vez = LibroPersonal::nuevo();
+        libro_una_vez
+            .aplicar_eventos(&[evento_usd.clone(), evento_ves.clone()])
+            .unwrap();
+
+        // Aplica dos veces los mismos eventos en el segundo libro
         let mut libro_dos_veces = LibroPersonal::nuevo();
         libro_dos_veces
-            .aplicar_eventos(&[evento.clone(), evento])
+            .aplicar_cuenta_creada(evento_usd.clone())
+            .unwrap();
+        libro_dos_veces
+            .aplicar_cuenta_creada(evento_usd.clone())
+            .unwrap();
+        libro_dos_veces
+            .aplicar_eventos(&[evento_ves.clone(), evento_usd, evento_ves])
             .unwrap();
 
         assert_eq!(libro_dos_veces, libro_una_vez);
-        assert_eq!(libro_dos_veces.cuentas().len(), 1);
-        assert_eq!(libro_dos_veces.eventos().len(), 1);
+        assert_eq!(libro_dos_veces.cuentas(), libro_una_vez.cuentas());
+        assert_eq!(libro_dos_veces.cuentas().len(), 2);
+        assert_eq!(libro_dos_veces.eventos().len(), 2);
         assert_eq!(
             libro_dos_veces.cuentas()[0].saldo_actual().cantidad(),
-            saldo
+            saldo_usd
+        );
+        assert_eq!(
+            libro_dos_veces.cuentas()[1].saldo_actual().cantidad(),
+            saldo_ves
         );
     }
 
@@ -456,14 +561,15 @@ mod tests {
         .unwrap();
 
         let mut libro = LibroPersonal::desde_eventos(&[ev1]).unwrap();
-        let resultado = libro.aplicar_cuenta_creada(ev2_nombre_repetido);
+        let error = libro
+            .aplicar_cuenta_creada(ev2_nombre_repetido)
+            .unwrap_err();
 
         assert_eq!(
-            resultado,
-            Err(ErrorEvento::CuentaInvalida(ErrorCuenta::NombreDuplicado(
-                String::from("cArTeRa")
-            )))
+            error,
+            ErrorEvento::CuentaInvalida(ErrorCuenta::NombreDuplicado(String::from("cArTeRa")))
         );
+        assert!(error.to_string().contains("nombre"));
         assert_eq!(libro.cuentas().len(), 1);
         assert_eq!(libro.eventos().len(), 1);
     }

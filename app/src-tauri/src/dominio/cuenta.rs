@@ -282,7 +282,22 @@ mod tests {
             saldo,
         );
 
-        assert_eq!(resultado, Err(ErrorCuenta::NombreVacio));
+        let error_espacios = resultado.unwrap_err();
+        assert_eq!(error_espacios, ErrorCuenta::NombreVacio);
+        assert!(error_espacios.to_string().contains("nombre"));
+
+        let resultado_vacio = Cuenta::crear_validada(
+            String::from("cta-03"),
+            String::from(""),
+            "Efectivo",
+            "VES",
+            Decimal::ZERO,
+            &[],
+        );
+
+        let error_vacio = resultado_vacio.unwrap_err();
+        assert_eq!(error_vacio, ErrorCuenta::NombreVacio);
+        assert!(error_vacio.to_string().contains("nombre"));
     }
 
     #[test]
@@ -307,10 +322,9 @@ mod tests {
             &[existente],
         );
 
-        assert_eq!(
-            resultado,
-            Err(ErrorCuenta::NombreDuplicado(String::from("cArTeRa")))
-        );
+        let error = resultado.unwrap_err();
+        assert_eq!(error, ErrorCuenta::NombreDuplicado(String::from("cArTeRa")));
+        assert!(error.to_string().contains("nombre"));
     }
 
     #[test]
@@ -325,10 +339,27 @@ mod tests {
             &[],
         );
 
-        assert_eq!(
-            resultado,
-            Err(ErrorCuenta::MonedaInvalida(String::from("COP")))
+        let error = resultado.unwrap_err();
+        assert_eq!(error, ErrorCuenta::MonedaInvalida(String::from("COP")));
+        assert!(error.to_string().contains("moneda"));
+    }
+
+    #[test]
+    fn rechaza_cuenta_con_tipo_fuera_del_catalogo() {
+        // Verifica rechazo de tipo invalido indicando el campo 'tipo'
+        let resultado = Cuenta::crear_validada(
+            String::from("cta-03"),
+            String::from("Tarjeta credito"),
+            "Tarjeta",
+            "USD",
+            Decimal::ZERO,
+            &[],
         );
+
+        let error = resultado.unwrap_err();
+
+        assert_eq!(error, ErrorCuenta::TipoInvalido(String::from("Tarjeta")));
+        assert!(error.to_string().contains("tipo"));
     }
 
     #[test]
@@ -336,14 +367,29 @@ mod tests {
         // Verifica rechazo con el saldo inicial menor a cero
         let saldo_negativo =
             Monto::nuevo(Decimal::from_str("-10.00").unwrap(), CodigoMoneda::USDT).unwrap();
-        let resultado = Cuenta::nueva(
+        let resultado_directo = Cuenta::nueva(
             String::from("cta-03"),
             String::from("Billetera cripto"),
             TipoCuenta::BilleteraDigital,
             saldo_negativo,
         );
 
-        assert_eq!(resultado, Err(ErrorCuenta::SaldoInicialNegativo));
+        let error_directo = resultado_directo.unwrap_err();
+        assert_eq!(error_directo, ErrorCuenta::SaldoInicialNegativo);
+        assert!(error_directo.to_string().contains("saldo_inicial"));
+
+        let resultado_validado = Cuenta::crear_validada(
+            String::from("cta-04"),
+            String::from("Billetera cripto"),
+            "Billetera digital",
+            "USDT",
+            Decimal::from_str("-10.00").unwrap(),
+            &[],
+        );
+
+        let error_validado = resultado_validado.unwrap_err();
+        assert_eq!(error_validado, ErrorCuenta::SaldoInicialNegativo);
+        assert!(error_validado.to_string().contains("saldo_inicial"));
     }
 
     #[test]
@@ -359,14 +405,16 @@ mod tests {
             &[],
         );
 
+        let error = resultado.unwrap_err();
         assert_eq!(
-            resultado,
-            Err(ErrorCuenta::ExcesoDecimalesSaldoInicial {
+            error,
+            ErrorCuenta::ExcesoDecimalesSaldoInicial {
                 moneda: CodigoMoneda::USD,
                 maximo: 2,
                 recibidos: 3,
-            })
+            }
         );
+        assert!(error.to_string().contains("saldo_inicial"));
     }
 
     #[test]
