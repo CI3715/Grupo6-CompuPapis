@@ -29,3 +29,6 @@ rust_decimal = {version = "1.36.0", features = ["serde"]}
 # Definicion de errores personalizados:
 thiserror = "2.0"
 fmt = "0.1.0"
+rusqlite = { version = "0.32", features = ["bundled"] }
+uuid = { version = "1.10", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
