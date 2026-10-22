@@ -1,4 +1,4 @@
-// Objeto de valor Monto para calculos monetarios
+//! Objeto de valor Monto para calculos monetarios
 
 use rust_decimal::Decimal;
 use thiserror::Error;
@@ -10,7 +10,7 @@ use super::moneda::{CodigoMoneda, Moneda};
 pub enum ErrorMonto {
     // La cantidad supera los decimales permitidos para la moneda
     #[error(
-        "La moneda '{moneda:?}' admnite maximo {maximo} decimales, pero se recibieron {recibidos}"
+        "La moneda '{moneda:?}' admite maximo {maximo} decimales, pero se recibieron {recibidos}"
     )]
     EscalaInvalida {
         moneda: CodigoMoneda,
@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn permite_monto_cero_o_entero_sin_decimales() {
-        // Verifica que una cantiad entera o cero sea valida
+        // Verifica que una cantidad entera o cero sea valida
         let cantidad = Decimal::from_str("0").unwrap();
         let monto = Monto::nuevo(cantidad, CodigoMoneda::VES).unwrap();
 

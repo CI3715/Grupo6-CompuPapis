@@ -1,4 +1,4 @@
-// Entidad Cuenta y tipos asociados del contexto Libro personal
+//! Entidad Cuenta y tipos asociados del contexto Libro personal
 
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -199,7 +199,7 @@ impl Cuenta {
         // Valida que el nombre no este vacio ni duplicado
         Self::validar_nombre_unico(&nombre, cuentas_existentes)?;
 
-        // Valida el tipo de cuena y el codigo de moneda
+        // Valida el tipo de cuenta y el codigo de moneda
         let tipo_validado = TipoCuenta::desde_string(tipo)?;
         let codigo_moneda = CodigoMoneda::desde_string(moneda)?;
 
@@ -208,7 +208,7 @@ impl Cuenta {
             return Err(ErrorCuenta::SaldoInicialNegativo);
         }
 
-        // Valida que la escala decimal respecte los decimales de la moneda
+        // Valida que la escala decimal respete los decimales de la moneda
         let monto_inicial = Monto::nuevo(saldo_inicial, codigo_moneda)?;
 
         Self::nueva(id, nombre, tipo_validado, monto_inicial)

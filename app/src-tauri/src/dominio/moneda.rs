@@ -132,3 +132,31 @@ impl Moneda {
         self.decimales
     }
 }
+
+#[cfg(test)]
+mod tests {
+    // Pruebas unitarias para el catalogo base de monedas
+    use super::*;
+
+    #[test]
+    fn catalogo_base_incluye_las_cuatro_monedas_de_fabrica() {
+        // Verifica que el catalogo incluya VES, USD, EUR y USDT con 2 decimales
+        let catalogo = Moneda::catalogo_base();
+        assert_eq!(catalogo.len(), 4);
+
+        let ves = Moneda::buscar_por_codigo(" ves ").unwrap();
+        assert_eq!(ves.codigo(), CodigoMoneda::VES);
+        assert_eq!(ves.nombre(), "Bolívar venezolano");
+        assert_eq!(ves.simbolo(), "Bs.");
+        assert_eq!(ves.decimales(), 2);
+        assert_eq!(ves.codigo().to_string(), "VES");
+    }
+
+    #[test]
+    fn rechaza_busqueda_de_moneda_fuera_del_catalogo() {
+        // Verifica que una moneda no soportada devuelve error indicando 'moneda'
+        let error = Moneda::buscar_por_codigo("ARS").unwrap_err();
+        assert_eq!(error, ErrorMoneda::MonedaDesconocida(String::from("ARS")));
+        assert!(error.to_string().contains("moneda"));
+    }
+}
