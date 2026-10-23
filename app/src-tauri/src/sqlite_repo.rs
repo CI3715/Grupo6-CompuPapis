@@ -1,6 +1,6 @@
-use crate::domain::{DatosCuentaCreada, EventoLibro, RepositorioEventos};
+use crate::domain::{EventoLibro, RepositorioEventos};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::PathBuf;
 
 pub struct RepositorioSqlite {
@@ -24,7 +24,7 @@ impl RepositorioSqlite {
             [],
         )
         .map_err(|e| e.to_string())?;
-       
+
         conn.execute_batch(
             "CREATE TRIGGER IF NOT EXISTS impedir_modificar_eventos
              BEFORE UPDATE ON eventos_libro
@@ -36,7 +36,7 @@ impl RepositorioSqlite {
              BEFORE DELETE ON eventos_libro
              BEGIN
                  SELECT RAISE(ABORT, 'Los eventos no pueden eliminarse');
-             END;"
+             END;",
         )
         .map_err(|e| e.to_string())?;
         Ok(Self { ruta_db })
@@ -50,7 +50,7 @@ impl RepositorioSqlite {
 impl RepositorioEventos for RepositorioSqlite {
     fn guardar_evento(&mut self, evento: &EventoLibro) -> Result<(), String> {
         let conn = self.abrir()?;
-        let datos_json = serde_json::to_string(&evento.datos).map_err(|e| e.to_string())?;
+        // INV-04 e INV-13: La tabla de eventos solo admite inserciones idempotentes
         conn.execute(
             "INSERT OR IGNORE INTO eventos_libro (id, tipo, momento_registro, dispositivo_origen, datos_json)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -59,7 +59,7 @@ impl RepositorioEventos for RepositorioSqlite {
                 evento.tipo,
                 evento.momento_registro.to_rfc3339(),
                 evento.dispositivo_origen,
-                datos_json
+                evento.datos_json
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -85,18 +85,17 @@ impl RepositorioEventos for RepositorioSqlite {
 
         let mut eventos = Vec::new();
         for fila in filas {
-            let (id, tipo, momento_str, dispositivo_origen, datos_json) = fila.map_err(|e| e.to_string())?;
+            let (id, tipo, momento_str, dispositivo_origen, datos_json) =
+                fila.map_err(|e| e.to_string())?;
             let momento_registro = DateTime::parse_from_rfc3339(&momento_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now());
-            let datos: serde_json::Value = serde_json::from_str(&datos_json).map_err(|e| e.to_string())?;
-                //let datos: DatosCuentaCreada = serde_json::from_str(&datos_json).map_err(|e| e.to_string())?;
+                .map_err(|_| "El libro contiene una fecha de registro inválida.".to_string())?;
             eventos.push(EventoLibro {
                 id,
                 tipo,
                 momento_registro,
                 dispositivo_origen,
-                datos,
+                datos_json,
             });
         }
         Ok(eventos)
@@ -110,34 +109,25 @@ mod pruebas {
 
     #[test]
     fn probar_inmutabilidad_eventos() {
-        
         // Creamos una BD de prueba
-        let ruta = std::env::temp_dir().join(
-            format!("prueba_{}.db", uuid::Uuid::new_v4())
-        );
+        let ruta = std::env::temp_dir().join(format!("prueba_{}.db", uuid::Uuid::new_v4()));
 
         let mut repo = RepositorioSqlite::inicializar(ruta.clone()).unwrap();
 
         // Creamos una cuenta y guardamos su evento
-        ejecutar_crear_cuenta(
-            &mut repo, "Cartera", "efectivo",
-            "VES", "100.00", "prueba"
-        ).unwrap();
+        ejecutar_crear_cuenta(&mut repo, "Cartera", "efectivo", "VES", "100.00", "prueba").unwrap();
 
         let conn = Connection::open(&ruta).unwrap();
 
         // Vemos si se puede cambiar el evento
         let cambiar = conn.execute(
             "UPDATE eventos_libro SET tipo = 'Otro' WHERE tipo = 'CuentaCreada'",
-            []
+            [],
         );
         assert!(cambiar.is_err());
 
         // Vemos si se puede borrar el evento
-        let borrar = conn.execute(
-            "DELETE FROM eventos_libro WHERE tipo = 'CuentaCreada'",
-            []
-        );
+        let borrar = conn.execute("DELETE FROM eventos_libro WHERE tipo = 'CuentaCreada'", []);
         assert!(borrar.is_err());
 
         // Vemos si el evento sigue guardado

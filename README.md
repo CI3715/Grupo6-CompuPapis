@@ -161,6 +161,28 @@ cargo test
 
 Con estas pruebas revisamos que los datos incorrectos den error, que los subtotales salgan bien, que no se repitan las cuentas y que no se puedan cambiar ni borrar los eventos.
 
+## Entrega 3 - Gastos e ingresos
+
+En esta entrega hicimos el registro de ingresos y gastos, las categorías, la corrección de movimientos.
+
+También hicimos unas pruebas para revisar que todo funcione correctamente.
+
+### Pruebas
+
+Para ejecutar las pruebas entramos en `app/src-tauri` y usamos:
+
+```bash
+cargo test
+```
+
+Si solo queremos ejecutar las pruebas de movimientos, usamos:
+
+```bash
+cargo test pruebas_movimientos
+```
+
+Aqui probamos las categorías y los movimientos, que los datos incorrectos den error, que los saldos por moneda esten bien y que no se repitan eventos.
+
 ## Formato y lint
 
 Desde `app`:
@@ -204,3 +226,5 @@ npm run format:rust
 ## Licencia
 
 Este proyecto está distribuido bajo la licencia [MIT](./LICENSE).
+
+
