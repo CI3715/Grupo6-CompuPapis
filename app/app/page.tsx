@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+
+import { formatearMontoLocal } from "@/lib/money";
 
 // --- INTERFACES ---
 interface Moneda {
@@ -69,38 +71,59 @@ interface DetalleCuenta {
 }
 
 // --- FUNCIONES UTILERÍA ---
-function formatearMontoLocal(cantidadStr: string, simbolo: string, mostrarSignoPositivo = false): string {
-  const num = Number(cantidadStr);
-  const formateado = new Intl.NumberFormat("es-VE", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Math.abs(num));
-  if (num < 0) return `- ${simbolo} ${formateado}`;
-  if (mostrarSignoPositivo && num > 0) return `+ ${simbolo} ${formateado}`;
-  return `${simbolo} ${formateado}`;
+interface EvaluacionMovimiento {
+  dejaSaldoNegativo: boolean;
+  saldoResultante: string;
 }
 
-function obtenerHoyLocal(): string {
-  const hoy = new Date();
-  const yyyy = hoy.getFullYear();
-  const mm = String(hoy.getMonth() + 1).padStart(2, "0");
-  const dd = String(hoy.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+function normalizarError(error: unknown): ErrorDominio {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "campo" in error &&
+    "mensaje" in error &&
+    typeof error.campo === "string" &&
+    typeof error.mensaje === "string"
+  ) {
+    return { campo: error.campo, mensaje: error.mensaje };
+  }
+  return {
+    campo: "general",
+    mensaje:
+      "No se pudo completar la operación. Abre la aplicación con Tauri e inténtalo de nuevo.",
+  };
+}
+
+async function leerDatos() {
+  const [resumen, monedas, categorias] = await Promise.all([
+    invoke<ResumenCuentas>("listar_cuentas"),
+    invoke<Moneda[]>("listar_monedas"),
+    invoke<Categoria[]>("listar_categorias"),
+  ]);
+  return { resumen, monedas, categorias };
 }
 
 function obtenerClaseBadgeMoneda(codigo: string): string {
   switch (codigo.toUpperCase()) {
-    case "USD": return "badge badge-usd";
-    case "VES": return "badge badge-ves";
-    case "EUR": return "badge badge-eur";
-    case "USDT": return "badge badge-usdt";
-    default: return "badge";
+    case "USD":
+      return "badge badge-usd";
+    case "VES":
+      return "badge badge-ves";
+    case "EUR":
+      return "badge badge-eur";
+    case "USDT":
+      return "badge badge-usdt";
+    default:
+      return "badge";
   }
 }
 
 export default function MisCuentasPage() {
   // --- ESTADOS CUENTAS ---
-  const [resumen, setResumen] = useState<ResumenCuentas>({ cuentas: [], subtotales: [] });
+  const [resumen, setResumen] = useState<ResumenCuentas>({
+    cuentas: [],
+    subtotales: [],
+  });
   const [monedas, setMonedas] = useState<Moneda[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
@@ -112,48 +135,94 @@ export default function MisCuentasPage() {
   const [error, setError] = useState<ErrorDominio | null>(null);
 
   // --- ESTADOS DETALLE Y MOVIMIENTOS (ENTREGA 3) ---
-  const [cuentaSeleccionadaId, setCuentaSeleccionadaId] = useState<string | null>(null);
-  const [detalleCuenta, setDetalleCuenta] = useState<DetalleCuenta | null>(null);
+  const [cuentaSeleccionadaId, setCuentaSeleccionadaId] = useState<
+    string | null
+  >(null);
+  const [detalleCuenta, setDetalleCuenta] = useState<DetalleCuenta | null>(
+    null,
+  );
 
   const [mostrarFormMovimiento, setMostrarFormMovimiento] = useState(false);
-  const [tipoMovimiento, setTipoMovimiento] = useState<"gasto" | "ingreso">("gasto");
+  const [tipoMovimiento, setTipoMovimiento] = useState<"gasto" | "ingreso">(
+    "gasto",
+  );
   const [montoMovimiento, setMontoMovimiento] = useState("");
-  const [fechaMovimiento, setFechaMovimiento] = useState(obtenerHoyLocal());
+  const [fechaMovimiento, setFechaMovimiento] = useState("");
   const [categoriaMovimiento, setCategoriaMovimiento] = useState("");
   const [notaMovimiento, setNotaMovimiento] = useState("");
-  const [errorMovimiento, setErrorMovimiento] = useState<ErrorDominio | null>(null);
-  const [advertenciaSaldoNegativo, setAdvertenciaSaldoNegativo] = useState(false);
+  const [errorMovimiento, setErrorMovimiento] = useState<ErrorDominio | null>(
+    null,
+  );
+  const [advertenciaSaldoNegativo, setAdvertenciaSaldoNegativo] =
+    useState(false);
 
   // Nueva categoría personalizada
   const [mostrarNuevaCategoria, setMostrarNuevaCategoria] = useState(false);
   const [nombreNuevaCategoria, setNombreNuevaCategoria] = useState("");
 
   // Estado para corregir movimiento (RF-LIB-06)
-  const [movimientoACorregir, setMovimientoACorregir] = useState<Movimiento | null>(null);
+  const [movimientoACorregir, setMovimientoACorregir] =
+    useState<Movimiento | null>(null);
   const [montoCorrecto, setMontoCorrecto] = useState("");
-  const [errorCorreccion, setErrorCorreccion] = useState<ErrorDominio | null>(null);
+  const [errorCorreccion, setErrorCorreccion] = useState<ErrorDominio | null>(
+    null,
+  );
+
+  const operacionEnCurso = useRef(false);
+  const solicitudDetalle = useRef(0);
+  const [guardando, setGuardando] = useState(false);
+  const [estadoServidor, setEstadoServidor] = useState("");
+  const [probandoServidor, setProbandoServidor] = useState(false);
+
+  const probarServidor = async () => {
+    setProbandoServidor(true);
+    try {
+      const ping = await invoke<{
+        estado: string;
+        mensaje: string;
+        version: string;
+        timestamp: string;
+        latencia_ms: number;
+      }>("ping_servidor");
+      setEstadoServidor(
+        `${ping.estado}: ${ping.mensaje} · v${ping.version} · ${ping.timestamp} · ${ping.latencia_ms} ms`,
+      );
+    } catch {
+      setEstadoServidor(
+        "Servidor no disponible. Puedes seguir usando tus cuentas sin conexión.",
+      );
+    } finally {
+      setProbandoServidor(false);
+    }
+  };
 
   // --- CARGA INICIAL ---
   const cargarDatos = async () => {
     try {
-      const [resCuentas, resMonedas, resCategorias] = await Promise.all([
-        invoke<ResumenCuentas>("listar_cuentas"),
-        invoke<Moneda[]>("listar_monedas"),
-        invoke<Categoria[]>("listar_categorias"),
-      ]);
-      setResumen(resCuentas);
-      setMonedas(resMonedas);
-      setCategorias(resCategorias);
-    } catch {
-      setError({
-        campo: "general",
-        mensaje: "No se pudieron cargar las cuentas desde el almacenamiento local.",
-      });
+      const datos = await leerDatos();
+      setResumen(datos.resumen);
+      setMonedas(datos.monedas);
+      setCategorias(datos.categorias);
+    } catch (err: unknown) {
+      setError(normalizarError(err));
     }
   };
 
   useEffect(() => {
-    cargarDatos();
+    let activo = true;
+    leerDatos()
+      .then((datos) => {
+        if (!activo) return;
+        setResumen(datos.resumen);
+        setMonedas(datos.monedas);
+        setCategorias(datos.categorias);
+      })
+      .catch((err: unknown) => {
+        if (activo) setError(normalizarError(err));
+      });
+    return () => {
+      activo = false;
+    };
   }, []);
 
   // Redimensionar ventana Tauri dinámicamente
@@ -165,7 +234,10 @@ export default function MisCuentasPage() {
         const altoBase = 560;
         const crecimientoAlto = 80;
         const maximoAlto = 900;
-        const nuevoAlto = Math.min(altoBase + numCuentas * crecimientoAlto, maximoAlto);
+        const nuevoAlto = Math.min(
+          altoBase + numCuentas * crecimientoAlto,
+          maximoAlto,
+        );
 
         const appWindow = getCurrentWindow();
         await appWindow.setSize(new LogicalSize(anchoBase, nuevoAlto));
@@ -174,9 +246,7 @@ export default function MisCuentasPage() {
       }
     };
 
-    if (resumen.cuentas) {
-      ajustarTamanoVentana();
-    }
+    ajustarTamanoVentana();
   }, [resumen.cuentas.length, cuentaSeleccionadaId]);
 
   const obtenerSimbolo = (codigo: string) =>
@@ -193,13 +263,16 @@ export default function MisCuentasPage() {
       setMoneda("");
       setMostrarFormulario(false);
       await cargarDatos();
-    } catch (err: any) {
-      setError(err as ErrorDominio);
+    } catch (err: unknown) {
+      setError(normalizarError(err));
     }
   };
 
   const seleccionarCuenta = async (cuentaId: string) => {
+    if (operacionEnCurso.current) return;
+    const solicitud = ++solicitudDetalle.current;
     setCuentaSeleccionadaId(cuentaId);
+    setDetalleCuenta(null);
     setMostrarFormulario(false);
     setMostrarFormMovimiento(false);
     setMovimientoACorregir(null);
@@ -207,18 +280,27 @@ export default function MisCuentasPage() {
     setErrorMovimiento(null);
 
     try {
-      const det = await invoke<DetalleCuenta>("obtener_detalle_cuenta", { cuentaId });
-      setDetalleCuenta(det);
-    } catch (err: any) {
-      setErrorMovimiento(err as ErrorDominio);
+      const det = await invoke<DetalleCuenta>("obtener_detalle_cuenta", {
+        cuentaId,
+      });
+      if (solicitud === solicitudDetalle.current) setDetalleCuenta(det);
+    } catch (err: unknown) {
+      if (solicitud === solicitudDetalle.current)
+        setErrorMovimiento(normalizarError(err));
     }
   };
 
   // --- MANEJADORES DE MOVIMIENTOS Y CATEGORÍAS ---
-  const abrirFormularioMovimiento = (tipoMov: "gasto" | "ingreso") => {
+  const abrirFormularioMovimiento = async (tipoMov: "gasto" | "ingreso") => {
+    try {
+      setFechaMovimiento(await invoke<string>("fecha_local_actual"));
+    } catch (err: unknown) {
+      setErrorMovimiento(normalizarError(err));
+      return;
+    }
     setTipoMovimiento(tipoMov);
     setMontoMovimiento("");
-    setFechaMovimiento(obtenerHoyLocal());
+
     const primeraCat = categorias.find((c) => c.tipo === tipoMov)?.nombre ?? "";
     setCategoriaMovimiento(primeraCat);
     setNotaMovimiento("");
@@ -240,31 +322,33 @@ export default function MisCuentasPage() {
       setCategoriaMovimiento(nueva.nombre);
       setNombreNuevaCategoria("");
       setMostrarNuevaCategoria(false);
-    } catch (err: any) {
-      setErrorMovimiento(err as ErrorDominio);
+    } catch (err: unknown) {
+      setErrorMovimiento(normalizarError(err));
     }
   };
 
-  const manejarRegistrarMovimiento = async (e: React.FormEvent, confirmadoSaldoNegativo = false) => {
-    e.preventDefault();
+  const manejarRegistrarMovimiento = async (
+    confirmadoSaldoNegativo = false,
+  ) => {
+    if (operacionEnCurso.current) return;
     if (!cuentaSeleccionadaId || !detalleCuenta) return;
     setErrorMovimiento(null);
 
-    // RF-LIB-04: Advertir antes de confirmar si el gasto deja el saldo en negativo
-    const montoNum = Number(montoMovimiento.trim().replace(",", "."));
-    const saldoActualNum = Number(detalleCuenta.saldoActual);
-    if (
-      tipoMovimiento === "gasto" &&
-      !isNaN(montoNum) &&
-      montoNum > 0 &&
-      saldoActualNum - montoNum < 0 &&
-      !confirmadoSaldoNegativo
-    ) {
-      setAdvertenciaSaldoNegativo(true);
-      return;
-    }
-
+    operacionEnCurso.current = true;
+    setGuardando(true);
     try {
+      const evaluacion = await invoke<EvaluacionMovimiento>(
+        "evaluar_movimiento",
+        {
+          cuentaId: cuentaSeleccionadaId,
+          tipo: tipoMovimiento,
+          monto: montoMovimiento,
+        },
+      );
+      if (evaluacion.dejaSaldoNegativo && !confirmadoSaldoNegativo) {
+        setAdvertenciaSaldoNegativo(true);
+        return;
+      }
       const nuevoDetalle = await invoke<DetalleCuenta>("registrar_movimiento", {
         cuentaId: cuentaSeleccionadaId,
         tipo: tipoMovimiento,
@@ -277,8 +361,11 @@ export default function MisCuentasPage() {
       setMostrarFormMovimiento(false);
       setAdvertenciaSaldoNegativo(false);
       await cargarDatos();
-    } catch (err: any) {
-      setErrorMovimiento(err as ErrorDominio);
+    } catch (err: unknown) {
+      setErrorMovimiento(normalizarError(err));
+    } finally {
+      operacionEnCurso.current = false;
+      setGuardando(false);
     }
   };
 
@@ -305,17 +392,23 @@ export default function MisCuentasPage() {
       setMovimientoACorregir(null);
       setMontoCorrecto("");
       await cargarDatos();
-    } catch (err: any) {
-      setErrorCorreccion(err as ErrorDominio);
+    } catch (err: unknown) {
+      setErrorCorreccion(normalizarError(err));
     }
   };
 
-  const cuentaSeleccionada = resumen.cuentas.find((c) => c.id === cuentaSeleccionadaId);
-  const categoriasFiltradas = categorias.filter((c) => c.tipo === tipoMovimiento);
+  const cuentaSeleccionada = resumen.cuentas.find(
+    (c) => c.id === cuentaSeleccionadaId,
+  );
+  const categoriasFiltradas = categorias.filter(
+    (c) => c.tipo === tipoMovimiento,
+  );
 
   // --- RENDER ---
   return (
-    <div className={`app-wrapper ${cuentaSeleccionadaId ? "layout-split" : "layout-single"}`}>
+    <div
+      className={`app-wrapper ${cuentaSeleccionadaId ? "layout-split" : "layout-single"}`}
+    >
       {/* PANEL IZQUIERDO: LISTA DE CUENTAS Y FORMULARIO */}
       <aside className="sidebar-cuentas">
         <header className="header">
@@ -336,11 +429,36 @@ export default function MisCuentasPage() {
           )}
         </header>
 
+        <details>
+          <summary>Conexión con el servidor · Entrega 1</summary>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={probandoServidor}
+            onClick={probarServidor}
+          >
+            {probandoServidor ? "Comprobando…" : "Probar conexión"}
+          </button>
+          {estadoServidor && <p role="status">{estadoServidor}</p>}
+        </details>
+
+        {error && !mostrarFormulario && (
+          <div className="error-alert" role="alert">
+            {error.mensaje}
+          </div>
+        )}
+        {errorMovimiento && !mostrarFormMovimiento && (
+          <div className="error-alert" role="alert">
+            Revisa el campo «{errorMovimiento.campo}»: {errorMovimiento.mensaje}
+          </div>
+        )}
+
         {mostrarFormulario && (
           <section className="form-card">
             <h2 className="form-title">Registrar nueva cuenta</h2>
             <p className="form-subtitle">
-              Los datos se guardan únicamente en este dispositivo. La moneda no podrá cambiarse después de creada.
+              Los datos se guardan únicamente en este dispositivo. La moneda no
+              podrá cambiarse después de creada.
             </p>
 
             {error && (
@@ -437,7 +555,9 @@ export default function MisCuentasPage() {
                 <div key={sub.codigo} className="subtotal-card">
                   <div className="subtotal-header">
                     <span className="subtotal-label">Subtotal</span>
-                    <span className={obtenerClaseBadgeMoneda(sub.codigo)}>{sub.codigo}</span>
+                    <span className={obtenerClaseBadgeMoneda(sub.codigo)}>
+                      {sub.codigo}
+                    </span>
                   </div>
                   <div className="subtotal-amount">
                     {formatearMontoLocal(sub.subtotal, sub.simbolo)}
@@ -449,15 +569,23 @@ export default function MisCuentasPage() {
         )}
 
         <section className="section-block">
-          <h2 className="section-title">Cuentas registradas ({resumen.cuentas.length})</h2>
+          <h2 className="section-title">
+            Cuentas registradas ({resumen.cuentas.length})
+          </h2>
 
           {resumen.cuentas.length === 0 ? (
             <div className="empty-state">
-              <p className="empty-title">Todavía no tienes cuentas registradas</p>
-              <p className="empty-description">
-                Crea tu primera cuenta de efectivo, banco o billetera digital para empezar a llevar el control en este dispositivo.
+              <p className="empty-title">
+                Todavía no tienes cuentas registradas
               </p>
-              <button onClick={() => setMostrarFormulario(true)} className="btn btn-primary">
+              <p className="empty-description">
+                Crea tu primera cuenta de efectivo, banco o billetera digital
+                para empezar a llevar el control en este dispositivo.
+              </p>
+              <button
+                onClick={() => setMostrarFormulario(true)}
+                className="btn btn-primary"
+              >
                 Crear mi primera cuenta
               </button>
             </div>
@@ -473,14 +601,19 @@ export default function MisCuentasPage() {
                   <div>
                     <div className="account-name-row">
                       <h3 className="account-name">{c.nombre}</h3>
-                      <span className={obtenerClaseBadgeMoneda(c.moneda)}>{c.moneda}</span>
+                      <span className={obtenerClaseBadgeMoneda(c.moneda)}>
+                        {c.moneda}
+                      </span>
                     </div>
                     <p className="account-meta">Tipo: {c.tipo}</p>
                   </div>
                   <div className="account-balance-box">
                     <span className="account-balance-label">Saldo actual</span>
                     <span className="account-balance-value">
-                      {formatearMontoLocal(c.saldo.cantidad, obtenerSimbolo(c.moneda))}
+                      {formatearMontoLocal(
+                        c.saldo.cantidad,
+                        obtenerSimbolo(c.moneda),
+                      )}
                     </span>
                   </div>
                 </div>
@@ -493,19 +626,32 @@ export default function MisCuentasPage() {
       {/* PANEL DERECHO: DETALLE DE LA CUENTA Y MOVIMIENTOS */}
       {cuentaSeleccionadaId && cuentaSeleccionada && detalleCuenta && (
         <main className="content-detalle">
-          <button className="btn btn-ghost" onClick={() => setCuentaSeleccionadaId(null)}>
-            <span style={{ fontSize: "24px", lineHeight: "0.8" }}>← Volver</span>
+          <button
+            className="btn btn-ghost"
+            onClick={() => setCuentaSeleccionadaId(null)}
+          >
+            <span style={{ fontSize: "24px", lineHeight: "0.8" }}>
+              ← Volver
+            </span>
           </button>
 
           <header className="detalle-header">
             <div className="detalle-header-top">
               <div className="detalle-info">
                 <h2 className="detalle-titulo">{cuentaSeleccionada.nombre}</h2>
-                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                  <span className={obtenerClaseBadgeMoneda(cuentaSeleccionada.moneda)}>
+                <div
+                  style={{ display: "flex", gap: "8px", alignItems: "center" }}
+                >
+                  <span
+                    className={obtenerClaseBadgeMoneda(
+                      cuentaSeleccionada.moneda,
+                    )}
+                  >
                     {cuentaSeleccionada.moneda}
                   </span>
-                  <span className="account-meta">({cuentaSeleccionada.tipo})</span>
+                  <span className="account-meta">
+                    ({cuentaSeleccionada.tipo})
+                  </span>
                 </div>
               </div>
 
@@ -514,7 +660,7 @@ export default function MisCuentasPage() {
                 <h1 className="saldo-gigante">
                   {formatearMontoLocal(
                     detalleCuenta.saldoActual,
-                    obtenerSimbolo(cuentaSeleccionada.moneda)
+                    obtenerSimbolo(cuentaSeleccionada.moneda),
                   )}
                 </h1>
               </div>
@@ -528,38 +674,62 @@ export default function MisCuentasPage() {
               <div className="subtotal-card">
                 <span className="subtotal-label">Saldo inicial</span>
                 <div className="subtotal-amount">
-                  {formatearMontoLocal(detalleCuenta.composicion.inicial, obtenerSimbolo(cuentaSeleccionada.moneda))}
+                  {formatearMontoLocal(
+                    detalleCuenta.composicion.inicial,
+                    obtenerSimbolo(cuentaSeleccionada.moneda),
+                  )}
                 </div>
               </div>
               <div className="subtotal-card">
                 <span className="subtotal-label">Total ingresos</span>
-                <div className="subtotal-amount" style={{ color: "var(--text-success)" }}>
-                  {formatearMontoLocal(detalleCuenta.composicion.ingresos, obtenerSimbolo(cuentaSeleccionada.moneda), true)}
+                <div
+                  className="subtotal-amount"
+                  style={{ color: "var(--text-success)" }}
+                >
+                  {formatearMontoLocal(
+                    detalleCuenta.composicion.ingresos,
+                    obtenerSimbolo(cuentaSeleccionada.moneda),
+                    true,
+                  )}
                 </div>
               </div>
               <div className="subtotal-card">
                 <span className="subtotal-label">Total gastos</span>
-                <div className="subtotal-amount" style={{ color: "var(--text-danger)" }}>
+                <div
+                  className="subtotal-amount"
+                  style={{ color: "var(--text-danger)" }}
+                >
                   {formatearMontoLocal(
-                    Number(detalleCuenta.composicion.gastos) > 0
-                      ? `-${detalleCuenta.composicion.gastos}`
-                      : "0.00",
-                    obtenerSimbolo(cuentaSeleccionada.moneda)
+                    `-${detalleCuenta.composicion.gastos}`,
+                    obtenerSimbolo(cuentaSeleccionada.moneda),
                   )}
                 </div>
               </div>
               <div className="subtotal-card">
                 <span className="subtotal-label">Total ajustes</span>
-                <div className="subtotal-amount" style={{ color: "var(--text-ajust)" }}>
-                  {formatearMontoLocal(detalleCuenta.composicion.ajustes, obtenerSimbolo(cuentaSeleccionada.moneda), true)}
+                <div
+                  className="subtotal-amount"
+                  style={{ color: "var(--text-ajust)" }}
+                >
+                  {formatearMontoLocal(
+                    detalleCuenta.composicion.ajustes,
+                    obtenerSimbolo(cuentaSeleccionada.moneda),
+                    true,
+                  )}
                 </div>
               </div>
             </div>
           </section>
 
           {/* Botones de Acción de Movimientos */}
-          <div className="acciones-movimientos" style={{ marginBottom: "20px" }}>
-            <h3 className="section-title" style={{ margin: 0, alignSelf: "center" }}>
+          <div
+            className="acciones-movimientos"
+            style={{ marginBottom: "20px" }}
+          >
+            <h3
+              className="section-title"
+              style={{ margin: 0, alignSelf: "center" }}
+            >
               Historial de Movimientos ({detalleCuenta.movimientos.length})
             </h3>
             <div style={{ display: "flex", gap: "10px" }}>
@@ -586,10 +756,12 @@ export default function MisCuentasPage() {
           {mostrarFormMovimiento && (
             <section className="form-card">
               <h3 className="form-title">
-                Registrar {tipoMovimiento === "gasto" ? "Gasto" : "Ingreso"} en {cuentaSeleccionada.moneda}
+                Registrar {tipoMovimiento === "gasto" ? "Gasto" : "Ingreso"} en{" "}
+                {cuentaSeleccionada.moneda}
               </h3>
               <p className="form-subtitle">
-                La moneda del movimiento es siempre la de la cuenta ({cuentaSeleccionada.moneda}).
+                La moneda del movimiento es siempre la de la cuenta (
+                {cuentaSeleccionada.moneda}).
               </p>
 
               {errorMovimiento && (
@@ -608,14 +780,18 @@ export default function MisCuentasPage() {
                   <div>
                     <strong>Advertencia de saldo negativo: </strong>
                     <span>
-                      Este gasto dejará el saldo de la cuenta en negativo. ¿Deseas confirmarlo de todas formas?
+                      Este gasto dejará el saldo de la cuenta en negativo.
+                      ¿Deseas confirmarlo de todas formas?
                     </span>
                   </div>
-                  <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
+                  <div
+                    style={{ display: "flex", gap: "8px", marginTop: "10px" }}
+                  >
                     <button
                       type="button"
                       className="btn btn-primary"
-                      onClick={(e) => manejarRegistrarMovimiento(e as any, true)}
+                      disabled={guardando}
+                      onClick={() => manejarRegistrarMovimiento(true)}
                     >
                       Sí, confirmar gasto
                     </button>
@@ -630,7 +806,12 @@ export default function MisCuentasPage() {
                 </div>
               )}
 
-              <form onSubmit={(e) => manejarRegistrarMovimiento(e, false)}>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void manejarRegistrarMovimiento();
+                }}
+              >
                 <div className="form-row">
                   <div>
                     <label className="form-label">Tipo</label>
@@ -639,7 +820,9 @@ export default function MisCuentasPage() {
                       onChange={(e) => {
                         const nuevoTipo = e.target.value as "gasto" | "ingreso";
                         setTipoMovimiento(nuevoTipo);
-                        const primera = categorias.find((c) => c.tipo === nuevoTipo)?.nombre ?? "";
+                        const primera =
+                          categorias.find((c) => c.tipo === nuevoTipo)
+                            ?.nombre ?? "";
                         setCategoriaMovimiento(primera);
                         setAdvertenciaSaldoNegativo(false);
                       }}
@@ -651,7 +834,9 @@ export default function MisCuentasPage() {
                   </div>
 
                   <div>
-                    <label className="form-label">Monto ({cuentaSeleccionada.moneda})</label>
+                    <label className="form-label">
+                      Monto ({cuentaSeleccionada.moneda})
+                    </label>
                     <input
                       type="text"
                       value={montoMovimiento}
@@ -677,11 +862,19 @@ export default function MisCuentasPage() {
 
                 <div className="form-row">
                   <div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                      }}
+                    >
                       <label className="form-label">Categoría</label>
                       <button
                         type="button"
-                        onClick={() => setMostrarNuevaCategoria(!mostrarNuevaCategoria)}
+                        onClick={() =>
+                          setMostrarNuevaCategoria(!mostrarNuevaCategoria)
+                        }
                         style={{
                           background: "none",
                           border: "none",
@@ -701,22 +894,37 @@ export default function MisCuentasPage() {
                     >
                       <option value="">Seleccione categoría...</option>
                       {categoriasFiltradas.map((cat) => (
-                        <option key={`${cat.tipo}-${cat.nombre}`} value={cat.nombre}>
+                        <option
+                          key={`${cat.tipo}-${cat.nombre}`}
+                          value={cat.nombre}
+                        >
                           {cat.nombre}
                         </option>
                       ))}
                     </select>
 
                     {mostrarNuevaCategoria && (
-                      <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: "8px",
+                          marginTop: "8px",
+                        }}
+                      >
                         <input
                           type="text"
                           value={nombreNuevaCategoria}
-                          onChange={(e) => setNombreNuevaCategoria(e.target.value)}
+                          onChange={(e) =>
+                            setNombreNuevaCategoria(e.target.value)
+                          }
                           placeholder="Nombre de nueva categoría"
                           className="form-control"
                         />
-                        <button type="button" onClick={manejarCrearCategoria} className="btn btn-secondary">
+                        <button
+                          type="button"
+                          onClick={manejarCrearCategoria}
+                          className="btn btn-secondary"
+                        >
                           Añadir
                         </button>
                       </div>
@@ -743,7 +951,11 @@ export default function MisCuentasPage() {
                   >
                     Cancelar
                   </button>
-                  <button type="submit" className="btn btn-primary">
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={guardando}
+                  >
                     Guardar movimiento
                   </button>
                 </div>
@@ -756,7 +968,10 @@ export default function MisCuentasPage() {
             <section className="form-card">
               <h3 className="form-title">Corregir movimiento</h3>
               <p className="form-subtitle">
-                El movimiento original ({movimientoACorregir.categoria} del {movimientoACorregir.fecha}) no se borrará: se registrará un ajuste por la diferencia. Si el movimiento no debió existir, escribe <strong>0</strong>.
+                El movimiento original ({movimientoACorregir.categoria} del{" "}
+                {movimientoACorregir.fecha}) no se borrará: se registrará un
+                ajuste por la diferencia. Si el movimiento no debió existir,
+                escribe <strong>0</strong>.
               </p>
 
               {errorCorreccion && (
@@ -772,7 +987,8 @@ export default function MisCuentasPage() {
               <form onSubmit={manejarCorregirMovimiento}>
                 <div className="form-group">
                   <label className="form-label">
-                    Monto correcto ({cuentaSeleccionada.moneda}) — Valor vigente actual: {movimientoACorregir.montoVigente}
+                    Monto correcto ({cuentaSeleccionada.moneda}) — Valor vigente
+                    actual: {movimientoACorregir.montoVigente}
                   </label>
                   <input
                     type="text"
@@ -791,7 +1007,11 @@ export default function MisCuentasPage() {
                   >
                     Cancelar
                   </button>
-                  <button type="submit" className="btn btn-primary">
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={guardando}
+                  >
                     Registrar ajuste de corrección
                   </button>
                 </div>
@@ -802,7 +1022,9 @@ export default function MisCuentasPage() {
           {/* Lista de Movimientos (Sección 2.3) */}
           <section className="lista-movimientos">
             {detalleCuenta.movimientos.length === 0 ? (
-              <div className="empty-state">No hay movimientos registrados en esta cuenta.</div>
+              <div className="empty-state">
+                No hay movimientos registrados en esta cuenta.
+              </div>
             ) : (
               <div className="accounts-list">
                 {detalleCuenta.movimientos.map((mov) => {
@@ -812,12 +1034,20 @@ export default function MisCuentasPage() {
                       <div>
                         <div className="account-name-row">
                           <span className="account-name">{mov.categoria}</span>
-                          <span className="badge" style={{ textTransform: "uppercase" }}>
+                          <span
+                            className="badge"
+                            style={{ textTransform: "uppercase" }}
+                          >
                             {mov.tipo}
                           </span>
                           {mov.corregido && (
                             <span className="badge badge-corregido">
-                              Corregido (vigente: {formatearMontoLocal(mov.montoVigente, obtenerSimbolo(cuentaSeleccionada.moneda))})
+                              Corregido (vigente:{" "}
+                              {formatearMontoLocal(
+                                mov.montoVigente,
+                                obtenerSimbolo(cuentaSeleccionada.moneda),
+                              )}
+                              )
                             </span>
                           )}
                           {mov.esAjuste && (
@@ -827,11 +1057,18 @@ export default function MisCuentasPage() {
                           )}
                         </div>
                         <p className="account-meta">
-                          Fecha: {mov.fecha} {mov.nota ? `• ${mov.nota}` : ""} • ID: #{mov.id.slice(0, 8)}
+                          Fecha: {mov.fecha} {mov.nota ? `• ${mov.nota}` : ""} •
+                          ID: #{mov.id.slice(0, 8)}
                         </p>
                       </div>
 
-                      <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "16px",
+                        }}
+                      >
                         <div className="account-balance-box">
                           <span
                             className="account-balance-value"
@@ -839,14 +1076,14 @@ export default function MisCuentasPage() {
                               color: mov.esAjuste
                                 ? "var(--text-ajust)"
                                 : esPositivo
-                                ? "var(--text-success)"
-                                : "var(--text-danger)",
+                                  ? "var(--text-success)"
+                                  : "var(--text-danger)",
                             }}
                           >
                             {formatearMontoLocal(
                               mov.monto,
                               obtenerSimbolo(cuentaSeleccionada.moneda),
-                              true
+                              true,
                             )}
                           </span>
                         </div>
@@ -857,7 +1094,11 @@ export default function MisCuentasPage() {
                             type="button"
                             onClick={() => iniciarCorreccion(mov)}
                             className="btn btn-ghost"
-                            style={{ border: "1px solid var(--border-subtle)", padding: "6px 12px", fontSize: "12px" }}
+                            style={{
+                              border: "1px solid var(--border-subtle)",
+                              padding: "6px 12px",
+                              fontSize: "12px",
+                            }}
                           >
                             Corregir
                           </button>

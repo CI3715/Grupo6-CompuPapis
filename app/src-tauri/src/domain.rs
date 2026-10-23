@@ -196,6 +196,13 @@ impl TipoCuenta {
     }
 }
 
+/// La moneda es privada y no hay una operación para cambiarla (INV-18).
+/// ```compile_fail
+/// use app_lib::domain::Cuenta;
+/// fn cambiar_moneda(cuenta: &mut Cuenta) {
+///     cuenta.moneda = "EUR".to_string();
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Cuenta {
     id: String,
@@ -317,7 +324,7 @@ pub struct DatosMovimientoCorregido {
     pub nota: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventoLibro {
     pub id: String,
     pub tipo: String,
@@ -677,6 +684,26 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
     })
 }
 
+fn validar_efecto_subtotal(
+    libro: &ProyeccionLibro,
+    moneda: &str,
+    efecto: Decimal,
+) -> Result<(), ErrorDominio> {
+    let subtotal = libro
+        .cuentas_orden
+        .iter()
+        .try_fold(Decimal::ZERO, |total, id| {
+            let cuenta = &libro.cuentas[id];
+            if cuenta.moneda == moneda {
+                sumar_exacto(total, cuenta.saldo_actual()?)
+            } else {
+                Ok(total)
+            }
+        })?;
+    sumar_exacto(subtotal, efecto)?;
+    Ok(())
+}
+
 // ==========================================
 // CASOS DE USO
 // ==========================================
@@ -716,6 +743,11 @@ pub fn ejecutar_crear_cuenta<R: RepositorioEventos>(
         ));
     }
 
+    validar_efecto_subtotal(
+        &proyeccion,
+        monto_inicial.moneda(),
+        monto_inicial.cantidad(),
+    )?;
     let cuenta_id = uuid::Uuid::new_v4().to_string();
     let datos = DatosCuentaCreada {
         cuenta_id: cuenta_id.clone(),
@@ -888,6 +920,7 @@ pub fn ejecutar_registrar_movimiento<R: RepositorioEventos>(
         TipoMovimiento::Gasto => -monto.cantidad(),
     };
     sumar_exacto(cta.saldo_actual()?, efecto)?;
+    validar_efecto_subtotal(&proyeccion, &cta.moneda, efecto)?;
     match tipo {
         TipoMovimiento::Ingreso => sumar_exacto(cta.ingresos, monto.cantidad())?,
         TipoMovimiento::Gasto => sumar_exacto(cta.gastos, monto.cantidad())?,
@@ -968,6 +1001,7 @@ pub fn ejecutar_corregir_movimiento<R: RepositorioEventos>(
 
     sumar_exacto(cta.ajustes, diferencia)?;
     sumar_exacto(cta.saldo_actual()?, diferencia)?;
+    validar_efecto_subtotal(&proyeccion, &cta.moneda, diferencia)?;
     let hoy_str = Local::now().date_naive().format("%Y-%m-%d").to_string();
     let nota = format!(
         "Ajuste de corrección (monto anterior: {:.2}, monto correcto: {:.2})",
@@ -1102,7 +1136,11 @@ pub struct RepositorioEnMemoria {
 
 impl RepositorioEventos for RepositorioEnMemoria {
     fn guardar_evento(&mut self, evento: &EventoLibro) -> Result<(), String> {
-        if !self.eventos.iter().any(|e| e.id == evento.id) {
+        if let Some(existente) = self.eventos.iter().find(|e| e.id == evento.id) {
+            if existente != evento {
+                return Err("El identificador ya pertenece a otro evento.".into());
+            }
+        } else {
             self.eventos.push(evento.clone());
         }
         Ok(())
@@ -1483,6 +1521,7 @@ pub fn evaluar_movimiento<R: RepositorioEventos>(
         TipoMovimiento::Gasto => -monto.cantidad(),
     };
     let saldo = sumar_exacto(cuenta.saldo_actual()?, efecto)?;
+    validar_efecto_subtotal(&libro, &cuenta.moneda, efecto)?;
     Ok(EvaluacionMovimiento {
         deja_saldo_negativo: tipo == TipoMovimiento::Gasto && saldo < Decimal::ZERO,
         saldo_resultante: format!("{saldo:.2}"),

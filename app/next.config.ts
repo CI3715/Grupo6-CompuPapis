@@ -5,15 +5,8 @@ const nextConfig: NextConfig = {
 
   experimental: {
     agentFeedback: true,
-  },
-
-  turbopack: {
-    rules: {
-      "*.css": {
-        loaders: ["@tailwindcss/turbopack"],
-        as: "*.css",
-      },
-    },
+    // TypeScript 5: comprobar tipos mediante su API sin depender de stdout de un subproceso.
+    useTypeScriptCli: false,
   },
 };
 

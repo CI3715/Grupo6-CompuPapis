@@ -51,7 +51,7 @@ impl RepositorioEventos for RepositorioSqlite {
     fn guardar_evento(&mut self, evento: &EventoLibro) -> Result<(), String> {
         let conn = self.abrir()?;
         // INV-04 e INV-13: La tabla de eventos solo admite inserciones idempotentes
-        conn.execute(
+        let insertados = conn.execute(
             "INSERT OR IGNORE INTO eventos_libro (id, tipo, momento_registro, dispositivo_origen, datos_json)
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
@@ -63,6 +63,15 @@ impl RepositorioEventos for RepositorioSqlite {
             ],
         )
         .map_err(|e| e.to_string())?;
+        if insertados == 0 {
+            let existente = self
+                .obtener_eventos()?
+                .into_iter()
+                .find(|e| e.id == evento.id);
+            if existente.as_ref() != Some(evento) {
+                return Err("El identificador ya pertenece a otro evento.".into());
+            }
+        }
         Ok(())
     }
 
@@ -140,4 +149,50 @@ mod pruebas {
         drop(repo);
         std::fs::remove_file(ruta).unwrap();
     }
+}
+
+/// Copia verificada del libro anterior al cambiar el identificador de la aplicación.
+/// SQLite Backup incluye páginas pendientes en WAL; el original nunca se reescribe.
+/// Publicar mediante hard link evita reemplazar una base creada concurrentemente.
+pub fn migrar_libro_anterior(
+    anterior: &std::path::Path,
+    nueva: &std::path::Path,
+) -> Result<(), String> {
+    if nueva.exists() || !anterior.exists() {
+        return Ok(());
+    }
+    let directorio = nueva.parent().ok_or("Directorio de datos inválido")?;
+    std::fs::create_dir_all(directorio).map_err(|e| e.to_string())?;
+    let temporal = directorio.join(format!("migracion-{}.sqlite", uuid::Uuid::new_v4()));
+    let resultado = (|| {
+        let origen =
+            Connection::open_with_flags(anterior, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .map_err(|e| e.to_string())?;
+        let mut destino = Connection::open(&temporal).map_err(|e| e.to_string())?;
+        {
+            let backup =
+                rusqlite::backup::Backup::new(&origen, &mut destino).map_err(|e| e.to_string())?;
+            if backup.step(-1).map_err(|e| e.to_string())? != rusqlite::backup::StepResult::Done {
+                return Err(
+                    "La base anterior está ocupada. Ciérrala y vuelve a abrir Cuentas Claras."
+                        .into(),
+                );
+            }
+        }
+        let integridad: String = destino
+            .query_row("PRAGMA quick_check", [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        if integridad != "ok" {
+            return Err("La copia de SQLite no superó la verificación de integridad.".into());
+        }
+        drop(destino);
+        let copia = RepositorioSqlite::inicializar(temporal.clone())?;
+        crate::domain::ejecutar_listar_cuentas(&copia).map_err(|e| e.mensaje)?;
+        drop(copia);
+        std::fs::hard_link(&temporal, nueva)
+            .map_err(|e| format!("No se pudo publicar la copia sin sobrescribir datos: {e}"))?;
+        Ok(())
+    })();
+    let _ = std::fs::remove_file(&temporal);
+    resultado
 }

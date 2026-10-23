@@ -449,3 +449,142 @@ fn desbordamiento_no_agrega_eventos_ni_deja_saldos_parciales() {
     );
     assert_eq!(r.obtener_eventos().unwrap().len(), n);
 }
+
+#[test]
+fn id_reutilizado_con_otro_contenido_es_error_en_memoria_y_sqlite() {
+    fn verificar<R: RepositorioEventos>(r: &mut R) {
+        ejecutar_crear_cuenta(r, "Cuenta", "banco", "USD", "100.00", "prueba").unwrap();
+        let evento = r.obtener_eventos().unwrap()[0].clone();
+        r.guardar_evento(&evento).unwrap();
+        let mut alterado = evento.clone();
+        alterado.datos_json = "{}".into();
+        assert!(r.guardar_evento(&alterado).is_err());
+        assert_eq!(r.obtener_eventos().unwrap(), vec![evento]);
+    }
+    verificar(&mut RepositorioEnMemoria::default());
+    let path = std::env::temp_dir().join(format!("cc-id-{}.sqlite", uuid::Uuid::new_v4()));
+    let mut r = RepositorioSqlite::inicializar(path.clone()).unwrap();
+    verificar(&mut r);
+    drop(r);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn ajustes_historicos_de_ingresos_se_encadenan_y_admiten_correccion_actual() {
+    let mut r = RepositorioEnMemoria::default();
+    let c = ejecutar_crear_cuenta(&mut r, "Cuenta", "banco", "USD", "1000.00", "prueba").unwrap();
+    let id = movimiento_historico(&mut r, c.id(), "ingreso", "800.00");
+    for delta in ["-100.00", "50.00"] {
+        r.guardar_evento(&evento(
+            "MovimientoCorregido",
+            json!({
+                "ajuste_id":uuid::Uuid::new_v4().to_string(),"movimiento_original_id":id,
+                "cuenta_id":c.id(),"monto_ajuste":delta
+            }),
+        ))
+        .unwrap();
+    }
+    let d = ejecutar_obtener_detalle_cuenta(&r, c.id()).unwrap();
+    assert_eq!(d.saldo_actual, "1750.00");
+    let orig = d.movimientos.iter().find(|m| m.id == id).unwrap();
+    assert_eq!(orig.monto_vigente, "750.00");
+    assert_eq!(orig.monto, "800.00");
+    assert_eq!(
+        ejecutar_corregir_movimiento(&mut r, c.id(), &id, "0", "prueba")
+            .unwrap()
+            .saldo_actual,
+        "1000.00"
+    );
+}
+
+#[test]
+fn subtotal_fuera_de_rango_se_rechaza_antes_de_guardar() {
+    let mut r = RepositorioEnMemoria::default();
+    ejecutar_crear_cuenta(
+        &mut r,
+        "Máximo",
+        "banco",
+        "USD",
+        &Decimal::MAX.to_string(),
+        "prueba",
+    )
+    .unwrap();
+    let c = ejecutar_crear_cuenta(&mut r, "Cero", "efectivo", "USD", "0", "prueba").unwrap();
+    let antes = r.obtener_eventos().unwrap();
+    assert!(ejecutar_crear_cuenta(&mut r, "Otra", "banco", "USD", "1", "prueba").is_err());
+    assert!(
+        ejecutar_registrar_movimiento(
+            &mut r,
+            RegistrarMovimiento {
+                cuenta_id: c.id(),
+                tipo_str: "ingreso",
+                monto_str: "1",
+                fecha_str: &Local::now().date_naive().to_string(),
+                categoria_str: "Salario",
+                nota_opt: None,
+                dispositivo_id: "prueba"
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(r.obtener_eventos().unwrap(), antes);
+    assert_eq!(
+        ejecutar_listar_cuentas(&r).unwrap().subtotales[0].subtotal,
+        format!("{:.2}", Decimal::MAX)
+    );
+}
+
+#[test]
+fn cambio_identificador_copia_wal_sin_alterar_original_ni_sobrescribir_destino() {
+    let dir = std::env::temp_dir().join(format!("cc-migracion-{}", uuid::Uuid::new_v4()));
+    let anterior = dir.join("com.tauri.dev/cuentas_claras.sqlite");
+    let nueva = dir.join("com.compupapis.cuentasclaras/cuentas_claras.sqlite");
+    let mut r = RepositorioSqlite::inicializar(anterior.clone()).unwrap();
+    let wal = rusqlite::Connection::open(&anterior).unwrap();
+    wal.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;")
+        .unwrap();
+    let c =
+        ejecutar_crear_cuenta(&mut r, "Histórica", "banco", "USD", "1000.00", "prueba").unwrap();
+    movimiento_historico(&mut r, c.id(), "ingreso", "800.00");
+    let id = movimiento_historico(&mut r, c.id(), "gasto", "500.00");
+    ejecutar_corregir_movimiento(&mut r, c.id(), &id, "50.00", "prueba").unwrap();
+    let originales = r.obtener_eventos().unwrap();
+    crate::sqlite_repo::migrar_libro_anterior(&anterior, &nueva).unwrap();
+    let mut destino = RepositorioSqlite::inicializar(nueva.clone()).unwrap();
+    assert_eq!(destino.obtener_eventos().unwrap(), originales);
+    assert_eq!(
+        ejecutar_obtener_detalle_cuenta(&destino, c.id())
+            .unwrap()
+            .saldo_actual,
+        "1750.00"
+    );
+    assert_eq!(r.obtener_eventos().unwrap(), originales);
+    registrar(&mut destino, c.id(), "ingreso", "1.00");
+    crate::sqlite_repo::migrar_libro_anterior(&anterior, &nueva).unwrap();
+    assert_eq!(
+        ejecutar_obtener_detalle_cuenta(&destino, c.id())
+            .unwrap()
+            .saldo_actual,
+        "1751.00"
+    );
+    assert_eq!(r.obtener_eventos().unwrap(), originales);
+    drop(destino);
+    drop(r);
+    drop(wal);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn migracion_incompatible_no_publica_destino_y_conserva_origen() {
+    let dir = std::env::temp_dir().join(format!("cc-migracion-invalida-{}", uuid::Uuid::new_v4()));
+    let anterior = dir.join("anterior.sqlite");
+    let nueva = dir.join("nueva.sqlite");
+    let mut r = RepositorioSqlite::inicializar(anterior.clone()).unwrap();
+    let e = evento("MovimientoRegistrado", json!({"incompatible":true}));
+    r.guardar_evento(&e).unwrap();
+    assert!(crate::sqlite_repo::migrar_libro_anterior(&anterior, &nueva).is_err());
+    assert!(!nueva.exists());
+    assert_eq!(r.obtener_eventos().unwrap(), vec![e]);
+    drop(r);
+    std::fs::remove_dir_all(dir).unwrap();
+}
