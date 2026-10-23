@@ -41,6 +41,10 @@ El servidor expone el endpoint:
 
 La aplicación debe utilizarlo para verificar la conexión y mostrar el estado, mensaje, versión y tiempo de respuesta del servidor.
 
+## Guía de pruebas
+
+Consulta la [guía de pruebas de las Entregas 2 y 3](docs/pruebas/README.md): incluye directorios, comandos, qué verifica cada prueba y pasos manuales con resultados esperados.
+
 ## Instalación y ejecución
 
 ### Requisitos
