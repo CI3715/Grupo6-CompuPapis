@@ -1,6 +1,9 @@
 mod domain;
 mod sqlite_repo;
 
+#[cfg(test)]
+mod pruebas_movimientos;
+
 use domain::{
     catalogo_monedas, ejecutar_corregir_movimiento, ejecutar_crear_categoria,
     ejecutar_crear_cuenta, ejecutar_listar_categorias, ejecutar_listar_cuentas,
