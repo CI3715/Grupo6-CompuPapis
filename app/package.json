@@ -16,7 +16,8 @@
     "format:check:front": "prettier --check .",
     "format:check:tauri": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
     "format:check:back": "cargo fmt --manifest-path ../server/Cargo.toml -- --check",
-    "format:check": "npm run format:check:front && npm run format:check:tauri && npm run format:check:back"
+    "format:check": "npm run format:check:front && npm run format:check:tauri && npm run format:check:back",
+    "test": "node --experimental-strip-types tests/money.test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.1",

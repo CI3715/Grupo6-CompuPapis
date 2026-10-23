@@ -30,3 +30,15 @@ async fn main() {
 
     axum::serve(listener, app).await.unwrap();
 }
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn ping_conserva_contrato_entrega_1() {
+        let respuesta = super::ping().await.0;
+        assert_eq!(respuesta.estado, "ok");
+        assert_eq!(respuesta.mensaje, "Servidor Cuentas Claras activo");
+        assert_eq!(respuesta.version, "0.1.0");
+        assert!(chrono::DateTime::parse_from_rfc3339(&respuesta.timestamp).is_ok());
+    }
+}

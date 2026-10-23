@@ -8,3 +8,5 @@ Cada ADR debe indicar:
 - Decisión
 - Alternativas consideradas
 - Consecuencias
+
+- [ADR 007: libro local compatible y decisiones monetarias exactas](007-libro-local-compatible.md)
