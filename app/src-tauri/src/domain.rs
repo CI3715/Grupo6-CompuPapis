@@ -604,25 +604,33 @@ pub fn ejecutar_registrar_movimiento<R: RepositorioEventos>(
     if cat_limpia.is_empty() {
         return Err(ErrorDominio::nuevo("categoria", "La categoría es obligatoria."));
     }
-    let cat_encontrada = proyeccion
-        .categorias
-        .iter()
-        .find(|c| c.nombre.to_lowercase() == cat_limpia.to_lowercase());
+// Buscamos la categoria que tenga el mismo nombre y tipo.
+let cat_encontrada = proyeccion
+    .categorias
+    .iter()
+    .find(|c| {
+        c.nombre.to_lowercase() == cat_limpia.to_lowercase()
+            && c.tipo == tipo
+    });
 
-    match cat_encontrada {
-        None => {
-            return Err(ErrorDominio::nuevo("categoria", "La categoría seleccionada no existe."));
-        }
-        Some(c) if c.tipo != tipo => {
+let cat_nombre_oficial = match cat_encontrada {
+    Some(c) => c.nombre.clone(),
+    None => {
+        if proyeccion.categorias.iter().any(|c| {
+            c.nombre.to_lowercase() == cat_limpia.to_lowercase()
+        }) {
             return Err(ErrorDominio::nuevo(
                 "categoria",
-                "La categoría seleccionada no corresponde al tipo de movimiento.",
+                "La categoría seleccionada no es valida para este tipo de movimiento.",
             ));
         }
-        _ => {}
-    }
 
-    let cat_nombre_oficial = cat_encontrada.unwrap().nombre.clone();
+        return Err(ErrorDominio::nuevo(
+            "categoria",
+            "La categoría seleccionada no existe.",
+        ));
+    }
+};
     let nota_limpia = nota_opt
         .map(|n| n.trim().to_string())
         .filter(|n| !n.is_empty());
