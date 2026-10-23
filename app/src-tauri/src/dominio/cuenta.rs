@@ -111,7 +111,7 @@ impl fmt::Display for TipoCuenta {
 }
 
 // Lugar donde el usuario guarda dinero
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Cuenta {
     // Identificador unico de la cuenta
     id: String,

@@ -1,6 +1,7 @@
 //! Objeto de valor Monto para calculos monetarios
 
 use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::moneda::{CodigoMoneda, Moneda};
@@ -20,7 +21,7 @@ pub enum ErrorMonto {
 }
 
 // Par indivisiblede cantidad decimal exacta y su moneda asociada
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Monto {
     // Cantidad decimal exacta del monto
     cantidad: Decimal,
