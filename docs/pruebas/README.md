@@ -6,27 +6,28 @@ Esta guía explica cómo ejecutar las pruebas de las Entregas 2 y 3, qué compru
 
 Se necesitan Rust/Cargo, Node.js 22.18 o posterior, npm y las dependencias del sistema de Tauri 2. La primera instalación o compilación puede necesitar internet para descargar dependencias; el libro financiero de la aplicación funciona localmente.
 
-En este equipo, la raíz del proyecto es:
+Clonar el repositorio y entrar en su raíz:
 
 ```bash
-cd /home/luimi/Projects/cuentas-claras
+git clone https://github.com/CI3715/Grupo6-CompuPapis.git cuentas-claras
+cd cuentas-claras
 ```
 
-En otra computadora, sustituir esa ruta por la carpeta donde se clonó el repositorio. En esta guía, **raíz** significa esa carpeta, que contiene `app/`, `server/` y `README.md`.
+En esta guía, **raíz** significa la carpeta del repositorio que contiene `app/`, `server/` y `README.md`. Los bloques son independientes: antes de ejecutar uno, situarse en el directorio indicado. Si se está en `app/`, `cd ..` permite volver a la raíz.
 
-Comprobar la rama y los cambios pendientes:
+Comprobar el estado del checkout sin cambiar de rama:
 
 ```bash
 git branch --show-current
 git status --short
 ```
 
-Para probar la integración descrita aquí, la rama debe ser `integration/entregas-2-3` o una rama que ya contenga sus commits. Si se necesita cambiar de rama, revisar primero los cambios locales y conservarlos; no usar reset ni borrar archivos.
+No se necesita una rama especial para ejecutar las pruebas. Si hay cambios locales, conservarlos antes de cambiar de checkout.
 
-Si todavía no están instaladas las dependencias JavaScript:
+Para instalar las dependencias JavaScript, **partiendo de la raíz**:
 
 ```bash
-cd /home/luimi/Projects/cuentas-claras/app
+cd app
 npm ci
 ```
 
@@ -37,8 +38,6 @@ Las pruebas automáticas de Rust no necesitan abrir Tauri ni arrancar Axum. Los 
 ### Rust: ejecutar desde la raíz
 
 ```bash
-cd /home/luimi/Projects/cuentas-claras
-
 cargo check --manifest-path app/src-tauri/Cargo.toml
 cargo test --manifest-path app/src-tauri/Cargo.toml
 cargo fmt --manifest-path app/src-tauri/Cargo.toml -- --check
@@ -50,10 +49,10 @@ cargo fmt --manifest-path server/Cargo.toml -- --check
 cargo clippy --manifest-path server/Cargo.toml -- -D warnings
 ```
 
-### Frontend: ejecutar desde app
+### Frontend: partir de la raíz y entrar en app
 
 ```bash
-cd /home/luimi/Projects/cuentas-claras/app
+cd app
 
 npm test
 npm run lint
@@ -63,19 +62,19 @@ npm run build
 
 Ejecutar los comandos uno por uno. Si alguno falla, guardar su salida completa y corregir la causa antes de considerar aprobada la verificación.
 
-| Comando                           | Qué comprueba                                                                                                   | Resultado esperado                                               |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `cargo check`                     | Que el paquete Rust y sus dependencias compilan para comprobación de tipos. No ejecuta pruebas.                 | Termina con `Finished` sin errores.                              |
-| `cargo test` de Tauri             | Validaciones, invariantes, saldos, compatibilidad, persistencia, migración y protección de moneda.              | En esta integración: 28 pruebas unitarias y 1 doctest aprobados. |
-| `cargo test` del servidor         | El contrato del manejador de ping: estado, mensaje, versión y timestamp válido. No hace una petición HTTP real. | 1 prueba aprobada.                                               |
-| `cargo fmt ... -- --check`        | Formato Rust sin modificar archivos.                                                                            | Termina sin diferencias; normalmente no imprime nada.            |
-| `cargo clippy ... -- -D warnings` | Análisis estático Rust; las advertencias se consideran errores.                                                 | Sin errores ni advertencias.                                     |
-| `npm test`                        | Representación decimal exacta del dinero en la UI.                                                              | 3 pruebas aprobadas.                                             |
-| `npm run lint`                    | Reglas de TypeScript/React y hooks mediante ESLint.                                                             | Sin errores ni advertencias.                                     |
-| `npm run format:check`            | Prettier del frontend y formato de ambos paquetes Rust. No modifica archivos.                                   | Todos los pasos aprobados.                                       |
-| `npm run build`                   | Compilación de Next.js, comprobación de TypeScript y exportación estática.                                      | Build exitoso; archivos generados en `app/out/`.                 |
+| Comando                           | Qué comprueba                                                                                                   | Resultado esperado                                    |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `cargo check`                     | Que el paquete Rust y sus dependencias compilan para comprobación de tipos. No ejecuta pruebas.                 | Termina con `Finished` sin errores.                   |
+| `cargo test` de Tauri             | Validaciones, invariantes, saldos, compatibilidad, persistencia, migración y protección de moneda.              | 28 pruebas unitarias y 1 doctest aprobados.           |
+| `cargo test` del servidor         | El contrato del manejador de ping: estado, mensaje, versión y timestamp válido. No hace una petición HTTP real. | 1 prueba aprobada.                                    |
+| `cargo fmt ... -- --check`        | Formato Rust sin modificar archivos.                                                                            | Termina sin diferencias; normalmente no imprime nada. |
+| `cargo clippy ... -- -D warnings` | Análisis estático Rust; las advertencias se consideran errores.                                                 | Sin errores ni advertencias.                          |
+| `npm test`                        | Representación decimal exacta del dinero en la UI.                                                              | 3 pruebas aprobadas.                                  |
+| `npm run lint`                    | Reglas de TypeScript/React y hooks mediante ESLint.                                                             | Sin errores ni advertencias.                          |
+| `npm run format:check`            | Prettier del frontend y formato de ambos paquetes Rust. No modifica archivos.                                   | Todos los pasos aprobados.                            |
+| `npm run build`                   | Compilación de Next.js, comprobación de TypeScript y exportación estática.                                      | Build exitoso; archivos generados en `app/out/`.      |
 
-Los recuentos corresponden a esta integración; pueden aumentar cuando se agreguen pruebas. El doctest de moneda usa `compile_fail`: **pasa cuando el compilador rechaza modificar el campo privado**, que es el comportamiento esperado de INV-18. Los bloques que dicen `running 0 tests` para otros targets no significan que se omitieran las 28 pruebas de la biblioteca.
+Los recuentos corresponden a los casos documentados; pueden aumentar cuando se agreguen pruebas. El doctest de moneda usa `compile_fail`: **pasa cuando el compilador rechaza modificar el campo privado**, que es el comportamiento esperado de INV-18. Los bloques que dicen `running 0 tests` para otros targets no significan que se omitieran las 28 pruebas de la biblioteca.
 
 Node puede mostrar un aviso `MODULE_TYPELESS_PACKAGE_JSON` al inferir ESM en `money.ts`; no representa un fallo de las tres pruebas. Un error de descarga o una dependencia nativa de Tauri ausente bloquea la ejecución: no cuenta como prueba aprobada.
 
@@ -103,11 +102,11 @@ Los archivos Rust están en [`app/src-tauri/src/`](../../app/src-tauri/src/). La
 | `probar_saldos_monedas`  | Registra dos gastos y un ingreso en USD/VES y verifica subtotales independientes.                                                                                                       |
 | `probar_evento_repetido` | Guarda otra vez el mismo evento y comprueba que el repositorio en memoria no lo duplica.                                                                                                |
 
-### Regresiones de integración: pruebas_integracion.rs
+### Regresiones de persistencia y compatibilidad: pruebas_integracion.rs
 
 | Prueba                                                                        | Qué hace                                                                                                                                                                                              |
 | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `probar_error_correccion_ingreso_reportado`                                   | Lee un ingreso con formato histórico de main y lo corrige de 800 a 700; saldo final 1700, ajuste -100.                                                                                                |
+| `probar_error_correccion_ingreso_reportado`                                   | Lee un ingreso con formato histórico y lo corrige de 800 a 700; saldo final 1700, ajuste -100.                                                                                                        |
 | `probar_correccion_gasto_reportado`                                           | Lee un gasto histórico de 500 y lo corrige a 50; con inicial 1000, saldo final 950, ajuste +450.                                                                                                      |
 | `formatos_mixtos_persisten_sin_reescribir_eventos_y_saldo_1750`               | Reproduce el ejemplo con formatos históricos y actuales en SQLite, reabre la base, verifica categorías, composición, original y ajuste, y realiza nuevas correcciones sin cambiar eventos anteriores. |
 | `correcciones_multiples_ingresos_y_gastos_preservan_original_inv04_inv05`     | Corrige ingresos y gastos por la secuencia 500 → 50 → 80 → 0 → 25, verificando saldo vigente e inmutabilidad del original.                                                                            |
@@ -147,10 +146,10 @@ cargo test --manifest-path app/src-tauri/Cargo.toml -- --list
 # Cuentas de Entrega 2.
 cargo test --manifest-path app/src-tauri/Cargo.toml probar_crear_cuentas
 
-# Movimientos y categorías de dev.
+# Movimientos y categorías.
 cargo test --manifest-path app/src-tauri/Cargo.toml pruebas_movimientos
 
-# Regresiones de integración, persistencia y compatibilidad.
+# Regresiones de persistencia, invariantes y compatibilidad.
 cargo test --manifest-path app/src-tauri/Cargo.toml pruebas_integracion
 
 # Ejemplo obligatorio del PDF.
@@ -173,10 +172,10 @@ Cargo filtra por fragmentos del nombre. Revisar que el filtro realmente ejecutó
 
 ## 4. Compilar y abrir la aplicación para pruebas manuales
 
-Desde `app`:
+Partiendo de la raíz, entrar en `app`:
 
 ```bash
-cd /home/luimi/Projects/cuentas-claras/app
+cd app
 npm run tauri -- build --debug --no-bundle
 ```
 
@@ -252,7 +251,6 @@ Las pruebas de reapertura del repositorio no sustituyen esta demostración del p
 Volver a habilitar la red si se necesita para el resto del entorno; el endpoint usa localhost. En una terminal, desde la raíz:
 
 ```bash
-cd /home/luimi/Projects/cuentas-claras
 cargo run --manifest-path server/Cargo.toml
 ```
 
@@ -274,7 +272,10 @@ La base se llama `cuentas_claras.sqlite`, dentro del `app_data_dir` de Tauri par
 $XDG_DATA_HOME/com.compupapis.cuentasclaras/cuentas_claras.sqlite
 ```
 
-Si no se definió `XDG_DATA_HOME`, normalmente es `~/.local/share/com.compupapis.cuentasclaras/cuentas_claras.sqlite`. Al iniciar desde terminal, la aplicación imprime la ruta efectiva. Las ubicaciones de otros sistemas están en el README principal.
+Si no se definió `XDG_DATA_HOME`, normalmente es `~/.local/share/com.compupapis.cuentasclaras/cuentas_claras.sqlite`. Al iniciar desde terminal, la aplicación imprime la ruta efectiva. Ubicaciones predeterminadas en otros sistemas:
+
+- macOS: `~/Library/Application Support/com.compupapis.cuentasclaras/cuentas_claras.sqlite`.
+- Windows: `%APPDATA%\com.compupapis.cuentasclaras\cuentas_claras.sqlite`.
 
 Al cambiar desde `com.tauri.dev`, la aplicación copia y verifica la base anterior si aún no existe la nueva. Conserva el origen y nunca sobrescribe un destino existente. Las pruebas automatizadas comprueban la copia con WAL, el rechazo de datos incompatibles y la preservación de eventos; la actualización sobre la base real del equipo debe comprobarse manualmente conservando una copia de respaldo y con la aplicación cerrada.
 
@@ -284,4 +285,4 @@ No borrar, editar ni eliminar eventos para preparar una demostración. Ante un e
 
 Para cada ejecución guardar: commit probado (`git rev-parse --short HEAD`), sistema operativo, comando o caso manual, resultado y salida/mensaje si falla. No marcar como aprobadas pruebas que no se ejecutaron.
 
-Las verificaciones automáticas y el ejecutable debug se aprobaron durante la integración; las comprobaciones manuales de ventana, red apagada y base real del equipo quedan a cargo de quien haga la demostración. La generación de instaladores release se prueba por separado con `npm run tauri build` desde `app`; no está incluida en el build debug sin bundle.
+Esta guía describe procedimientos y resultados esperados, no certifica una ejecución particular. Los resultados históricos están en el [informe de verificación](../entregas-2-3-verificacion.md). Las comprobaciones manuales de ventana, red apagada y base real del equipo siguen pendientes hasta que quien haga la demostración las ejecute y registre. La generación de instaladores release se prueba por separado con `npm run tauri build` desde `app`; no está incluida en el build debug sin bundle.
