@@ -227,4 +227,85 @@ npm run format:rust
 
 Este proyecto está distribuido bajo la licencia [MIT](./LICENSE).
 
+## Demostración de las Entregas 2 y 3
 
+Las cuentas, categorías, movimientos, ajustes y saldos son locales. No requieren registro, internet ni el servidor Axum. El botón **Conexión con el servidor · Entrega 1 → Probar conexión** invoca `ping_servidor` explícitamente; es independiente del libro financiero.
+
+### Verificaciones automatizadas
+
+Usar Node.js 22.18 o posterior (las pruebas del formateador ejecutan TypeScript directamente), Rust/Cargo y las dependencias del sistema de Tauri 2. Después de instalar las dependencias, desde la raíz:
+
+```bash
+cargo test --manifest-path app/src-tauri/Cargo.toml
+cargo test --manifest-path app/src-tauri/Cargo.toml probar_crear_cuentas
+cargo test --manifest-path app/src-tauri/Cargo.toml pruebas_integracion
+cargo test --manifest-path app/src-tauri/Cargo.toml test_ejemplo_seccion_2_2
+cargo check --manifest-path app/src-tauri/Cargo.toml
+cargo fmt --manifest-path app/src-tauri/Cargo.toml -- --check
+cargo clippy --manifest-path app/src-tauri/Cargo.toml -- -D warnings
+cargo check --manifest-path server/Cargo.toml
+cargo test --manifest-path server/Cargo.toml
+cargo fmt --manifest-path server/Cargo.toml -- --check
+cargo clippy --manifest-path server/Cargo.toml -- -D warnings
+```
+
+Desde `app`:
+
+```bash
+npm test
+npm run lint
+npm run format:check
+npm run build
+npm run tauri build
+```
+
+El build usa el soporte nativo de CSS de Next.js y la API del comprobador TypeScript 5. No descarga Google Fonts: se conserva la tipografía de sistema definida en `globals.css`. No se omiten los errores de tipos. `npm run build` genera el frontend; `npm run tauri build` genera el ejecutable y los instaladores con ese frontend.
+
+Las pruebas del dominio utilizan el repositorio en memoria, sin red ni base de datos. Las pruebas de persistencia usan archivos SQLite temporales y comprueban la reapertura, los payloads históricos y actuales, los ajustes y que los eventos originales no cambien. Los archivos temporales de prueba no reemplazan la base del usuario.
+
+### Ubicación de SQLite
+
+Archivo: `cuentas_claras.sqlite` dentro del `app_data_dir` de Tauri, con identificador actual `com.compupapis.cuentasclaras`. La aplicación imprime la ruta efectiva al iniciar.
+
+Ubicaciones predeterminadas orientativas:
+
+- Linux: `$XDG_DATA_HOME/com.compupapis.cuentasclaras/cuentas_claras.sqlite`, o `~/.local/share/com.compupapis.cuentasclaras/cuentas_claras.sqlite`.
+- macOS: `~/Library/Application Support/com.compupapis.cuentasclaras/cuentas_claras.sqlite`.
+- Windows: `%APPDATA%\com.compupapis.cuentasclaras\cuentas_claras.sqlite`.
+
+Al actualizar desde el identificador anterior `com.tauri.dev`, la aplicación copia el libro mediante SQLite Backup si todavía no existe la nueva base. La copia incluye WAL, se verifica antes de adoptarla y nunca reemplaza un destino existente. El archivo anterior y sus eventos se conservan intactos. Una copia incompatible no se publica.
+
+No borrar la base para actualizar las ramas. Los dos formatos históricos del libro se leen sin reescribir eventos. Si aparece un error de integridad, conservar el archivo y revisar sus eventos; no se presenta un saldo parcial. Ver [ADR 007](docs/adr/007-libro-local-compatible.md).
+
+### Ejemplo obligatorio: saldo final 1750 USD
+
+1. Ejecutar `cd app` y `npm run tauri dev`. La aplicación abre en **Mis cuentas**.
+2. Crear **Billetera dólares**, tipo **billetera digital**, moneda **USD**, saldo inicial **1000.00**.
+3. Abrir esa cuenta. Registrar ingreso **800.00**, categoría **Salario**, fecha de hoy o pasada. Saldo: **1800.00**.
+4. Registrar gasto **500.00**, categoría **Alimentación**. Saldo: **1300.00**.
+5. En el gasto original, elegir **Corregir** e indicar **50.00**. Se agrega un ajuste de **+450.00** y el saldo queda en **1750.00**.
+6. Comprobar la composición: inicial **1000.00**, ingresos **800.00**, gastos **500.00**, ajustes **450.00**. El gasto original **−500.00** sigue visible y marcado como corregido; el ajuste referencia su identificador.
+7. Cerrar y reabrir la aplicación. El historial y saldo deben mantenerse.
+
+Las correcciones posteriores se calculan desde el monto vigente del original. Corregir a cero lo compensa completamente. No se pueden editar/eliminar movimientos ni corregir directamente ajustes.
+
+### Prueba manual offline
+
+1. Crear también efectivo en VES y banco en USD; verificar subtotales separados y una billetera en USDT.
+2. Registrar dos gastos y un ingreso en cuentas de monedas diferentes. Comprobar errores de monto cero/negativo, más de dos decimales, fecha futura y categoría incompatible. Crear una categoría y comprobar duplicados por tipo.
+3. Intentar un gasto superior al saldo. Comprobar que aparece la advertencia antes de guardar; cancelar y verificar que el libro no cambió. Repetir confirmando y comprobar el saldo negativo.
+4. Registrar después un movimiento con fecha anterior y comprobar el orden por fecha. En fechas iguales, el último registrado aparece primero.
+5. Cerrar la aplicación y detener Axum. Desactivar la red y volver a abrir; comprobar saldos, ajustes, categorías y creación de nuevos registros.
+6. Para demostrar autonomía completa, abrir el ejecutable generado por `npm run tauri build`: no necesita servidores de Next.js ni Axum. `tauri dev` mantiene un servidor de desarrollo local de Next.js y no sustituye esta comprobación del ejecutable.
+7. Encender Axum con `cargo run --manifest-path server/Cargo.toml` desde la raíz. Verificar `curl http://127.0.0.1:8000/ping` y el botón de conexión. Apagarlo nuevamente y comprobar que las cuentas siguen funcionando.
+
+La validación de fechas usa la fecha civil del dispositivo, también para el valor predeterminado del formulario. Las pruebas incluyen el cambio de día UTC cuando en Caracas todavía es el día anterior.
+
+Para compilar un ejecutable de demostración sin generar instaladores:
+
+```bash
+cd app
+npm run tauri -- build --debug --no-bundle
+```
+
+En Linux, el ejecutable queda en `app/src-tauri/target/debug/app` (ruta desde la raíz). Este build incluye el frontend estático; no requiere ejecutar Next.js ni Axum para usar el libro.
