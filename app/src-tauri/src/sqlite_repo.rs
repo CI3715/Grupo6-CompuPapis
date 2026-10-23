@@ -89,7 +89,8 @@ impl RepositorioEventos for RepositorioSqlite {
             let momento_registro = DateTime::parse_from_rfc3339(&momento_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now());
-            let datos: DatosCuentaCreada = serde_json::from_str(&datos_json).map_err(|e| e.to_string())?;
+            let datos: serde_json::Value = serde_json::from_str(&datos_json).map_err(|e| e.to_string())?;
+                //let datos: DatosCuentaCreada = serde_json::from_str(&datos_json).map_err(|e| e.to_string())?;
             eventos.push(EventoLibro {
                 id,
                 tipo,

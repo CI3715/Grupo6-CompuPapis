@@ -154,7 +154,26 @@ pub struct EventoLibro {
     pub tipo: String,
     pub momento_registro: DateTime<Utc>,
     pub dispositivo_origen: String,
-    pub datos: DatosCuentaCreada,
+    //pub datos: DatosCuentaCreada,
+    pub datos: serde_json::Value, // acepta cualquier estructura en JSON
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatosMovimientoRegistrado {
+    pub movimiento_id: String,
+    pub cuenta_id: String,
+    pub tipo_movimiento: String,
+    pub monto: Decimal,
+    pub categoria: String,
+    pub nota: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatosMovimientoCorregido {
+    pub ajuste_id: String,
+    pub movimiento_original_id: String,
+    pub cuenta_id: String,
+    pub monto_ajuste: Decimal,
 }
 
 pub trait RepositorioEventos {
@@ -164,23 +183,58 @@ pub trait RepositorioEventos {
 
 pub fn proyectar_cuentas(eventos: &[EventoLibro]) -> Vec<Cuenta> {
     let mut eventos_aplicados = HashSet::new();
-    let mut cuentas = Vec::new();
+    let mut mapa_cuentas: BTreeMap<String, Cuenta> = BTreeMap::new();
+    let mut saldos_acumulados: BTreeMap<String, Decimal> = BTreeMap::new();
 
     for ev in eventos {
         if !eventos_aplicados.insert(ev.id.clone()) {
             continue;
         }
+
         if ev.tipo == "CuentaCreada" {
-            cuentas.push(Cuenta {
-                id: ev.datos.cuenta_id.clone(),
-                nombre: ev.datos.nombre.clone(),
-                tipo: ev.datos.tipo.clone(),
-                moneda: ev.datos.saldo_inicial.moneda().to_string(),
-                saldo: ev.datos.saldo_inicial.clone(),
-            });
+            if let Ok(datos) = serde_json::from_value::<DatosCuentaCreada>(ev.datos.clone()) {
+                let monto_inicial = datos.saldo_inicial.cantidad();
+                saldos_acumulados.insert(datos.cuenta_id.clone(), monto_inicial);
+                
+                mapa_cuentas.insert(
+                    datos.cuenta_id.clone(),
+                    Cuenta {
+                        id: datos.cuenta_id,
+                        nombre: datos.nombre,
+                        tipo: datos.tipo,
+                        moneda: datos.saldo_inicial.moneda().to_string(),
+                        saldo: datos.saldo_inicial,
+                    },
+                );
+            }
+        } else if ev.tipo == "MovimientoRegistrado" {
+            if let Ok(datos) = serde_json::from_value::<DatosMovimientoRegistrado>(ev.datos.clone()) {
+                if let Some(saldo_actual) = saldos_acumulados.get_mut(&datos.cuenta_id) {
+                    if datos.tipo_movimiento == "ingreso" {
+                        *saldo_actual += datos.monto;
+                    } else if datos.tipo_movimiento == "gasto" {
+                        *saldo_actual -= datos.monto;
+                    }
+                }
+            }
+        } else if ev.tipo == "MovimientoCorregido" {
+            if let Ok(datos) = serde_json::from_value::<DatosMovimientoCorregido>(ev.datos.clone()) {
+                if let Some(saldo_actual) = saldos_acumulados.get_mut(&datos.cuenta_id) {
+                    *saldo_actual += datos.monto_ajuste;
+                }
+            }
         }
     }
-    cuentas
+
+    for (cuenta_id, cuenta) in mapa_cuentas.iter_mut() {
+        if let Some(&nuevo_total) = saldos_acumulados.get(cuenta_id) {
+            if let Ok(monto_actualizado) = Monto::nuevo(nuevo_total, cuenta.moneda()) {
+                cuenta.saldo = monto_actualizado;
+            }
+        }
+    }
+
+    mapa_cuentas.into_values().collect()
 }
 
 pub fn ejecutar_crear_cuenta<R: RepositorioEventos>(
@@ -218,12 +272,12 @@ pub fn ejecutar_crear_cuenta<R: RepositorioEventos>(
         tipo: "CuentaCreada".to_string(),
         momento_registro: Utc::now(),
         dispositivo_origen: dispositivo_id.to_string(),
-        datos: DatosCuentaCreada {
+        datos: serde_json::to_value(DatosCuentaCreada {
             cuenta_id: cuenta_id.clone(),
             nombre: nombre_limpio.to_string(),
             tipo: tipo.clone(),
             saldo_inicial: monto_inicial.clone(),
-        },
+        }).unwrap(),
     };
 
     repo.guardar_evento(&evento)
@@ -279,6 +333,76 @@ pub fn ejecutar_listar_cuentas<R: RepositorioEventos>(repo: &R) -> Result<Resume
     }
 
     Ok(ResumenCuentas { cuentas, subtotales })
+}
+
+pub fn ejecutar_corregir_movimiento<R: RepositorioEventos>(
+    repo: &mut R,
+    cuenta_id: &str,
+    movimiento_original_id: &str,
+    monto_correcto_str: &str,
+    _monto_original: Decimal, 
+    dispositivo_id: &str,
+) -> Result<(), ErrorDominio> {
+    let monto_correcto = Decimal::from_str(monto_correcto_str.trim().replace(',', ".").as_str())
+        .map_err(|_| ErrorDominio::nuevo("monto", "El monto correcto debe ser un número válido."))?;
+
+    if monto_correcto < Decimal::ZERO {
+        return Err(ErrorDominio::nuevo("monto", "El monto corregido no puede ser negativo."));
+    }
+
+    // 1. Buscamos en el repositorio los eventos para validar que el movimiento original exista y saber su tipo
+    let eventos = repo
+        .obtener_eventos()
+        .map_err(|_| ErrorDominio::nuevo("general", "No se pudo leer el almacenamiento local."))?;
+
+    let mut monto_original = Decimal::ZERO;
+    let mut tipo_movimiento = String::new();
+    let mut encontrado = false;
+
+    for ev in &eventos {
+        if ev.tipo == "MovimientoRegistrado" {
+            if let Ok(datos) = serde_json::from_value::<DatosMovimientoRegistrado>(ev.datos.clone()) {
+                if datos.movimiento_id == movimiento_original_id && datos.cuenta_id == cuenta_id {
+                    monto_original = datos.monto;
+                    tipo_movimiento = datos.tipo_movimiento;
+                    encontrado = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if !encontrado {
+        return Err(ErrorDominio::nuevo("movimiento", "El movimiento a corregir no existe."));
+    }
+
+    // 2. Calculamos la diferencia con el signo algebraico correcto para el saldo:
+    // - Si es un Ingreso: (Nuevo - Original) Ej: 700 - 800 = -100 (resta al saldo)
+    // - Si es un Gasto: (Original - Nuevo) -Ej: 500 - 50 = +450 (devuelve saldo a la cuenta)
+    let delta = if tipo_movimiento == "ingreso" {
+        monto_correcto - monto_original
+    } else {
+        monto_original - monto_correcto
+    };
+
+    let ajuste_id = uuid::Uuid::new_v4().to_string();
+    let evento = EventoLibro {
+        id: uuid::Uuid::new_v4().to_string(),
+        tipo: "MovimientoCorregido".to_string(),
+        momento_registro: Utc::now(),
+        dispositivo_origen: dispositivo_id.to_string(),
+        datos: serde_json::to_value(DatosMovimientoCorregido {
+            ajuste_id,
+            movimiento_original_id: movimiento_original_id.to_string(),
+            cuenta_id: cuenta_id.to_string(),
+            monto_ajuste: delta,
+        }).unwrap(),
+    };
+
+    repo.guardar_evento(&evento)
+        .map_err(|_| ErrorDominio::nuevo("general", "No se pudo registrar la corrección en el almacenamiento local."))?;
+
+    Ok(())
 }
 
 #[derive(Default)]
@@ -373,4 +497,107 @@ fn probar_crear_cuentas() {
     repetidos.push(eventos[0].clone());
 
     assert_eq!(proyectar_cuentas(&repetidos).len(), 4);
+}
+
+// Prueba unitaria Maikel - Entrega 3
+#[test]
+fn probar_error_correccion_ingreso_reportado() {
+    let mut repo = RepositorioEnMemoria::default();
+
+    // Paso 1: Saldo inicial de 1.000,00 USD
+    let cuenta = ejecutar_crear_cuenta(
+        &mut repo, "Billetera dolares", "billetera digital", "USD", "1000.00", "prueba"
+    ).unwrap();
+    let cuenta_id = cuenta.id().to_string();
+
+    // Paso 2: Registrar un ingreso de 800,00 
+    // (Saldo intermedio esperado: 1000 + 800 = 1800.00)
+    let mov_ingreso_id = "ingreso-original".to_string();
+    let ev_ingreso = EventoLibro {
+        id: uuid::Uuid::new_v4().to_string(),
+        tipo: "MovimientoRegistrado".to_string(),
+        momento_registro: Utc::now(),
+        dispositivo_origen: "prueba".to_string(),
+        datos: serde_json::to_value(DatosMovimientoRegistrado {
+            movimiento_id: mov_ingreso_id.clone(),
+            cuenta_id: cuenta_id.clone(),
+            tipo_movimiento: "ingreso".to_string(),
+            monto: Decimal::from_str("800.00").unwrap(),
+            categoria: "Salario".to_string(),
+            nota: Some("Pago inicial".into()),
+        }).unwrap(),
+    };
+    repo.guardar_evento(&ev_ingreso).unwrap();
+
+    // Paso 3: Corregir ese ingreso de 800,00 a 700,00 
+    ejecutar_corregir_movimiento(
+        &mut repo,
+        &cuenta_id,
+        &mov_ingreso_id,
+        "700.00",
+        Decimal::from_str("800.00").unwrap(),
+        "prueba"
+    ).unwrap();
+
+    // Paso 4: Proyectar y verificar el saldo final exacto
+    let cuentas_finales = proyectar_cuentas(&repo.obtener_eventos().unwrap());
+    
+    // CASO CRÍTICO: 
+    // - 1000 de saldo inicial.
+    // - Entraron 800 (iba en 1800).
+    // - Se corrigió el ingreso a 700 (le quitaste 100 al ingreso).
+    // - El saldo final obligatorio debe ser 1700.00.
+    assert_eq!(cuentas_finales[0].saldo().cantidad().to_string(), "1700.00");
+}
+
+// Prueba unitaria Maikel - Entrega 3 - Correción de un gasto
+#[test]
+fn probar_correccion_gasto_reportado() {
+    let mut repo = RepositorioEnMemoria::default();
+
+    // Paso 1: Saldo inicial de 1.000,00 USD
+    let cuenta = ejecutar_crear_cuenta(
+        &mut repo, "Billetera banco", "banco", "USD", "1000.00", "prueba"
+    ).unwrap();
+    let cuenta_id = cuenta.id().to_string();
+
+    // Paso 2: Registrar un gasto erróneo de 500,00 
+    // (Saldo intermedio esperado: 1000 - 500 = 500.00)
+    let mov_gasto_id = "gasto-original".to_string();
+    let ev_gasto = EventoLibro {
+        id: uuid::Uuid::new_v4().to_string(),
+        tipo: "MovimientoRegistrado".to_string(),
+        momento_registro: Utc::now(),
+        dispositivo_origen: "prueba".to_string(),
+        datos: serde_json::to_value(DatosMovimientoRegistrado {
+            movimiento_id: mov_gasto_id.clone(),
+            cuenta_id: cuenta_id.clone(),
+            tipo_movimiento: "gasto".to_string(),
+            monto: Decimal::from_str("500.00").unwrap(),
+            categoria: "Supermercado".to_string(),
+            nota: Some("Mercado caro".into()),
+        }).unwrap(),
+    };
+    repo.guardar_evento(&ev_gasto).unwrap();
+
+    // Paso 3: Corregir ese gasto de 500,00 a 50,00 
+    // (Como el gasto disminuyó, la cuenta debe recuperar los 450.00 restados de más)
+    ejecutar_corregir_movimiento(
+        &mut repo,
+        &cuenta_id,
+        &mov_gasto_id,
+        "50.00",
+        Decimal::from_str("500.00").unwrap(),
+        "prueba"
+    ).unwrap();
+
+    // Paso 4: Proyectar y verificar el saldo final exacto
+    let cuentas_finales = proyectar_cuentas(&repo.obtener_eventos().unwrap());
+    
+    // CASO CRÍTICO DE GASTO: 
+    // - Se tenia 1000 de saldo inicial.
+    // - Se gastó 500 (iba en 500).
+    // - Se corrigió el gasto a 50 (le devolviste 450 a la cuenta).
+    // - El saldo final obligatorio debe ser 950.00.
+    assert_eq!(cuentas_finales[0].saldo().cantidad().to_string(), "950.00");
 }
