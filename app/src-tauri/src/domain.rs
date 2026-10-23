@@ -340,7 +340,7 @@ pub fn ejecutar_corregir_movimiento<R: RepositorioEventos>(
     cuenta_id: &str,
     movimiento_original_id: &str,
     monto_correcto_str: &str,
-    monto_original: Decimal,
+    _monto_original: Decimal, 
     dispositivo_id: &str,
 ) -> Result<(), ErrorDominio> {
     let monto_correcto = Decimal::from_str(monto_correcto_str.trim().replace(',', ".").as_str())
@@ -350,7 +350,40 @@ pub fn ejecutar_corregir_movimiento<R: RepositorioEventos>(
         return Err(ErrorDominio::nuevo("monto", "El monto corregido no puede ser negativo."));
     }
 
-    let diferencia = monto_original - monto_correcto;
+    // 1. Buscamos en el repositorio los eventos para validar que el movimiento original exista y saber su tipo
+    let eventos = repo
+        .obtener_eventos()
+        .map_err(|_| ErrorDominio::nuevo("general", "No se pudo leer el almacenamiento local."))?;
+
+    let mut monto_original = Decimal::ZERO;
+    let mut tipo_movimiento = String::new();
+    let mut encontrado = false;
+
+    for ev in &eventos {
+        if ev.tipo == "MovimientoRegistrado" {
+            if let Ok(datos) = serde_json::from_value::<DatosMovimientoRegistrado>(ev.datos.clone()) {
+                if datos.movimiento_id == movimiento_original_id && datos.cuenta_id == cuenta_id {
+                    monto_original = datos.monto;
+                    tipo_movimiento = datos.tipo_movimiento;
+                    encontrado = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if !encontrado {
+        return Err(ErrorDominio::nuevo("movimiento", "El movimiento a corregir no existe."));
+    }
+
+    // 2. Calculamos la diferencia con el signo algebraico correcto para el saldo:
+    // - Si es un Ingreso: (Nuevo - Original) Ej: 700 - 800 = -100 (resta al saldo)
+    // - Si es un Gasto: (Original - Nuevo) -Ej: 500 - 50 = +450 (devuelve saldo a la cuenta)
+    let delta = if tipo_movimiento == "ingreso" {
+        monto_correcto - monto_original
+    } else {
+        monto_original - monto_correcto
+    };
 
     let ajuste_id = uuid::Uuid::new_v4().to_string();
     let evento = EventoLibro {
@@ -362,7 +395,7 @@ pub fn ejecutar_corregir_movimiento<R: RepositorioEventos>(
             ajuste_id,
             movimiento_original_id: movimiento_original_id.to_string(),
             cuenta_id: cuenta_id.to_string(),
-            monto_ajuste: diferencia,
+            monto_ajuste: delta,
         }).unwrap(),
     };
 
@@ -468,34 +501,69 @@ fn probar_crear_cuentas() {
 
 // Prueba unitaria Maikel - Entrega 3
 #[test]
-fn probar_ejemplo_correccion_y_saldo_seccion_2_2() {
+fn probar_error_correccion_ingreso_reportado() {
     let mut repo = RepositorioEnMemoria::default();
 
-    // Paso 1: Saldo inicial de 1.000,00 USD en "Billetera dólares"
+    // Paso 1: Saldo inicial de 1.000,00 USD
     let cuenta = ejecutar_crear_cuenta(
         &mut repo, "Billetera dolares", "billetera digital", "USD", "1000.00", "prueba"
     ).unwrap();
     let cuenta_id = cuenta.id().to_string();
 
-    // Paso 2: Ingreso de Salario (+800,00)
+    // Paso 2: Registrar un ingreso de 800,00 
+    // (Saldo intermedio esperado: 1000 + 800 = 1800.00)
+    let mov_ingreso_id = "ingreso-original".to_string();
     let ev_ingreso = EventoLibro {
         id: uuid::Uuid::new_v4().to_string(),
         tipo: "MovimientoRegistrado".to_string(),
         momento_registro: Utc::now(),
         dispositivo_origen: "prueba".to_string(),
         datos: serde_json::to_value(DatosMovimientoRegistrado {
-            movimiento_id: "ingreso-1".to_string(),
+            movimiento_id: mov_ingreso_id.clone(),
             cuenta_id: cuenta_id.clone(),
             tipo_movimiento: "ingreso".to_string(),
             monto: Decimal::from_str("800.00").unwrap(),
             categoria: "Salario".to_string(),
-            nota: Some("Pago quincenal".into()),
+            nota: Some("Pago inicial".into()),
         }).unwrap(),
     };
     repo.guardar_evento(&ev_ingreso).unwrap();
 
-    // Paso 3: Gasto de Alimentación (se anotó mal: 500,00 en vez de 50,00)
-    let mov_gasto_id = "gasto-erroneo".to_string();
+    // Paso 3: Corregir ese ingreso de 800,00 a 700,00 
+    ejecutar_corregir_movimiento(
+        &mut repo,
+        &cuenta_id,
+        &mov_ingreso_id,
+        "700.00",
+        Decimal::from_str("800.00").unwrap(),
+        "prueba"
+    ).unwrap();
+
+    // Paso 4: Proyectar y verificar el saldo final exacto
+    let cuentas_finales = proyectar_cuentas(&repo.obtener_eventos().unwrap());
+    
+    // CASO CRÍTICO: 
+    // - 1000 de saldo inicial.
+    // - Entraron 800 (iba en 1800).
+    // - Se corrigió el ingreso a 700 (le quitaste 100 al ingreso).
+    // - El saldo final obligatorio debe ser 1700.00.
+    assert_eq!(cuentas_finales[0].saldo().cantidad().to_string(), "1700.00");
+}
+
+// Prueba unitaria Maikel - Entrega 3 - Correción de un gasto
+#[test]
+fn probar_correccion_gasto_reportado() {
+    let mut repo = RepositorioEnMemoria::default();
+
+    // Paso 1: Saldo inicial de 1.000,00 USD
+    let cuenta = ejecutar_crear_cuenta(
+        &mut repo, "Billetera banco", "banco", "USD", "1000.00", "prueba"
+    ).unwrap();
+    let cuenta_id = cuenta.id().to_string();
+
+    // Paso 2: Registrar un gasto erróneo de 500,00 
+    // (Saldo intermedio esperado: 1000 - 500 = 500.00)
+    let mov_gasto_id = "gasto-original".to_string();
     let ev_gasto = EventoLibro {
         id: uuid::Uuid::new_v4().to_string(),
         tipo: "MovimientoRegistrado".to_string(),
@@ -506,17 +574,14 @@ fn probar_ejemplo_correccion_y_saldo_seccion_2_2() {
             cuenta_id: cuenta_id.clone(),
             tipo_movimiento: "gasto".to_string(),
             monto: Decimal::from_str("500.00").unwrap(),
-            categoria: "Alimentacion".to_string(),
-            nota: Some("Mercado".into()),
+            categoria: "Supermercado".to_string(),
+            nota: Some("Mercado caro".into()),
         }).unwrap(),
     };
     repo.guardar_evento(&ev_gasto).unwrap();
 
-    // Verificamos saldo intermedio antes de corregir: 1000 + 800 - 500 = 1300
-    let cuentas_intermedia = proyectar_cuentas(&repo.obtener_eventos().unwrap());
-    assert_eq!(cuentas_intermedia[0].saldo().cantidad().to_string(), "1300.00");
-
-    // Paso 4: Corregir el movimiento (el monto correcto era 50,00, el original fue 500,00)
+    // Paso 3: Corregir ese gasto de 500,00 a 50,00 
+    // (Como el gasto disminuyó, la cuenta debe recuperar los 450.00 restados de más)
     ejecutar_corregir_movimiento(
         &mut repo,
         &cuenta_id,
@@ -526,7 +591,13 @@ fn probar_ejemplo_correccion_y_saldo_seccion_2_2() {
         "prueba"
     ).unwrap();
 
-    // Paso 5: Verificamos el saldo final exacto según el ejemplo oficial ($1.750,00)
+    // Paso 4: Proyectar y verificar el saldo final exacto
     let cuentas_finales = proyectar_cuentas(&repo.obtener_eventos().unwrap());
-    assert_eq!(cuentas_finales[0].saldo().cantidad().to_string(), "1750.00");
+    
+    // CASO CRÍTICO DE GASTO: 
+    // - Se tenia 1000 de saldo inicial.
+    // - Se gastó 500 (iba en 500).
+    // - Se corrigió el gasto a 50 (le devolviste 450 a la cuenta).
+    // - El saldo final obligatorio debe ser 950.00.
+    assert_eq!(cuentas_finales[0].saldo().cantidad().to_string(), "950.00");
 }
