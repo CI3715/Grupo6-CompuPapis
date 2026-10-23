@@ -1,4 +1,4 @@
-use crate::domain::{DatosCuentaCreada, EventoLibro, RepositorioEventos};
+use crate::domain::{EventoLibro, RepositorioEventos};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use std::path::PathBuf;
@@ -50,7 +50,7 @@ impl RepositorioSqlite {
 impl RepositorioEventos for RepositorioSqlite {
     fn guardar_evento(&mut self, evento: &EventoLibro) -> Result<(), String> {
         let conn = self.abrir()?;
-        let datos_json = serde_json::to_string(&evento.datos).map_err(|e| e.to_string())?;
+        // INV-04 e INV-13: La tabla de eventos solo admite inserciones idempotentes
         conn.execute(
             "INSERT OR IGNORE INTO eventos_libro (id, tipo, momento_registro, dispositivo_origen, datos_json)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -59,7 +59,7 @@ impl RepositorioEventos for RepositorioSqlite {
                 evento.tipo,
                 evento.momento_registro.to_rfc3339(),
                 evento.dispositivo_origen,
-                datos_json
+                evento.datos_json
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -89,13 +89,12 @@ impl RepositorioEventos for RepositorioSqlite {
             let momento_registro = DateTime::parse_from_rfc3339(&momento_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now());
-            let datos: DatosCuentaCreada = serde_json::from_str(&datos_json).map_err(|e| e.to_string())?;
             eventos.push(EventoLibro {
                 id,
                 tipo,
                 momento_registro,
                 dispositivo_origen,
-                datos,
+                datos_json,
             });
         }
         Ok(eventos)
