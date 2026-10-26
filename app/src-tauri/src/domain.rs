@@ -33,6 +33,154 @@ pub struct Moneda {
     pub decimales: u32,
 }
 
+pub fn validar_moneda(
+    codigo: &str,
+    nombre: &str,
+    simbolo: &str,
+    decimales: u32,
+    monedas: &[Moneda],
+) -> Result<Moneda, ErrorDominio> {
+   // Primero revisamos el codigo
+    let n = codigo.len();
+
+    if n < 3 || n > 5 {
+        return Err(ErrorDominio::nuevo("codigo", "El código tiene que tener de 3 a 5 letras."));
+    }
+
+    for c in codigo.chars() {
+        if !c.is_ascii_uppercase() {
+            return Err(ErrorDominio::nuevo("codigo", "Usa solo letras mayúsculas."));
+        }
+    }
+    // Vemos si el codigo ya existe
+    for m in monedas {
+        if m.codigo == codigo {
+            return Err(ErrorDominio::nuevo("codigo", "Ya hay una moneda con ese codigo."));
+        }
+    }
+
+    if nombre.trim().is_empty() {
+        return Err(ErrorDominio::nuevo("nombre", "Debes poner un nombre."));
+    }
+
+    if simbolo.trim().is_empty() {
+        return Err(ErrorDominio::nuevo("simbolo", "Debes poner un símbolo."));
+    }
+
+    if decimales > 8 {
+        return Err(ErrorDominio::nuevo("decimales", "Solo puede tener hasta 8 decimales."));
+    }
+
+    let nueva = Moneda {
+        codigo: codigo.to_string(),
+        nombre: nombre.trim().to_string(),
+        simbolo: simbolo.trim().to_string(),
+        decimales,
+    };
+
+    Ok(nueva)
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TasaCambio {
+    pub id: String,
+    pub origen: String,
+    pub destino: String,
+    pub valor: Decimal,
+    pub fecha: String,
+    pub fuente: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatosTasaEliminada {
+    pub tasa_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatosMonedaBaseCambiada {
+    pub codigo: String,
+}
+
+pub fn validar_tasa(
+    id: &str,
+    origen: &str,
+    destino: &str,
+    valor: &str,
+    fecha: &str,
+    fuente: &str,
+    monedas: &[Moneda],
+    hoy: NaiveDate,
+) -> Result<TasaCambio, ErrorDominio> {
+
+    if origen.trim().is_empty() {
+        return Err(ErrorDominio::nuevo("origen", "Falta elegir la moneda de origen."));
+    }
+
+    if destino.trim().is_empty() {
+        return Err(ErrorDominio::nuevo("destino", "Falta elegir la moneda de destino."));
+    }
+
+    // Buscamos las 2 monedas
+    let m1 = match buscar_moneda_en(origen, monedas) {
+        Ok(m) => m,
+        Err(_) => return Err(ErrorDominio::nuevo("origen", "Esa moneda no existe.")),
+    };
+
+    let m2 = match buscar_moneda_en(destino, monedas) {
+        Ok(m) => m,
+        Err(_) => return Err(ErrorDominio::nuevo("destino", "Esa moneda no existe.")),
+    };
+
+    if m1.codigo == m2.codigo {
+        return Err(ErrorDominio::nuevo("destino", "No se puede usar la misma moneda."));
+    }
+
+    let texto = valor.trim().replace(',', ".");
+
+    if texto.is_empty() {
+        return Err(ErrorDominio::nuevo("valor", "Falta poner el valor."));
+    }
+
+    let num = match Decimal::from_str(&texto) {
+        Ok(n) => n,
+        Err(_) => return Err(ErrorDominio::nuevo("valor", "El valor esta mal.")),
+    };
+
+    if num <= Decimal::ZERO {
+        return Err(ErrorDominio::nuevo("valor", "Tiene que ser mayor que 0."));
+    }
+
+    if num.scale() > 8 {
+        return Err(ErrorDominio::nuevo("valor", "Maximo 8 decimales."));
+    }
+
+    if fecha.trim().is_empty() {
+        return Err(ErrorDominio::nuevo("fecha", "Falta poner la fecha."));
+    }
+
+    let dia = match NaiveDate::parse_from_str(fecha.trim(), "%Y-%m-%d") {
+        Ok(d) => d,
+        Err(_) => return Err(ErrorDominio::nuevo("fecha", "Revisa la fecha.")),
+    };
+
+    if dia > hoy {
+        return Err(ErrorDominio::nuevo("fecha", "La fecha no puede ser futura."));
+    }
+
+    if fuente.trim().is_empty() {
+        return Err(ErrorDominio::nuevo("fuente", "Falta poner la fuente."));
+    }
+
+    Ok(TasaCambio {
+        id: id.to_string(),
+        origen: m1.codigo,
+        destino: m2.codigo,
+        valor: num,
+        fecha: fecha.trim().to_string(),
+        fuente: fuente.trim().to_string(),
+    })
+}
+
 pub fn catalogo_monedas() -> Vec<Moneda> {
     vec![
         Moneda {
@@ -69,9 +217,23 @@ pub fn buscar_moneda(codigo: &str) -> Result<Moneda, ErrorDominio> {
         .ok_or_else(|| {
             ErrorDominio::nuevo(
                 "moneda",
-                "La moneda seleccionada no pertenece al catálogo válido.",
+                "Esa moneda no esta en la lista.",
             )
         })
+}
+
+pub fn buscar_moneda_en(codigo: &str, monedas: &[Moneda]) -> Result<Moneda, ErrorDominio> {
+
+    for m in monedas {
+        if m.codigo == codigo.trim().to_uppercase() {
+            return Ok(m.clone());
+        }
+    }
+
+    Err(ErrorDominio::nuevo(
+        "moneda",
+        "Esa moneda no esta en la lista.",
+    ))
 }
 
 // ==========================================
@@ -150,6 +312,48 @@ impl Monto {
         Self::desde_str_con_campo(valor_str, moneda_codigo, "saldo_inicial", true)
     }
 
+    pub fn desde_str_con_moneda(
+        valor_str: &str,
+        moneda: &Moneda,
+        campo_err: &str,
+        permitir_cero: bool,
+    ) -> Result<Self, ErrorDominio> {
+
+        let texto = valor_str.trim().replace(',', ".");
+
+        if texto.is_empty() {
+            return Err(ErrorDominio::nuevo(campo_err, "Falta poner el monto."));
+        }
+
+        let monto = match Decimal::from_str(&texto) {
+            Ok(n) => n,
+            Err(_) => return Err(ErrorDominio::nuevo(campo_err, "El monto tiene que ser un numero.")),
+        };
+
+        if monto < Decimal::ZERO {
+            return Err(ErrorDominio::nuevo(campo_err, "El monto no puede ser negativo."));
+        }
+
+        if monto == Decimal::ZERO && !permitir_cero {
+            return Err(ErrorDominio::nuevo(campo_err, "El monto debe ser mayor que cero."));
+        }
+
+        // Revisamos los decimales de la moneda
+        if monto.scale() > moneda.decimales {
+            return Err(ErrorDominio::nuevo(
+                campo_err,
+                &format!(
+                    "Para {} puedes usar hasta {} decimales.",
+                    moneda.codigo, moneda.decimales
+                ),
+            ));
+        }
+
+        Ok(Self {
+            cantidad: monto.round_dp(moneda.decimales),
+            moneda: moneda.codigo.clone(),
+        })
+    }
     pub fn cantidad(&self) -> Decimal {
         self.cantidad
     }
@@ -401,6 +605,9 @@ struct ProyeccionLibro {
     cuentas_orden: Vec<String>,
     cuentas: HashMap<String, EstadoCuentaInterno>,
     categorias: Vec<Categoria>,
+    monedas: Vec<Moneda>,
+    tasas: Vec<TasaCambio>,
+    moneda_base: String,
 }
 
 fn error_libro() -> ErrorDominio {
@@ -452,6 +659,9 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
     let mut cuentas_orden = Vec::new();
     let mut cuentas: HashMap<String, EstadoCuentaInterno> = HashMap::new();
     let mut categorias = categorias_de_fabrica();
+    let mut monedas = catalogo_monedas();
+    let mut tasas = Vec::new();
+    let mut moneda_base = "USD".to_string();
     let mut ids_movimientos = HashSet::new();
 
     for ev in eventos {
@@ -471,12 +681,105 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
             .date_naive()
             .to_string();
         match ev.tipo.as_str() {
+            "MonedaCreada" => {
+                let m: Moneda = match serde_json::from_str(&ev.datos_json) {
+                    Ok(dato) => dato,
+                    Err(_) => return Err(error_libro()),
+                };
+
+                // Revisamos la moneda antes de añadirla
+                match validar_moneda(
+                    &m.codigo,
+                    &m.nombre,
+                    &m.simbolo,
+                    m.decimales,
+                    &monedas,
+                ) {
+                    Ok(nueva) => {
+                        if nueva == m {
+                            monedas.push(nueva);
+                        } else {
+                            return Err(error_libro());
+                        }
+                    }
+                    Err(_) => return Err(error_libro()),
+                }
+            }
+
+            "TasaRegistrada" => {
+                let t: TasaCambio = match serde_json::from_str(&ev.datos_json) {
+                    Ok(dato) => dato,
+                    Err(_) => return Err(error_libro()),
+                };
+
+                if t.id != ev.id {
+                    return Err(error_libro());
+                }
+
+                // Revisamos la tasa antes de añadirla
+                match validar_tasa(
+                    &t.id,
+                    &t.origen,
+                    &t.destino,
+                    &t.valor.to_string(),
+                    &t.fecha,
+                    &t.fuente,
+                    &monedas,
+                    ev.momento_registro.with_timezone(&Local).date_naive(),
+                ) {
+                    Ok(nueva) => {
+                        if nueva == t {
+                            tasas.push(nueva);
+                        } else {
+                            return Err(error_libro());
+                        }
+                    }
+                    Err(_) => return Err(error_libro()),
+                }
+            }
+
+            "TasaEliminada" => {
+                let dato: DatosTasaEliminada = match serde_json::from_str(&ev.datos_json) {
+                    Ok(d) => d,
+                    Err(_) => return Err(error_libro()),
+                };
+
+                // Buscamos la tasa que se eliminó
+                let pos = tasas.iter().position(|t| t.id == dato.tasa_id);
+
+                match pos {
+                    Some(i) => {
+                        tasas.remove(i);
+                    }
+                    None => return Err(error_libro()),
+                }
+            }
+
+            "MonedaBaseCambiada" => {
+                let dato: DatosMonedaBaseCambiada = match serde_json::from_str(&ev.datos_json) {
+                    Ok(d) => d,
+                    Err(_) => return Err(error_libro()),
+                };
+
+                // Chequeamos si la moneda existe
+                if buscar_moneda_en(&dato.codigo, &monedas).is_err() {
+                    return Err(error_libro());
+                }
+
+                moneda_base = dato.codigo;
+            }
+
             "CuentaCreada" => {
                 let d: DatosCuentaCreada =
                     serde_json::from_str(&ev.datos_json).map_err(|_| error_libro())?;
-                let inicial = Monto::desde_str(
+                let moneda = buscar_moneda_en(d.saldo_inicial.moneda(), &monedas)
+                    .map_err(|_| error_libro())?;
+
+                let inicial = Monto::desde_str_con_moneda(
                     &d.saldo_inicial.cantidad().to_string(),
-                    d.saldo_inicial.moneda(),
+                    &moneda,
+                    "saldo_inicial",
+                    true,
                 )
                 .map_err(|_| error_libro())?;
                 if d.cuenta_id.is_empty()
@@ -528,14 +831,16 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                     MovimientoAlmacenado::Actual(d) => d,
                     MovimientoAlmacenado::Historico(d) => {
                         let cta = cuentas.get(&d.cuenta_id).ok_or_else(error_libro)?;
+                        let moneda = buscar_moneda_en(&cta.moneda, &monedas)
+                            .map_err(|_| error_libro())?;
                         DatosMovimientoRegistrado {
                             movimiento_id: d.movimiento_id,
                             cuenta_id: d.cuenta_id,
                             tipo: TipoMovimiento::desde_str(&d.tipo_movimiento)
                                 .map_err(|_| error_libro())?,
-                            monto: Monto::desde_str_con_campo(
+                            monto: Monto::desde_str_con_moneda(
                                 &d.monto.to_string(),
-                                &cta.moneda,
+                                &moneda,
                                 "monto",
                                 false,
                             )
@@ -547,6 +852,8 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                     }
                 };
                 let cta = cuentas.get_mut(&d.cuenta_id).ok_or_else(error_libro)?;
+                let moneda = buscar_moneda_en(&cta.moneda, &monedas)
+                    .map_err(|_| error_libro())?;
                 if d.movimiento_id.is_empty()
                     || !ids_movimientos.insert(d.movimiento_id.clone())
                     || d.monto.moneda() != cta.moneda
@@ -555,9 +862,9 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                 {
                     return Err(error_libro());
                 }
-                let cant = Monto::desde_str_con_campo(
+                let cant = Monto::desde_str_con_moneda(
                     &d.monto.cantidad().to_string(),
-                    &cta.moneda,
+                    &moneda,
                     "monto",
                     false,
                 )
@@ -577,14 +884,15 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                     d.movimiento_id.clone(),
                     (d.tipo, cant, d.categoria.clone(), d.fecha.clone()),
                 );
+                let dec = moneda.decimales as usize;
                 cta.movimientos.push(MovimientoVista {
                     id: d.movimiento_id,
                     fecha: d.fecha,
                     tipo: tipo.into(),
                     categoria: d.categoria,
                     nota: d.nota,
-                    monto: format!("{firmado:.2}"),
-                    monto_vigente: format!("{cant:.2}"),
+                    monto: format!("{:.*}", dec, firmado),
+                    monto_vigente: format!("{:.*}", dec, cant),
                     corregido: false,
                     es_ajuste: false,
                     referencia_id: None,
@@ -598,6 +906,8 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                     CorreccionAlmacenada::Actual(d) => d,
                     CorreccionAlmacenada::Historica(d) => {
                         let cta = cuentas.get(&d.cuenta_id).ok_or_else(error_libro)?;
+                        let moneda = buscar_moneda_en(&cta.moneda, &monedas)
+                            .map_err(|_| error_libro())?;
                         let (tipo, vigente, _, _) = cta
                             .originales
                             .get(&d.movimiento_original_id)
@@ -613,9 +923,9 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                             ajuste_id: d.ajuste_id,
                             movimiento_original_id: d.movimiento_original_id,
                             cuenta_id: d.cuenta_id,
-                            monto_correcto: Monto::desde_str_con_campo(
+                            monto_correcto: Monto::desde_str_con_moneda(
                                 &nuevo.to_string(),
-                                &cta.moneda,
+                                &moneda,
                                 "monto",
                                 true,
                             )
@@ -627,13 +937,15 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                     }
                 };
                 let cta = cuentas.get_mut(&d.cuenta_id).ok_or_else(error_libro)?;
+                let moneda = buscar_moneda_en(&cta.moneda, &monedas)
+                    .map_err(|_| error_libro())?;
                 let (tipo, vigente, categoria, _) = cta
                     .originales
                     .get_mut(&d.movimiento_original_id)
                     .ok_or_else(error_libro)?;
-                let nuevo = Monto::desde_str_con_campo(
+                let nuevo = Monto::desde_str_con_moneda(
                     &d.monto_correcto.cantidad().to_string(),
-                    &cta.moneda,
+                    &moneda,
                     "monto",
                     true,
                 )
@@ -651,13 +963,14 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                 {
                     return Err(error_libro());
                 }
+                let dec = moneda.decimales as usize;
                 *vigente = nuevo;
                 let categoria = categoria.clone();
                 cta.ajustes = sumar_exacto(cta.ajustes, d.diferencia)?;
                 for mov in &mut cta.movimientos {
                     if mov.id == d.movimiento_original_id {
                         mov.corregido = true;
-                        mov.monto_vigente = format!("{nuevo:.2}");
+                        mov.monto_vigente = format!("{:.*}", dec, nuevo);
                     }
                 }
                 cta.movimientos.push(MovimientoVista {
@@ -666,8 +979,8 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                     tipo: "ajuste".into(),
                     categoria,
                     nota: Some(d.nota),
-                    monto: format!("{:.2}", d.diferencia),
-                    monto_vigente: format!("{nuevo:.2}"),
+                    monto: format!("{:.*}", dec, d.diferencia),
+                    monto_vigente: format!("{:.*}", dec, nuevo),
                     corregido: false,
                     es_ajuste: true,
                     referencia_id: Some(d.movimiento_original_id),
@@ -681,6 +994,9 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
         cuentas_orden,
         cuentas,
         categorias,
+        monedas,
+        tasas,
+        moneda_base,
     })
 }
 
@@ -724,13 +1040,21 @@ pub fn ejecutar_crear_cuenta<R: RepositorioEventos>(
     }
 
     let tipo = TipoCuenta::desde_str(tipo_str)?;
-    let _moneda = buscar_moneda(moneda_str)?;
-    let monto_inicial = Monto::desde_str(saldo_inicial_str, moneda_str)?;
 
     let eventos = repo
         .obtener_eventos()
         .map_err(|_| ErrorDominio::nuevo("general", "No se pudo leer el almacenamiento local."))?;
+
     let proyeccion = proyectar_libro(&eventos)?;
+
+    let moneda = buscar_moneda_en(moneda_str, &proyeccion.monedas)?;
+
+    let monto_inicial = Monto::desde_str_con_moneda(
+        saldo_inicial_str,
+        &moneda,
+        "saldo_inicial",
+        true,
+    )?;
 
     if proyeccion
         .cuentas
@@ -775,6 +1099,58 @@ pub fn ejecutar_crear_cuenta<R: RepositorioEventos>(
         moneda: monto_inicial.moneda().to_string(),
         saldo: monto_inicial,
     })
+}
+
+pub fn ejecutar_listar_monedas<R: RepositorioEventos>(
+    repo: &R,
+) -> Result<Vec<Moneda>, ErrorDominio> {
+
+    let eventos = match repo.obtener_eventos() {
+        Ok(e) => e,
+        Err(_) => return Err(ErrorDominio::nuevo("general", "No se pudieron cargar las monedas.")),
+    };
+
+    let libro = proyectar_libro(&eventos)?;
+
+    Ok(libro.monedas)
+}
+
+pub fn ejecutar_obtener_moneda_base<R: RepositorioEventos>(
+    repo: &R,
+) -> Result<String, ErrorDominio> {
+
+    let eventos = repo.obtener_eventos();
+    let lista;
+
+    match eventos {
+        Ok(e) => {
+            lista = e;
+        }
+        Err(_) => {
+            return Err(ErrorDominio::nuevo("general", "No se pudieron cargar los datos."));
+        }
+    }
+
+    // Vemos cuál es la moneda base
+    let resp = proyectar_libro(&lista)?;
+
+    Ok(resp.moneda_base)
+}
+
+pub fn ejecutar_listar_tasas<R: RepositorioEventos>(
+    repo: &R,
+) -> Result<Vec<TasaCambio>, ErrorDominio> {
+
+    let eventos = match repo.obtener_eventos() {
+        Ok(e) => e,
+        Err(_) => {
+            return Err(ErrorDominio::nuevo("general", "No se pudieron cargar las tasas."));
+        }
+    };
+
+    let libro = proyectar_libro(&eventos)?;
+
+    Ok(libro.tasas)
 }
 
 pub fn ejecutar_listar_categorias<R: RepositorioEventos>(
@@ -876,7 +1252,14 @@ pub fn ejecutar_registrar_movimiento<R: RepositorioEventos>(
     let tipo = TipoMovimiento::desde_str(tipo_str)?;
 
     // 2. Validar monto (> 0 y con decimales de la moneda de la cuenta)
-    let monto = Monto::desde_str_con_campo(monto_str, &cta.moneda, "monto", false)?;
+    let moneda = buscar_moneda_en(&cta.moneda, &proyeccion.monedas)?;
+
+    let monto = Monto::desde_str_con_moneda(
+        monto_str,
+        &moneda,
+        "monto",
+        false,
+    )?;
 
     // 3. Validar fecha (formato YYYY-MM-DD y no futura)
     let fecha_limpia = validar_fecha_movimiento(fecha_str, Local::now().date_naive())?.to_string();
@@ -980,8 +1363,14 @@ pub fn ejecutar_corregir_movimiento<R: RepositorioEventos>(
         })?;
 
     // El monto correcto puede ser 0 (para anular un movimiento que no debió existir) o positivo
-    let monto_correcto =
-        Monto::desde_str_con_campo(monto_correcto_str, &cta.moneda, "monto", true)?;
+    let moneda = buscar_moneda_en(&cta.moneda, &proyeccion.monedas)?;
+
+    let monto_correcto = Monto::desde_str_con_moneda(
+        monto_correcto_str,
+        &moneda,
+        "monto",
+        true,
+    )?;
     let nuevo_valor = monto_correcto.cantidad();
 
     if nuevo_valor == *monto_vigente {
@@ -1003,9 +1392,11 @@ pub fn ejecutar_corregir_movimiento<R: RepositorioEventos>(
     sumar_exacto(cta.saldo_actual()?, diferencia)?;
     validar_efecto_subtotal(&proyeccion, &cta.moneda, diferencia)?;
     let hoy_str = Local::now().date_naive().format("%Y-%m-%d").to_string();
+    let dec = moneda.decimales as usize;
+
     let nota = format!(
-        "Ajuste de corrección (monto anterior: {:.2}, monto correcto: {:.2})",
-        monto_vigente, nuevo_valor
+        "Ajuste de corrección (monto anterior: {:.*}, monto correcto: {:.*})",
+        dec, monto_vigente, dec, nuevo_valor
     );
 
     let datos = DatosMovimientoCorregido {
@@ -1047,6 +1438,8 @@ pub fn ejecutar_obtener_detalle_cuenta<R: RepositorioEventos>(
         .ok_or_else(|| ErrorDominio::nuevo("cuenta", "La cuenta no existe."))?;
 
     let saldo_actual = cta.saldo_actual()?;
+    let moneda = buscar_moneda_en(&cta.moneda, &proyeccion.monedas)?;
+    let dec = moneda.decimales as usize;
     let mut movimientos = cta.movimientos;
     // Del más reciente al más antiguo (Sección 2.3)
     // Stable sort preserves reverse event order for equal dates (newest registration first).
@@ -1054,12 +1447,12 @@ pub fn ejecutar_obtener_detalle_cuenta<R: RepositorioEventos>(
     movimientos.sort_by(|a, b| b.fecha.cmp(&a.fecha));
 
     Ok(DetalleCuenta {
-        saldo_actual: format!("{:.2}", saldo_actual),
+        saldo_actual: format!("{:.*}", dec, saldo_actual),
         composicion: ComposicionSaldo {
-            inicial: format!("{:.2}", cta.inicial),
-            ingresos: format!("{:.2}", cta.ingresos),
-            gastos: format!("{:.2}", cta.gastos),
-            ajustes: format!("{:.2}", cta.ajustes),
+            inicial: format!("{:.*}", dec, cta.inicial),
+            ingresos: format!("{:.*}", dec, cta.ingresos),
+            gastos: format!("{:.*}", dec, cta.gastos),
+            ajustes: format!("{:.*}", dec, cta.ajustes),
         },
         movimientos,
     })
@@ -1092,6 +1485,7 @@ pub fn ejecutar_listar_cuentas<R: RepositorioEventos>(
     for id in &proyeccion.cuentas_orden {
         if let Some(c) = proyeccion.cuentas.get(id) {
             let saldo_actual = c.saldo_actual()?;
+            let moneda = buscar_moneda_en(&c.moneda, &proyeccion.monedas)?;
             let subtotal = mapa_subtotales
                 .entry(c.moneda.clone())
                 .or_insert(Decimal::ZERO);
@@ -1103,7 +1497,7 @@ pub fn ejecutar_listar_cuentas<R: RepositorioEventos>(
                 tipo: c.tipo.clone(),
                 moneda: c.moneda.clone(),
                 saldo: Monto {
-                    cantidad: saldo_actual.round_dp(2),
+                    cantidad: saldo_actual.round_dp(moneda.decimales),
                     moneda: c.moneda.clone(),
                 },
             });
@@ -1112,11 +1506,15 @@ pub fn ejecutar_listar_cuentas<R: RepositorioEventos>(
 
     let mut subtotales = Vec::new();
     for (codigo, total_dec) in mapa_subtotales {
-        let info_moneda = buscar_moneda(&codigo)?;
+        let info_moneda = buscar_moneda_en(&codigo, &proyeccion.monedas)?;
         subtotales.push(SubtotalMoneda {
             codigo,
             simbolo: info_moneda.simbolo,
-            subtotal: format!("{:.2}", total_dec.round_dp(info_moneda.decimales)),
+            subtotal: format!(
+                "{:.*}",
+                info_moneda.decimales as usize,
+                total_dec.round_dp(info_moneda.decimales)
+            ),
         });
     }
 
@@ -1515,7 +1913,14 @@ pub fn evaluar_movimiento<R: RepositorioEventos>(
         .get(cuenta_id)
         .ok_or_else(|| ErrorDominio::nuevo("cuenta", "La cuenta seleccionada no existe."))?;
     let tipo = TipoMovimiento::desde_str(tipo)?;
-    let monto = Monto::desde_str_con_campo(monto, &cuenta.moneda, "monto", false)?;
+    let moneda = buscar_moneda_en(&cuenta.moneda, &libro.monedas)?;
+
+    let monto = Monto::desde_str_con_moneda(
+        monto,
+        &moneda,
+        "monto",
+        false,
+    )?;
     let efecto = match tipo {
         TipoMovimiento::Ingreso => monto.cantidad(),
         TipoMovimiento::Gasto => -monto.cantidad(),
@@ -1524,7 +1929,7 @@ pub fn evaluar_movimiento<R: RepositorioEventos>(
     validar_efecto_subtotal(&libro, &cuenta.moneda, efecto)?;
     Ok(EvaluacionMovimiento {
         deja_saldo_negativo: tipo == TipoMovimiento::Gasto && saldo < Decimal::ZERO,
-        saldo_resultante: format!("{saldo:.2}"),
+        saldo_resultante: format!("{:.*}", moneda.decimales as usize, saldo),
     })
 }
 
