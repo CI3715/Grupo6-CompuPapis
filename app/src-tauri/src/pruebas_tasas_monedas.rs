@@ -1,9 +1,7 @@
 use crate::domain::{
-    ejecutar_crear_cuenta, ejecutar_listar_cuentas, ejecutar_listar_monedas,
-    ejecutar_corregir_movimiento, ejecutar_obtener_detalle_cuenta,
+    RegistrarMovimiento, RepositorioEnMemoria, ejecutar_corregir_movimiento, ejecutar_crear_cuenta,
+    ejecutar_listar_cuentas, ejecutar_listar_monedas, ejecutar_obtener_detalle_cuenta,
     ejecutar_registrar_movimiento, evaluar_movimiento,
-    RegistrarMovimiento,
-    RepositorioEnMemoria,
 };
 use crate::tasas_monedas::ejecutar_crear_moneda;
 
@@ -13,8 +11,16 @@ fn probar_cuenta_con_moneda_propia() {
 
     // Creamos una moneda nueva
     let moneda = ejecutar_crear_moneda(
-        &mut repo, "ABC", "Moneda de prueba", "A", 3, "prueba", &crate::RelojSistema, &crate::GeneradorUuid,
-    ).unwrap();
+        &mut repo,
+        "ABC",
+        "Moneda de prueba",
+        "A",
+        3,
+        "prueba",
+        &crate::RelojSistema,
+        &crate::GeneradorUuid,
+    )
+    .unwrap();
 
     assert_eq!(moneda.codigo, "ABC");
 
@@ -23,8 +29,14 @@ fn probar_cuenta_con_moneda_propia() {
 
     // Vemos si podemos usarla en una cuenta
     let cuenta = ejecutar_crear_cuenta(
-        &mut repo, "Cuenta de prueba", "efectivo", "ABC", "12.345", "prueba",
-    ).unwrap();
+        &mut repo,
+        "Cuenta de prueba",
+        "efectivo",
+        "ABC",
+        "12.345",
+        "prueba",
+    )
+    .unwrap();
 
     assert_eq!(cuenta.moneda(), "ABC");
     assert_eq!(cuenta.saldo().cantidad().to_string(), "12.345");
@@ -44,12 +56,26 @@ fn probar_movimientos_moneda_propia() {
     let fecha = "2026-10-20";
 
     ejecutar_crear_moneda(
-        &mut repo, "ABC", "Moneda de prueba", "A", 3, "prueba", &crate::RelojSistema, &crate::GeneradorUuid,
-    ).unwrap();
+        &mut repo,
+        "ABC",
+        "Moneda de prueba",
+        "A",
+        3,
+        "prueba",
+        &crate::RelojSistema,
+        &crate::GeneradorUuid,
+    )
+    .unwrap();
 
     let cuenta = ejecutar_crear_cuenta(
-        &mut repo, "Cuenta ABC", "efectivo", "ABC", "12.345", "prueba",
-    ).unwrap();
+        &mut repo,
+        "Cuenta ABC",
+        "efectivo",
+        "ABC",
+        "12.345",
+        "prueba",
+    )
+    .unwrap();
 
     // Probamos primero con un ingreso
     let resp = ejecutar_registrar_movimiento(
@@ -63,7 +89,8 @@ fn probar_movimientos_moneda_propia() {
             nota_opt: None,
             dispositivo_id: "prueba",
         },
-    ).unwrap();
+    )
+    .unwrap();
 
     assert_eq!(resp.saldo_actual, "14.450");
 
@@ -78,16 +105,16 @@ fn probar_movimientos_moneda_propia() {
             nota_opt: None,
             dispositivo_id: "prueba",
         },
-    ).unwrap();
+    )
+    .unwrap();
 
     assert_eq!(resp.saldo_actual, "14.400");
 
     // Corregimos el gasto que acabamos de hacer
     let mov_id = resp.movimientos[0].id.clone();
 
-    let resp = ejecutar_corregir_movimiento(
-        &mut repo, cuenta.id(), &mov_id, "0.025", "prueba",
-    ).unwrap();
+    let resp =
+        ejecutar_corregir_movimiento(&mut repo, cuenta.id(), &mov_id, "0.025", "prueba").unwrap();
 
     assert_eq!(resp.saldo_actual, "14.425");
 
@@ -98,9 +125,7 @@ fn probar_movimientos_moneda_propia() {
     assert_eq!(detalle.composicion.gastos, "0.050");
     assert_eq!(detalle.composicion.ajustes, "0.025");
 
-    let resp = evaluar_movimiento(
-        &repo, cuenta.id(), "gasto", "0.001",
-    ).unwrap();
+    let resp = evaluar_movimiento(&repo, cuenta.id(), "gasto", "0.001").unwrap();
 
     assert_eq!(resp.saldo_resultante, "14.424");
 

@@ -13,10 +13,10 @@ mod pruebas_integracion;
 mod pruebas_tasas_monedas;
 
 use domain::{
-    Categoria, Cuenta, DetalleCuenta, ErrorDominio, Moneda, TasaCambio, ResumenCuentas, ejecutar_listar_monedas,
+    Categoria, Cuenta, DetalleCuenta, ErrorDominio, Moneda, ResumenCuentas, TasaCambio,
     ejecutar_corregir_movimiento, ejecutar_crear_categoria, ejecutar_crear_cuenta,
-    ejecutar_listar_categorias, ejecutar_listar_cuentas, ejecutar_obtener_detalle_cuenta,
-    ejecutar_registrar_movimiento, ejecutar_obtener_moneda_base,
+    ejecutar_listar_categorias, ejecutar_listar_cuentas, ejecutar_listar_monedas,
+    ejecutar_obtener_detalle_cuenta, ejecutar_obtener_moneda_base, ejecutar_registrar_movimiento,
 };
 use sqlite_repo::RepositorioSqlite;
 use std::sync::Mutex;
@@ -113,8 +113,9 @@ fn evaluar_movimiento(
 
 #[tauri::command]
 fn listar_monedas(state: State<'_, AppState>) -> Result<Vec<Moneda>, ErrorDominio> {
-
-    let repo = state.repo.lock()
+    let repo = state
+        .repo
+        .lock()
         .map_err(|_| ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."))?;
 
     ejecutar_listar_monedas(&*repo)
@@ -128,11 +129,13 @@ fn crear_moneda(
     simbolo: String,
     decimales: u32,
 ) -> Result<Moneda, ErrorDominio> {
-
     let mut repo = match state.repo.lock() {
         Ok(r) => r,
         Err(_) => {
-            return Err(ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."));
+            return Err(ErrorDominio::nuevo(
+                "general",
+                "Error de acceso al almacenamiento.",
+            ));
         }
     };
 
@@ -159,11 +162,13 @@ fn registrar_tasa(
     fecha: String,
     fuente: String,
 ) -> Result<TasaCambio, ErrorDominio> {
-
     let mut repo = match state.repo.lock() {
         Ok(r) => r,
         Err(_) => {
-            return Err(ErrorDominio::nuevo("general", "No se pudieron cargar los datos."));
+            return Err(ErrorDominio::nuevo(
+                "general",
+                "No se pudieron cargar los datos.",
+            ));
         }
     };
 
@@ -189,34 +194,31 @@ fn historial_tasas(
     origen: String,
     destino: String,
 ) -> Result<Vec<TasaCambio>, ErrorDominio> {
-
     let repo = match state.repo.lock() {
         Ok(r) => r,
         Err(_) => {
-            return Err(ErrorDominio::nuevo("general", "No se pudieron cargar los datos."));
+            return Err(ErrorDominio::nuevo(
+                "general",
+                "No se pudieron cargar los datos.",
+            ));
         }
     };
 
     // Buscamos las tasas de esas 2 monedas
-    let resp = tasas_monedas::ejecutar_historial_tasas(
-        &*repo,
-        &origen,
-        &destino,
-    )?;
+    let resp = tasas_monedas::ejecutar_historial_tasas(&*repo, &origen, &destino)?;
 
     Ok(resp)
 }
 
 #[tauri::command]
-fn eliminar_tasa(
-    state: State<'_, AppState>,
-    tasa_id: String,
-) -> Result<(), ErrorDominio> {
-
+fn eliminar_tasa(state: State<'_, AppState>, tasa_id: String) -> Result<(), ErrorDominio> {
     let mut repo = match state.repo.lock() {
         Ok(r) => r,
         Err(_) => {
-            return Err(ErrorDominio::nuevo("general", "No se pudieron cargar los datos."));
+            return Err(ErrorDominio::nuevo(
+                "general",
+                "No se pudieron cargar los datos.",
+            ));
         }
     };
 
@@ -231,10 +233,7 @@ fn eliminar_tasa(
 }
 
 #[tauri::command]
-fn obtener_moneda_base(
-    state: State<'_, AppState>,
-) -> Result<String, ErrorDominio> {
-
+fn obtener_moneda_base(state: State<'_, AppState>) -> Result<String, ErrorDominio> {
     let repo;
 
     match state.repo.lock() {
@@ -242,7 +241,10 @@ fn obtener_moneda_base(
             repo = r;
         }
         Err(_) => {
-            return Err(ErrorDominio::nuevo("general", "No se pudieron cargar los datos."));
+            return Err(ErrorDominio::nuevo(
+                "general",
+                "No se pudieron cargar los datos.",
+            ));
         }
     }
 
@@ -253,11 +255,7 @@ fn obtener_moneda_base(
 }
 
 #[tauri::command]
-fn cambiar_moneda_base(
-    state: State<'_, AppState>,
-    codigo: String,
-) -> Result<String, ErrorDominio> {
-
+fn cambiar_moneda_base(state: State<'_, AppState>, codigo: String) -> Result<String, ErrorDominio> {
     let mut repo;
 
     match state.repo.lock() {
@@ -265,7 +263,10 @@ fn cambiar_moneda_base(
             repo = r;
         }
         Err(_) => {
-            return Err(ErrorDominio::nuevo("general", "No se pudieron cargar los datos."));
+            return Err(ErrorDominio::nuevo(
+                "general",
+                "No se pudieron cargar los datos.",
+            ));
         }
     }
 

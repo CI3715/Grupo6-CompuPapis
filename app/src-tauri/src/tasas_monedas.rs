@@ -1,11 +1,11 @@
 use crate::domain::{
-    ejecutar_listar_monedas, validar_tasa, ErrorDominio, EventoLibro, Moneda, RepositorioEventos, TasaCambio, 
-    ejecutar_listar_tasas, DatosTasaEliminada, DatosMonedaBaseCambiada,
+    DatosMonedaBaseCambiada, DatosTasaEliminada, ErrorDominio, EventoLibro, Moneda,
+    RepositorioEventos, TasaCambio, ejecutar_listar_monedas, ejecutar_listar_tasas, validar_tasa,
 };
 
 pub use crate::domain::validar_moneda;
 
-use chrono:: {Local, Utc};
+use chrono::{Local, Utc};
 
 pub trait Reloj {
     fn ahora(&self) -> chrono::DateTime<Utc>;
@@ -25,13 +25,17 @@ pub fn ejecutar_crear_moneda<R: RepositorioEventos>(
     reloj: &impl Reloj,
     ids: &impl GeneradorId,
 ) -> Result<Moneda, ErrorDominio> {
-
     let lista = ejecutar_listar_monedas(repo)?;
     let nueva = validar_moneda(codigo, nombre, simbolo, decimales, &lista)?;
 
     let datos = match serde_json::to_string(&nueva) {
         Ok(d) => d,
-        Err(_) => return Err(ErrorDominio::nuevo("general", "Hubo un problema al guardar la moneda.")),
+        Err(_) => {
+            return Err(ErrorDominio::nuevo(
+                "general",
+                "Hubo un problema al guardar la moneda.",
+            ));
+        }
     };
     // Creamos el evento para asi guardar la moneda
     let evento = EventoLibro {
@@ -43,7 +47,10 @@ pub fn ejecutar_crear_moneda<R: RepositorioEventos>(
     };
 
     if repo.guardar_evento(&evento).is_err() {
-        return Err(ErrorDominio::nuevo("general", "Hubo un problema al guardar la moneda."));
+        return Err(ErrorDominio::nuevo(
+            "general",
+            "Hubo un problema al guardar la moneda.",
+        ));
     }
 
     Ok(nueva)
@@ -60,20 +67,20 @@ pub fn ejecutar_registrar_tasa<R: RepositorioEventos>(
     reloj: &impl Reloj,
     ids: &impl GeneradorId,
 ) -> Result<TasaCambio, ErrorDominio> {
-
     let lista = ejecutar_listar_monedas(repo)?;
     let id = ids.nuevo_id();
     let hoy = reloj.ahora().with_timezone(&Local).date_naive();
 
     // Revisamos los datos de la tasa
-    let nueva = validar_tasa(
-        &id, origen, destino, valor, fecha, fuente, &lista, hoy
-    )?;
+    let nueva = validar_tasa(&id, origen, destino, valor, fecha, fuente, &lista, hoy)?;
 
     let datos = match serde_json::to_string(&nueva) {
         Ok(dato) => dato,
         Err(_) => {
-            return Err(ErrorDominio::nuevo("general", "Hubo un problema al guardar la tasa."));
+            return Err(ErrorDominio::nuevo(
+                "general",
+                "Hubo un problema al guardar la tasa.",
+            ));
         }
     };
 
@@ -89,7 +96,10 @@ pub fn ejecutar_registrar_tasa<R: RepositorioEventos>(
     let resp = repo.guardar_evento(&evento);
 
     if resp.is_err() {
-        return Err(ErrorDominio::nuevo("general", "Hubo un problema al guardar la tasa."));
+        return Err(ErrorDominio::nuevo(
+            "general",
+            "Hubo un problema al guardar la tasa.",
+        ));
     }
 
     Ok(nueva)
@@ -100,13 +110,15 @@ pub fn ejecutar_historial_tasas<R: RepositorioEventos>(
     origen: &str,
     destino: &str,
 ) -> Result<Vec<TasaCambio>, ErrorDominio> {
-
     let eventos = repo.obtener_eventos();
 
     let lista = match eventos {
         Ok(e) => e,
         Err(_) => {
-            return Err(ErrorDominio::nuevo("general", "No se pudieron cargar las tasas."));
+            return Err(ErrorDominio::nuevo(
+                "general",
+                "No se pudieron cargar las tasas.",
+            ));
         }
     };
 
@@ -115,11 +127,13 @@ pub fn ejecutar_historial_tasas<R: RepositorioEventos>(
     // Chequeamos las tasas que tenemos guardadas
     for ev in lista {
         if ev.tipo == "TasaRegistrada" {
-
             let tasa: TasaCambio = match serde_json::from_str(&ev.datos_json) {
                 Ok(t) => t,
                 Err(_) => {
-                    return Err(ErrorDominio::nuevo("general", "Hubo un problema al leer una tasa."));
+                    return Err(ErrorDominio::nuevo(
+                        "general",
+                        "Hubo un problema al leer una tasa.",
+                    ));
                 }
             };
 
@@ -143,7 +157,6 @@ pub fn ejecutar_eliminar_tasa<R: RepositorioEventos>(
     reloj: &impl Reloj,
     ids: &impl GeneradorId,
 ) -> Result<(), ErrorDominio> {
-
     let tasas = ejecutar_listar_tasas(repo)?;
     let mut existe = false;
 
@@ -156,7 +169,10 @@ pub fn ejecutar_eliminar_tasa<R: RepositorioEventos>(
     }
 
     if !existe {
-        return Err(ErrorDominio::nuevo("tasa_id", "La tasa no existe o ya se elimino."));
+        return Err(ErrorDominio::nuevo(
+            "tasa_id",
+            "La tasa no existe o ya se elimino.",
+        ));
     }
 
     let dato = DatosTasaEliminada {
@@ -166,7 +182,10 @@ pub fn ejecutar_eliminar_tasa<R: RepositorioEventos>(
     let datos = match serde_json::to_string(&dato) {
         Ok(d) => d,
         Err(_) => {
-            return Err(ErrorDominio::nuevo("general", "Hubo un problema al eliminar la tasa."));
+            return Err(ErrorDominio::nuevo(
+                "general",
+                "Hubo un problema al eliminar la tasa.",
+            ));
         }
     };
 
@@ -182,7 +201,10 @@ pub fn ejecutar_eliminar_tasa<R: RepositorioEventos>(
     let resp = repo.guardar_evento(&evento);
 
     if resp.is_err() {
-        return Err(ErrorDominio::nuevo("general", "Hubo un problema al eliminar la tasa."));
+        return Err(ErrorDominio::nuevo(
+            "general",
+            "Hubo un problema al eliminar la tasa.",
+        ));
     }
 
     Ok(())
@@ -195,7 +217,6 @@ pub fn ejecutar_cambiar_moneda_base<R: RepositorioEventos>(
     reloj: &impl Reloj,
     ids: &impl GeneradorId,
 ) -> Result<String, ErrorDominio> {
-
     let lista = ejecutar_listar_monedas(repo)?;
     let mut existe = false;
 
@@ -222,7 +243,10 @@ pub fn ejecutar_cambiar_moneda_base<R: RepositorioEventos>(
             datos = d;
         }
         Err(_) => {
-            return Err(ErrorDominio::nuevo("general", "No se pudo guardar el cambio."));
+            return Err(ErrorDominio::nuevo(
+                "general",
+                "No se pudo guardar el cambio.",
+            ));
         }
     }
 
@@ -238,7 +262,10 @@ pub fn ejecutar_cambiar_moneda_base<R: RepositorioEventos>(
     let resp = repo.guardar_evento(&evento);
 
     if resp.is_err() {
-        return Err(ErrorDominio::nuevo("general", "No se pudo guardar el cambio."));
+        return Err(ErrorDominio::nuevo(
+            "general",
+            "No se pudo guardar el cambio.",
+        ));
     }
 
     Ok(codigo.to_string())
