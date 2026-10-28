@@ -20,7 +20,13 @@ test("formato local, signos y cero", () => {
   assert.equal(formatearMontoLocal("0.1", "€"), "€ 0,10");
 });
 test("no redondea ni interpreta texto decimal inválido", () => {
-  for (const valor of ["10.555", "NaN", "1e3", "", "1,25"]) {
+  for (const valor of ["NaN", "1e3", "", "1,25"]) {
     assert.throws(() => formatearMontoLocal(valor, "$"));
   }
+});
+
+test("conserva monedas propias y conversiones sin redondeo intermedio", () => {
+  assert.equal(formatearMontoLocal("12.345", "A"), "A 12,345");
+  assert.equal(formatearMontoLocal("0.00000001", "A"), "A 0,00000001");
+  assert.equal(formatearMontoLocal("0.004", "Bs."), "Bs. 0,004");
 });
