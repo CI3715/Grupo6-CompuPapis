@@ -109,6 +109,7 @@ pub struct DatosTasaEliminada {
     pub tasa_id: String,
 }
 
+/// Datos del evento que registra el cambio de moneda base
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatosMonedaBaseCambiada {
     pub codigo: String,
@@ -640,6 +641,7 @@ struct ProyeccionLibro {
     cuentas_orden: Vec<String>,
     cuentas: HashMap<String, EstadoCuentaInterno>,
     categorias: Vec<Categoria>,
+    // Almacena el catálogo dinámico de monedas y la moneda base activa
     monedas: Vec<Moneda>,
     tasas: Vec<TasaCambio>,
     moneda_base: String,
@@ -694,6 +696,7 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
     let mut cuentas_orden = Vec::new();
     let mut cuentas: HashMap<String, EstadoCuentaInterno> = HashMap::new();
     let mut categorias = categorias_de_fabrica();
+    // Inicializa el catálogo con las monedas de fábrica y USD como base
     let mut monedas = catalogo_monedas();
     let mut tasas = Vec::new();
     let mut moneda_base = "USD".to_string();
@@ -722,7 +725,7 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                     Err(_) => return Err(error_libro()),
                 };
 
-                // Revisamos la moneda antes de añadirla
+                // Valida e incorpora una moneda propia al catálogo en memoria
                 match validar_moneda(&m.codigo, &m.nombre, &m.simbolo, m.decimales, &monedas) {
                     Ok(nueva) => {
                         if nueva == m {
@@ -790,7 +793,7 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                     Err(_) => return Err(error_libro()),
                 };
 
-                // Chequeamos si la moneda existe
+                // Actualiza la moneda base si su código existe en el catálogo
                 if buscar_moneda_en(&dato.codigo, &monedas).is_err() {
                     return Err(error_libro());
                 }
@@ -801,6 +804,7 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
             "CuentaCreada" => {
                 let d: DatosCuentaCreada =
                     serde_json::from_str(&ev.datos_json).map_err(|_| error_libro())?;
+                // Valida la moneda y el saldo inicial usando el catálogo dinámico
                 let moneda = buscar_moneda_en(d.saldo_inicial.moneda(), &monedas)
                     .map_err(|_| error_libro())?;
 
@@ -811,6 +815,7 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                     true,
                 )
                 .map_err(|_| error_libro())?;
+
                 if d.cuenta_id.is_empty()
                     || d.nombre.trim().is_empty()
                     || cuentas.contains_key(&d.cuenta_id)
@@ -860,6 +865,7 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                     MovimientoAlmacenado::Actual(d) => d,
                     MovimientoAlmacenado::Historico(d) => {
                         let cta = cuentas.get(&d.cuenta_id).ok_or_else(error_libro)?;
+                        // obtiene la moneda de la cuenta desde el catálogo dinámico
                         let moneda =
                             buscar_moneda_en(&cta.moneda, &monedas).map_err(|_| error_libro())?;
                         DatosMovimientoRegistrado {
@@ -880,7 +886,9 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                         }
                     }
                 };
+
                 let cta = cuentas.get_mut(&d.cuenta_id).ok_or_else(error_libro)?;
+                // Valida el monto y formatea con los decimales propios de la moneda
                 let moneda = buscar_moneda_en(&cta.moneda, &monedas).map_err(|_| error_libro())?;
                 if d.movimiento_id.is_empty()
                     || !ids_movimientos.insert(d.movimiento_id.clone())
@@ -934,6 +942,7 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                     CorreccionAlmacenada::Actual(d) => d,
                     CorreccionAlmacenada::Historica(d) => {
                         let cta = cuentas.get(&d.cuenta_id).ok_or_else(error_libro)?;
+                        // Busca la moneda en el catálogo dinámico para reconstruir el ajuste
                         let moneda =
                             buscar_moneda_en(&cta.moneda, &monedas).map_err(|_| error_libro())?;
                         let (tipo, vigente, _, _) = cta
@@ -964,7 +973,9 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                         }
                     }
                 };
+                
                 let cta = cuentas.get_mut(&d.cuenta_id).ok_or_else(error_libro)?;
+                // Revalida el monto corregido y formatea el ajuste según sus decimales
                 let moneda = buscar_moneda_en(&cta.moneda, &monedas).map_err(|_| error_libro())?;
                 let (tipo, vigente, categoria, _) = cta
                     .originales
@@ -1074,6 +1085,7 @@ pub fn ejecutar_crear_cuenta<R: RepositorioEventos>(
 
     let proyeccion = proyectar_libro(&eventos)?;
 
+    // Busca en el catálogo proyectado para permitir cuentas con monedas propias
     let moneda = buscar_moneda_en(moneda_str, &proyeccion.monedas)?;
 
     let monto_inicial =
@@ -1279,18 +1291,17 @@ pub fn ejecutar_registrar_movimiento<R: RepositorioEventos>(
         .get(cuenta_id)
         .ok_or_else(|| ErrorDominio::nuevo("cuenta", "La cuenta seleccionada no existe."))?;
 
-    // 1. Validar tipo
+    // Valida el tipo
     let tipo = TipoMovimiento::desde_str(tipo_str)?;
 
-    // 2. Validar monto (> 0 y con decimales de la moneda de la cuenta)
+    // Valida los decimales de la moneda de la cuenta
     let moneda = buscar_moneda_en(&cta.moneda, &proyeccion.monedas)?;
-
     let monto = Monto::desde_str_con_moneda(monto_str, &moneda, "monto", false)?;
 
-    // 3. Validar fecha (formato YYYY-MM-DD y no futura)
+    // Valida la fecha (formato YYYY-MM-DD y no futura)
     let fecha_limpia = validar_fecha_movimiento(fecha_str, Local::now().date_naive())?.to_string();
 
-    // 4. Validar categoría (no vacía, existente y del mismo tipo)
+    // Valida la categoría (no vacía, existente y del mismo tipo)
     let cat_limpia = categoria_str.trim();
     if cat_limpia.is_empty() {
         return Err(ErrorDominio::nuevo(
@@ -1390,8 +1401,8 @@ pub fn ejecutar_corregir_movimiento<R: RepositorioEventos>(
 
     // El monto correcto puede ser 0 (para anular un movimiento que no debió existir) o positivo
     let moneda = buscar_moneda_en(&cta.moneda, &proyeccion.monedas)?;
-
     let monto_correcto = Monto::desde_str_con_moneda(monto_correcto_str, &moneda, "monto", true)?;
+    
     let nuevo_valor = monto_correcto.cantidad();
 
     if nuevo_valor == *monto_vigente {
@@ -1413,6 +1424,7 @@ pub fn ejecutar_corregir_movimiento<R: RepositorioEventos>(
     sumar_exacto(cta.saldo_actual()?, diferencia)?;
     validar_efecto_subtotal(&proyeccion, &cta.moneda, diferencia)?;
     let hoy_str = Local::now().date_naive().format("%Y-%m-%d").to_string();
+    
     let dec = moneda.decimales as usize;
 
     let nota = format!(
@@ -1459,11 +1471,12 @@ pub fn ejecutar_obtener_detalle_cuenta<R: RepositorioEventos>(
         .ok_or_else(|| ErrorDominio::nuevo("cuenta", "La cuenta no existe."))?;
 
     let saldo_actual = cta.saldo_actual()?;
+
+    //Formatea el detalle de la cuenta según los decimales de su moneda
     let moneda = buscar_moneda_en(&cta.moneda, &proyeccion.monedas)?;
     let dec = moneda.decimales as usize;
     let mut movimientos = cta.movimientos;
-    // Del más reciente al más antiguo (Sección 2.3)
-    // Stable sort preserves reverse event order for equal dates (newest registration first).
+    // Del más reciente al más antiguo
     movimientos.reverse();
     movimientos.sort_by(|a, b| b.fecha.cmp(&a.fecha));
 
@@ -1506,6 +1519,7 @@ pub fn ejecutar_listar_cuentas<R: RepositorioEventos>(
     for id in &proyeccion.cuentas_orden {
         if let Some(c) = proyeccion.cuentas.get(id) {
             let saldo_actual = c.saldo_actual()?;
+            // Redondea y formatea saldos y subtotales según los decimales de cada moneda
             let moneda = buscar_moneda_en(&c.moneda, &proyeccion.monedas)?;
             let subtotal = mapa_subtotales
                 .entry(c.moneda.clone())
@@ -1933,7 +1947,9 @@ pub fn evaluar_movimiento<R: RepositorioEventos>(
         .cuentas
         .get(cuenta_id)
         .ok_or_else(|| ErrorDominio::nuevo("cuenta", "La cuenta seleccionada no existe."))?;
+    
     let tipo = TipoMovimiento::desde_str(tipo)?;
+    // Calcula y formatea el saldo resultante con la escala de la moneda
     let moneda = buscar_moneda_en(&cuenta.moneda, &libro.monedas)?;
 
     let monto = Monto::desde_str_con_moneda(monto, &moneda, "monto", false)?;
