@@ -1,39 +1,40 @@
 :root {
   --bg-app: #f8fafc;
   --bg-card: #ffffff;
+  --bg-card-hover: #9194e7;
   --text-main: #0f172a;
-  --text-secondary: #334155;
-  --text-success: #15803d;
-  --text-danger: #dc2626;
+  --text-secondary: #32527c;
+  --text-success: #6fc162;
+  --text-danger: #e97575;
   --text-ajust: #dcc726;
   --text-muted: #64748b;
   --border-subtle: #e2e8f0;
-  --border-hover: #cbd5e1;
+  --border-hover: #5d62e5;
 
-  --brand-primary: #059669;
-  --brand-primary-hover: #047857;
+  --brand-primary: #9194e7;
+  --brand-primary-hover: #5d62e5;
   --brand-light: #ecfdf5;
 
-  --error-bg: #fef2f2;
-  --error-border: #dc2626;
-  --error-text: #991b1b;
+  --error-bg: #FEF2F2;
+  --error-border: #DC2626;
+  --error-text: #991B1B;
 
   /* Colores de Badges por Moneda */
-  --usd-bg: #dcfce7;
-  --usd-text: #15803d;
-  --usd-border: #bbf7d0;
+  --usd-bg: #DCFCE7;
+  --usd-text: #15803D;
+  --usd-border: #BBF7D0;
 
-  --ves-bg: #dbeafe;
-  --ves-text: #1d4ed8;
-  --ves-border: #bfdbfe;
+  --ves-bg: #DBEAFE;
+  --ves-text: #1D4ED8;
+  --ves-border: #BFDBFE;
 
-  --eur-bg: #e0e7ff;
-  --eur-text: #4338ca;
-  --eur-border: #c7d2fe;
+  --eur-bg: #E0E7FF;
+  --eur-text: #4338CA;
+  --eur-border: #C7D2FE;
 
-  --usdt-bg: #ccfbf1;
-  --usdt-text: #0f766e;
-  --usdt-border: #99f6e4;
+  --usdt-bg: #CCFBF1;
+  --usdt-text: #0F766E;
+  --usdt-border: #99F6E4;
 }
 
 * {
@@ -45,9 +46,7 @@
 body {
   background-color: var(--bg-app);
   color: var(--text-main);
-  font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
-    sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   line-height: 1.5;
 }
@@ -94,9 +93,7 @@ body {
   font-weight: 600;
   border: none;
   cursor: pointer;
-  transition:
-    background-color 0.15s ease,
-    transform 0.05s ease;
+  transition: background-color 0.15s ease, transform 0.05s ease;
 }
 
 .btn:active {
@@ -105,7 +102,7 @@ body {
 
 .btn-primary {
   background-color: var(--brand-primary);
-  color: #ffffff;
+  color: #FFFFFF;
 }
 
 .btn-primary:hover {
@@ -114,7 +111,7 @@ body {
 
 .btn-secondary {
   background-color: var(--text-secondary);
-  color: #ffffff;
+  color: #FFFFFF;
 }
 
 .btn-secondary:hover {
@@ -122,32 +119,32 @@ body {
 }
 
 .btn-danger {
-  background-color: transparent;
+  background-color: #ffffff;
   color: var(--text-danger);
 }
 
 .btn-danger:hover {
-  background-color: #f1f5f9;
+  background-color: #F1F5F9;
   color: var(--text-danger);
 }
 
 .btn-success {
-  background-color: transparent;
+  background-color: #ffffff;
   color: var(--text-success);
 }
 
 .btn-success:hover {
-  background-color: #f1f5f9;
+  background-color: #F1F5F9;
   color: var(--text-success);
 }
 
 .btn-ghost {
-  background-color: transparent;
+  background-color: #ffffff;
   color: var(--text-muted);
 }
 
 .btn-ghost:hover {
-  background-color: #f1f5f9;
+  background-color: #F1F5F9;
   color: var(--text-main);
 }
 
@@ -210,23 +207,25 @@ body {
   padding: 10px 12px;
   font-size: 14px;
   color: var(--text-main);
-  background-color: #ffffff;
+  background-color: #FFFFFF;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   outline: none;
-  transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+select.form-control {
+  border: none;
 }
 
 .form-control:focus {
   border-color: var(--brand-primary);
-  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.12);
+  box-shadow: 0 0 0 3px var(--brand-primary);
 }
 
 .form-control.input-error {
   border-color: var(--error-border);
-  background-color: #fff5f5;
+  background-color: #FFF5F5;
 }
 
 .form-control.input-error:focus {
@@ -265,6 +264,10 @@ body {
   border-radius: 12px;
   padding: 16px;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+
+.subtotal-card:hover {
+  border-color: var(--text-secondary);
 }
 
 .subtotal-header {
@@ -431,8 +434,7 @@ body {
   background-color: #f9f9f9;
 }
 
-.sidebar-cuentas,
-.content-detalle {
+.sidebar-cuentas, .content-detalle {
   height: 100%;
   overflow-y: auto;
   padding: 24px;
@@ -445,8 +447,8 @@ body {
 
 /* Estado activo de la tarjeta */
 .account-card-active {
-  border: 2px solid #0056b3;
-  background-color: #f0f7ff;
+  border: #0056b3;
+  background-color: #b9d8fc;
 }
 
 /* Contenedor principal del encabezado de detalle */
@@ -463,7 +465,7 @@ body {
 .detalle-header-top {
   display: flex;
   justify-content: space-between; /* Nombre a la izquierda, saldo a la derecha */
-  align-items: flex-start;
+  align-items: flex-start; 
   flex-wrap: wrap; /* Por si la pantalla es muy pequeña */
   gap: 20px;
 }
@@ -513,28 +515,4 @@ body {
   justify-content: space-between;
   gap: 12px;
   width: 100%;
-}
-
-/* Alerta de advertencia para saldo en negativo (RF-LIB-04) */
-.warning-alert {
-  background-color: #fffbeb;
-  border: 1px solid #f59e0b;
-  color: #92400e;
-  padding: 14px 16px;
-  border-radius: 8px;
-  margin-bottom: 20px;
-  font-size: 14px;
-}
-
-/* Badges de estado de movimientos (RF-LIB-06) */
-.badge-corregido {
-  background-color: #fef3c7;
-  color: #92400e;
-  border-color: #fde68a;
-}
-
-.badge-ajuste {
-  background-color: #f3e8ff;
-  color: #6b21a8;
-  border-color: #e9d5ff;
 }
