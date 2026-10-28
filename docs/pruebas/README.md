@@ -1,6 +1,6 @@
 # Guía de pruebas de Cuentas Claras
 
-Esta guía explica cómo ejecutar las pruebas de las Entregas 2 y 3, qué comprueba cada grupo y cómo demostrar el funcionamiento en la aplicación. Complementa el [README del proyecto](../../README.md) y el [informe de verificación de la integración](../entregas-2-3-verificacion.md).
+Esta guía explica cómo ejecutar las pruebas de las Entregas 2, 3 y 4, qué comprueba cada grupo y cómo demostrar el funcionamiento en la aplicación. Complementa el [README del proyecto](../../README.md) y el [informe de verificación de la integración](../entregas-2-3-verificacion.md).
 
 ## 1. Preparación y directorios
 
@@ -65,18 +65,18 @@ Ejecutar los comandos uno por uno. Si alguno falla, guardar su salida completa y
 | Comando                           | Qué comprueba                                                                                                   | Resultado esperado                                    |
 | --------------------------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | `cargo check`                     | Que el paquete Rust y sus dependencias compilan para comprobación de tipos. No ejecuta pruebas.                 | Termina con `Finished` sin errores.                   |
-| `cargo test` de Tauri             | Validaciones, invariantes, saldos, compatibilidad, persistencia, migración y protección de moneda.              | 28 pruebas unitarias y 1 doctest aprobados.           |
+| `cargo test` de Tauri             | Validaciones, invariantes, saldos, compatibilidad, persistencia, migración y protección de moneda.              | 38 pruebas unitarias y 1 doctest aprobados.           |
 | `cargo test` del servidor         | El contrato del manejador de ping: estado, mensaje, versión y timestamp válido. No hace una petición HTTP real. | 1 prueba aprobada.                                    |
 | `cargo fmt ... -- --check`        | Formato Rust sin modificar archivos.                                                                            | Termina sin diferencias; normalmente no imprime nada. |
 | `cargo clippy ... -- -D warnings` | Análisis estático Rust; las advertencias se consideran errores.                                                 | Sin errores ni advertencias.                          |
-| `npm test`                        | Representación decimal exacta del dinero en la UI.                                                              | 3 pruebas aprobadas.                                  |
+| `npm test`                        | Representación decimal exacta del dinero en la UI.                                                              | 4 pruebas aprobadas.                                  |
 | `npm run lint`                    | Reglas de TypeScript/React y hooks mediante ESLint.                                                             | Sin errores ni advertencias.                          |
 | `npm run format:check`            | Prettier del frontend y formato de ambos paquetes Rust. No modifica archivos.                                   | Todos los pasos aprobados.                            |
 | `npm run build`                   | Compilación de Next.js, comprobación de TypeScript y exportación estática.                                      | Build exitoso; archivos generados en `app/out/`.      |
 
-Los recuentos corresponden a los casos documentados; pueden aumentar cuando se agreguen pruebas. El doctest de moneda usa `compile_fail`: **pasa cuando el compilador rechaza modificar el campo privado**, que es el comportamiento esperado de INV-18. Los bloques que dicen `running 0 tests` para otros targets no significan que se omitieran las 28 pruebas de la biblioteca.
+Los recuentos corresponden a los casos documentados; pueden aumentar cuando se agreguen pruebas. El doctest de moneda usa `compile_fail`: **pasa cuando el compilador rechaza modificar el campo privado**, que es el comportamiento esperado de INV-18. Los bloques que dicen `running 0 tests` para otros targets no significan que se omitieran las 38 pruebas de la biblioteca.
 
-Node puede mostrar un aviso `MODULE_TYPELESS_PACKAGE_JSON` al inferir ESM en `money.ts`; no representa un fallo de las tres pruebas. Un error de descarga o una dependencia nativa de Tauri ausente bloquea la ejecución: no cuenta como prueba aprobada.
+Node puede mostrar un aviso `MODULE_TYPELESS_PACKAGE_JSON` al inferir ESM en `money.ts`; no representa un fallo de las pruebas. Un error de descarga o una dependencia nativa de Tauri ausente bloquea la ejecución: no cuenta como prueba aprobada.
 
 ## 3. Qué prueban los casos automatizados
 
@@ -289,13 +289,13 @@ Esta guía describe procedimientos y resultados esperados, no certifica una ejec
 
 ## Entrega 4: monedas y tasas
 
-Auditoría, responsabilidades y contratos: [backend de Luis](../entrega-4-backend-luis.md).
+Auditoría, capas técnicas y contratos: [backend local de monedas, tasas y patrimonio](../entrega-4-backend.md).
 Todos los comandos siguientes parten de la raíz del repositorio y funcionan
 sin depender del nombre de una rama ni de directorios personales.
 
 ```bash
 cargo test --manifest-path app/src-tauri/Cargo.toml
-cargo test --manifest-path app/src-tauri/Cargo.toml pruebas_tasas_luis
+cargo test --manifest-path app/src-tauri/Cargo.toml pruebas_tasas_cambio
 cargo clippy --manifest-path app/src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo fmt --manifest-path app/src-tauri/Cargo.toml -- --check
 cargo test --manifest-path server/Cargo.toml
@@ -309,13 +309,13 @@ npm run build
 npm run tauri -- build --debug --no-bundle
 ```
 
-Resultado esperado de esta contribución: 38 pruebas unitarias Rust y 1
-doctest; el filtro `pruebas_tasas_luis` ejecuta 8 de ellas. Servidor: 1 prueba
+Resultado esperado del backend de Entrega 4: 38 pruebas unitarias Rust y 1
+doctest; el filtro `pruebas_tasas_cambio` ejecuta 8 de ellas. Servidor: 1 prueba
 del ping. Frontend: 4 pruebas de representación exacta. Todos deben pasar,
 sin tests ignorados. Las suites anteriores de E2/E3 siguen incluidas y
 comprueban el saldo 1750, formatos históricos, inmutabilidad e idempotencia.
 
-| Caso automatizado de Luis                                           | Evidencia esperada                                                                                                                                                |
+| Caso automatizado de tasas y patrimonio                             | Evidencia esperada                                                                                                                                                |
 | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `registro_exacto_validaciones_por_campo_y_rechazos_sin_eventos`     | Registro con 8 decimales exactos, catálogo personalizado, fuente recortada; rechazo por origen, destino, valor, fecha y fuente sin eventos nuevos.                |
 | `entrada_comando_ausente_o_null_devuelve_campo_sin_escribir`        | Los cinco campos omitidos/null devuelven su nombre; un decimal demasiado largo no se redondea para aceptarlo.                                                     |

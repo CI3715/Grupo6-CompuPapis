@@ -226,7 +226,7 @@ fn tasa_vigente_y_saldos_a_fecha_redondeo_solo_al_final() {
 
 #[test]
 fn sqlite_reapertura_conserva_tasas_anulaciones_y_rechazos() {
-    let ruta = std::env::temp_dir().join(format!("tasas-luis-{}.sqlite", uuid::Uuid::new_v4()));
+    let ruta = std::env::temp_dir().join(format!("tasas-cambio-{}.sqlite", uuid::Uuid::new_v4()));
     let mut repo = crate::sqlite_repo::RepositorioSqlite::inicializar(ruta.clone()).unwrap();
     let t = registrar(&mut repo, "USD", "VES", "887.12345678", "2026-10-20");
     drop(repo);
@@ -303,8 +303,7 @@ fn entrada_comando_ausente_o_null_devuelve_campo_sin_escribir() {
 
 #[test]
 fn sqlite_reapertura_conserva_catalogo_base_y_patrimonio() {
-    let ruta =
-        std::env::temp_dir().join(format!("patrimonio-luis-{}.sqlite", uuid::Uuid::new_v4()));
+    let ruta = std::env::temp_dir().join(format!("patrimonio-{}.sqlite", uuid::Uuid::new_v4()));
     let mut repo = crate::sqlite_repo::RepositorioSqlite::inicializar(ruta.clone()).unwrap();
     ejecutar_crear_moneda(
         &mut repo,

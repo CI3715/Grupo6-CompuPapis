@@ -10,7 +10,7 @@ mod pruebas_movimientos;
 mod pruebas_integracion;
 
 #[cfg(test)]
-mod pruebas_tasas_luis;
+mod pruebas_tasas_cambio;
 #[cfg(test)]
 mod pruebas_tasas_monedas;
 
