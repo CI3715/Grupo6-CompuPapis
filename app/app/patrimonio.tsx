@@ -166,7 +166,8 @@ export default function PantallaPatrimonio({ onVolver, onIr }: PropsPantalla) {
     monto: string,
     enBase: string | null | undefined,
   ) => {
-    if (moneda === base) return formatearMontoLocal(monto, obtenerSimbolo(base));
+    if (moneda === base)
+      return formatearMontoLocal(monto, obtenerSimbolo(base));
     if (enBase === null || enBase === undefined) return "—";
     return formatearMontoLocal(enBase, obtenerSimbolo(base));
   };
@@ -348,9 +349,9 @@ export default function PantallaPatrimonio({ onVolver, onIr }: PropsPantalla) {
 
         {!patrimonio && (
           <div className="warning-alert" role="status">
-            El cálculo de conversión todavía no está disponible. Se muestran
-            los saldos; las tasas y los montos en {base} aparecerán cuando
-            responda <strong>consultar_patrimonio</strong>.
+            El cálculo de conversión todavía no está disponible. Se muestran los
+            saldos; las tasas y los montos en {base} aparecerán cuando responda{" "}
+            <strong>consultar_patrimonio</strong>.
           </div>
         )}
 
@@ -410,7 +411,10 @@ export default function PantallaPatrimonio({ onVolver, onIr }: PropsPantalla) {
                         {f.moneda}
                       </span>
                     </div>
-                    <p className="account-meta" style={{ textTransform: "none" }}>
+                    <p
+                      className="account-meta"
+                      style={{ textTransform: "none" }}
+                    >
                       {textoTasa(f.moneda, f.tasa, f.inversa)}
                     </p>
                   </div>

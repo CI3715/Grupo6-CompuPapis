@@ -15,26 +15,26 @@
   --brand-primary-hover: #5d62e5;
   --brand-light: #ecfdf5;
 
-  --error-bg: #FEF2F2;
-  --error-border: #DC2626;
-  --error-text: #991B1B;
+  --error-bg: #fef2f2;
+  --error-border: #dc2626;
+  --error-text: #991b1b;
 
   /* Colores de Badges por Moneda */
-  --usd-bg: #DCFCE7;
-  --usd-text: #15803D;
-  --usd-border: #BBF7D0;
+  --usd-bg: #dcfce7;
+  --usd-text: #15803d;
+  --usd-border: #bbf7d0;
 
-  --ves-bg: #DBEAFE;
-  --ves-text: #1D4ED8;
-  --ves-border: #BFDBFE;
+  --ves-bg: #dbeafe;
+  --ves-text: #1d4ed8;
+  --ves-border: #bfdbfe;
 
-  --eur-bg: #E0E7FF;
-  --eur-text: #4338CA;
-  --eur-border: #C7D2FE;
+  --eur-bg: #e0e7ff;
+  --eur-text: #4338ca;
+  --eur-border: #c7d2fe;
 
-  --usdt-bg: #CCFBF1;
-  --usdt-text: #0F766E;
-  --usdt-border: #99F6E4;
+  --usdt-bg: #ccfbf1;
+  --usdt-text: #0f766e;
+  --usdt-border: #99f6e4;
 }
 
 * {
@@ -46,7 +46,9 @@
 body {
   background-color: var(--bg-app);
   color: var(--text-main);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
   -webkit-font-smoothing: antialiased;
   line-height: 1.5;
 }
@@ -93,7 +95,9 @@ body {
   font-weight: 600;
   border: none;
   cursor: pointer;
-  transition: background-color 0.15s ease, transform 0.05s ease;
+  transition:
+    background-color 0.15s ease,
+    transform 0.05s ease;
 }
 
 .btn:active {
@@ -102,7 +106,7 @@ body {
 
 .btn-primary {
   background-color: var(--brand-primary);
-  color: #FFFFFF;
+  color: #ffffff;
 }
 
 .btn-primary:hover {
@@ -111,7 +115,7 @@ body {
 
 .btn-secondary {
   background-color: var(--text-secondary);
-  color: #FFFFFF;
+  color: #ffffff;
 }
 
 .btn-secondary:hover {
@@ -124,7 +128,7 @@ body {
 }
 
 .btn-danger:hover {
-  background-color: #F1F5F9;
+  background-color: #f1f5f9;
   color: var(--text-danger);
 }
 
@@ -134,7 +138,7 @@ body {
 }
 
 .btn-success:hover {
-  background-color: #F1F5F9;
+  background-color: #f1f5f9;
   color: var(--text-success);
 }
 
@@ -144,7 +148,7 @@ body {
 }
 
 .btn-ghost:hover {
-  background-color: #F1F5F9;
+  background-color: #f1f5f9;
   color: var(--text-main);
 }
 
@@ -207,11 +211,13 @@ body {
   padding: 10px 12px;
   font-size: 14px;
   color: var(--text-main);
-  background-color: #FFFFFF;
+  background-color: #ffffff;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   outline: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 select.form-control {
@@ -225,7 +231,7 @@ select.form-control {
 
 .form-control.input-error {
   border-color: var(--error-border);
-  background-color: #FFF5F5;
+  background-color: #fff5f5;
 }
 
 .form-control.input-error:focus {
@@ -434,7 +440,8 @@ select.form-control {
   background-color: #f9f9f9;
 }
 
-.sidebar-cuentas, .content-detalle {
+.sidebar-cuentas,
+.content-detalle {
   height: 100%;
   overflow-y: auto;
   padding: 24px;
@@ -465,7 +472,7 @@ select.form-control {
 .detalle-header-top {
   display: flex;
   justify-content: space-between; /* Nombre a la izquierda, saldo a la derecha */
-  align-items: flex-start; 
+  align-items: flex-start;
   flex-wrap: wrap; /* Por si la pantalla es muy pequeña */
   gap: 20px;
 }

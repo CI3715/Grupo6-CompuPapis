@@ -33,7 +33,6 @@ async function leerDatos() {
   return { resumen, monedas, categorias };
 }
 
-
 export default function MisCuentasPage() {
   // --- NAVEGACIÓN Y MODO PANTALLA COMPLETA (ENTREGA 4) ---
   const [pantalla, setPantalla] = useState<Pantalla>("cuentas");
@@ -185,7 +184,8 @@ export default function MisCuentasPage() {
     const ajustarTamanoVentana = async () => {
       try {
         const numCuentas = resumen.cuentas.length;
-        const anchoBase = cuentaSeleccionadaId || pantalla !== "cuentas" ? 1120 : 620;
+        const anchoBase =
+          cuentaSeleccionadaId || pantalla !== "cuentas" ? 1120 : 620;
         const altoBase = 560;
         const crecimientoAlto = 80;
         const maximoAlto = 900;
@@ -202,7 +202,12 @@ export default function MisCuentasPage() {
     };
 
     ajustarTamanoVentana();
-  }, [resumen.cuentas.length, cuentaSeleccionadaId, pantalla, pantallaCompleta]);
+  }, [
+    resumen.cuentas.length,
+    cuentaSeleccionadaId,
+    pantalla,
+    pantallaCompleta,
+  ]);
 
   const obtenerSimbolo = (codigo: string) =>
     monedas.find((m) => m.codigo === codigo)?.simbolo ?? codigo;
