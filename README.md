@@ -12,6 +12,7 @@ Cuentas Claras permite crear cuentas personales multimoneda y registrar ingresos
 - **Entrega 1:** servidor Rust + Axum con `GET /ping`, consultado mediante `Next.js → invoke('ping_servidor') → Tauri/Rust → Axum` desde el botón de conexión.
 - **Entrega 2:** inicio en Mis cuentas sin login; creación y validación de efectivo, banco y billetera digital, catálogo VES/USD/EUR/USDT, subtotales por moneda y persistencia local.
 - **Entrega 3:** ingresos/gastos, categorías, correcciones mediante ajustes inmutables, composición del saldo e historial. El ejemplo obligatorio produce **1750 USD** conservando el gasto original.
+- **Entrega 4 (tasas y monedas):** agregamos monedas propias, el registro de tasas de cambio, ña opcion de ver las tasas anteriores y eliminarls sin perderlas del historial. Tambien podemos cambiar la moneda base, que al principio es USD, y guardar todo en SQLite.
 - **Servidor futuro:** PostgreSQL + Neon para funcionalidades sociales. Las cuentas, movimientos y saldos personales permanecen en SQLite local y no se envían al servidor.
 
 El flujo financiero es `Next.js → invoke() → Tauri/Rust → dominio → SQLite`. Axum no participa en él. Las decisiones arquitectónicas están en [docs/adr](docs/adr/README.md).
@@ -97,6 +98,16 @@ Las pruebas de dominio usan un repositorio en memoria. Las de persistencia y mig
 El archivo personal `cuentas_claras.sqlite` reside en `app_data_dir` de Tauri. La actualización desde el identificador antiguo conserva la base anterior y no sobrescribe un destino existente; ver la [guía de SQLite](docs/pruebas/README.md#6-sqlite-y-actualización-de-datos-existentes) y el [ADR 007](docs/adr/007-libro-local-compatible.md). No se deben borrar ni editar eventos para preparar las pruebas.
 
 El [informe de verificación](docs/entregas-2-3-verificacion.md) conserva el historial de la integración y los resultados registrados en ese momento.
+
+### Pruebas del backend
+
+Para corroborar el código ejecutamos `cargo test` desde la carpeta `app/src-tauri`:
+
+```bash
+cd app/src-tauri
+cargo test
+```
+Ejecutamos cargo test y las 30 pruebas salieron bien, ademas de la documentacion. Ahi tambien estan los 2 que hicimos para probar las monedas propias en cuentas y movimientos.
 
 ## Formato
 
