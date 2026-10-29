@@ -1671,7 +1671,7 @@ fn calcular_saldos_en_fecha(
             codigo,
             simbolo: info_moneda.simbolo,
             subtotal: format!(
-                ":.*{}{}",
+                "{:.*}",
                 info_moneda.decimales as usize,
                 total_dec.round_dp(info_moneda.decimales)
             ),
@@ -1844,6 +1844,120 @@ pub fn convertir_monto_a_base(
         .ok_or_else(|| ErrorDominio::nuevo("monto", "El monto excede el rango decimal permitido."))?;
 
     Ok((convertido, Some(aplicable.vista)))
+}
+
+// Calcula el patrimonio por cuenta, subtotales y total consolidado en moneda base
+pub fn ejecutar_consultar_patrimonio<R: RepositorioEventos> (
+    repo: &R,
+    fecha_consulta: NaiveDate,
+) -> Result<PatrimonioConsolidadoVista, ErrorDominio> {
+    // Obtiene los eventos almacenados para reconstruir el estado del libro
+    let eventos = match repo.obtener_eventos() {
+        Ok(e) => e,
+        Err(_) => {
+            return Err(ErrorDominio::nuevo(
+                "general",
+                "No se pudo cargar el patrimonio local.",
+            ));
+        }
+    };
+
+    let libro = proyectar_libro(&eventos)?;
+    let info_base = buscar_moneda_en(&libro.moneda_base, &libro.monedas)?;
+    let resumen = calcular_saldos_en_fecha(&libro, fecha_consulta)?;
+
+    let mut cuentas_vista = Vec::new();
+    let mut tasas_usadas: Vec<TasaUsadaVista> = Vec::new();
+    let mut suma_consolidada = Decimal::ZERO;
+    let mut aviso_tasa_faltante: Option<String> = None;
+
+    // Evalúa cada cuenta frente a la moneda base activa en la fecha dada
+    for cta in &resumen.cuentas {
+        let info_moneda = buscar_moneda_en(cta.moneda(), &libro.monedas)?;
+        let saldo_cant = cta.saldo().cantidad();
+        let saldo_str = format!("{:.*}", info_moneda.decimales as usize, saldo_cant);
+
+        match convertir_monto_a_base(
+            saldo_cant,
+            cta.moneda(),
+            &info_base.codigo,
+            fecha_consulta,
+            &libro.tasas,
+        ) {
+            Ok((convertido, vista_opt)) => {
+                // Suma manteniendo toda la precisión decimal sin redondeo intermedio
+                suma_consolidada = sumar_exacto(suma_consolidada, convertido)?;
+
+                if let Some(ref vista) = vista_opt {
+                    // Registra la tasa empleada evitando duplicados en la lista resumen
+                    let ya_registrada = tasas_usadas
+                        .iter()
+                        .any(|t| t.origen == vista.origen && t.destino == vista.destino);
+                    if !ya_registrada {
+                        tasas_usadas.push(vista.clone());
+                    }
+                }
+
+                let equiv_str = format!(
+                    "{:.*}",
+                    info_base.decimales as usize,
+                    convertido.round_dp(info_base.decimales)
+                );
+
+                cuentas_vista.push(CuentaPatrimonioVista {
+                    id: cta.id().to_string(),
+                    nombre: cta.nombre().to_string(),
+                    tipo: cta.tipo().clone(),
+                    moneda: cta.moneda().to_string(),
+                    simbolo: info_moneda.simbolo,
+                    saldo: saldo_str,
+                    tasa_usada: vista_opt,
+                    equivalente_base: Some(equiv_str),
+                });
+            }
+            Err(err) => {
+                // Si falta una tasa, guarda el primer aviso y omite el equivalente
+                if err.campo == "tasa" {
+                    if aviso_tasa_faltante.is_none() {
+                        aviso_tasa_faltante = Some(err.mensaje);
+                    }
+                    cuentas_vista.push(CuentaPatrimonioVista {
+                        id: cta.id().to_string(),
+                        nombre: cta.nombre().to_string(),
+                        tipo: cta.tipo().clone(),
+                        moneda: cta.moneda().to_string(),
+                        simbolo: info_moneda.simbolo,
+                        saldo: saldo_str,
+                        tasa_usada: None,
+                        equivalente_base: None,
+                    });
+                } else {
+                    return Err(err);
+                }
+            }
+        }
+    }
+
+    // Redondea una sola vez al final si todas las tasas estuvieran disponibles
+    let total_consolidado = match aviso_tasa_faltante {
+        Some(_) => None,
+        None => Some(format!(
+            "{:.*}",
+            info_base.decimales as usize,
+            suma_consolidada.round_dp(info_base.decimales)
+        )),
+    };
+
+    Ok(PatrimonioConsolidadoVista {
+        fecha_consulta: fecha_consulta.format("%Y-%m-%d").to_string(),
+        moneda_base: info_base.codigo,
+        simbolo_base: info_base.simbolo,
+        cuentas: cuentas_vista,
+        subtotales: resumen.subtotales,
+        tasas_usadas,
+        total_consolidado,
+        aviso_tasa_faltante,
+    })
 }
 
 // ==========================================
@@ -2197,6 +2311,101 @@ mod tests {
             err_faltante.mensaje,
             "Falta una tasa de USDT a USD con fecha igual o anterior al 23/10/2026"
         );
+    }
+
+    // Verifica el ejemplo de la sección 2.3, aviso de tasa faltante y redondeo único
+    #[test]
+    fn test_consultar_patrimonio_seccion_2_3_y_redondeo_final() {
+        let mut repo = RepositorioEnMemoria::default();
+        let fecha = NaiveDate::from_ymd_opt(2026, 10, 23).unwrap();
+        // Crea las tres cuentas del ejemplo de la especificación
+        ejecutar_crear_cuenta(&mut repo, "Efectivo bolívares", "efectivo", "VES", "88700.00", "d1").unwrap();
+        ejecutar_crear_cuenta(&mut repo, "Banco en dólares", "banco", "USD", "200.00", "d1").unwrap();
+        ejecutar_crear_cuenta(&mut repo, "Billetera USDT", "billetera digital", "USDT", "50.00", "d1").unwrap();
+
+        // Registra tasas de USD->VES y USDT->VES con sus fechas y fuentes
+        let t_usd = TasaCambio {
+            id: "t-usd-ves".into(),
+            origen: "USD".into(),
+            destino: "VES".into(),
+            valor: Decimal::from_str("887.00").unwrap(),
+            fecha: "2026-10-20".into(),
+            fuente: "BCV".into(),
+        };
+        repo.guardar_evento(&EventoLibro {
+            id: "t-usd-ves".into(),
+            tipo: "TasaRegistrada".into(),
+            momento_registro: Utc::now(),
+            dispositivo_origen: "d1".into(),
+            datos_json: serde_json::to_string(&t_usd).unwrap(),
+        }).unwrap();
+
+        let t_usdt = TasaCambio {
+            id: "t-usdt-ves".into(),
+            origen: "USDT".into(),
+            destino: "VES".into(),
+            valor: Decimal::from_str("1000.00").unwrap(),
+            fecha: "2026-10-21".into(),
+            fuente: "casa de cambio".into(),
+        };
+        repo.guardar_evento(&EventoLibro {
+            id: "t-usdt-ves".into(),
+            tipo: "TasaRegistrada".into(),
+            momento_registro: Utc::now(),
+            dispositivo_origen: "d1".into(),
+            datos_json: serde_json::to_string(&t_usdt).unwrap(),
+        }).unwrap();
+
+        // Cambia la moneda base a VES y verifica el total de 316100.00 VES
+        repo.guardar_evento(&EventoLibro {
+            id: "base-ves".into(),
+            tipo: "MonedaBaseCambiada".into(),
+            momento_registro: Utc::now(),
+            dispositivo_origen: "d1".into(),
+            datos_json: serde_json::to_string(&DatosMonedaBaseCambiada { codigo: "VES".into() }).unwrap(),
+        }).unwrap();
+
+        let pat_ves = ejecutar_consultar_patrimonio(&repo, fecha).unwrap();
+        assert_eq!(pat_ves.total_consolidado.as_deref(), Some("316100.00"));
+        assert!(pat_ves.aviso_tasa_faltante.is_none());
+
+        // Cambia la base a USD; falta USDT->USD, omite total y muestra aviso
+        repo.guardar_evento(&EventoLibro {
+            id: "base-usd".into(),
+            tipo: "MonedaBaseCambiada".into(),
+            momento_registro: Utc::now(),
+            dispositivo_origen: "d1".into(),
+            datos_json: serde_json::to_string(&DatosMonedaBaseCambiada { codigo: "USD".into() }).unwrap(),
+        }).unwrap();
+
+        let pat_usd_incompleto = ejecutar_consultar_patrimonio(&repo, fecha).unwrap();
+        assert!(pat_usd_incompleto.total_consolidado.is_none());
+        assert_eq!(
+            pat_usd_incompleto.aviso_tasa_faltante.as_deref(),
+            Some("Falta una tasa de USDT a USD con fecha igual o anterior al 23/10/2026")
+        );
+        assert_eq!(pat_usd_incompleto.subtotales.len(), 3);
+
+        // Registra 1 USDT = 1.00 USD y verifica que el total pase a 350.00 USD
+        let t_usdt_usd = TasaCambio {
+            id: "t-usdt-usd".into(),
+            origen: "USDT".into(),
+            destino: "USD".into(),
+            valor: Decimal::from_str("1.00").unwrap(),
+            fecha: "2026-10-23".into(),
+            fuente: "casa de cambio".into(),
+        };
+        repo.guardar_evento(&EventoLibro {
+            id: "t-usdt-usd".into(),
+            tipo: "TasaRegistrada".into(),
+            momento_registro: Utc::now(),
+            dispositivo_origen: "d1".into(),
+            datos_json: serde_json::to_string(&t_usdt_usd).unwrap(),
+        }).unwrap();
+
+        let pat_usd_completo = ejecutar_consultar_patrimonio(&repo, fecha).unwrap();
+        assert_eq!(pat_usd_completo.total_consolidado.as_deref(), Some("350.00"));
+        assert!(pat_usd_completo.aviso_tasa_faltante.is_none());
     }
 }
 
