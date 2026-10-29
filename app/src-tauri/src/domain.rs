@@ -1136,9 +1136,11 @@ pub fn ejecutar_crear_cuenta<R: RepositorioEventos>(
     })
 }
 
+// Devuelve el catálogo completo de monedas de fábrica y propias
 pub fn ejecutar_listar_monedas<R: RepositorioEventos>(
     repo: &R,
 ) -> Result<Vec<Moneda>, ErrorDominio> {
+    // Convierte fallos de lectura del repositorio en un error de dominio
     let eventos = match repo.obtener_eventos() {
         Ok(e) => e,
         Err(_) => {
@@ -1149,17 +1151,20 @@ pub fn ejecutar_listar_monedas<R: RepositorioEventos>(
         }
     };
 
+    // Reconstruye el estado del libro aplicando la secuencia histórica de eventos
     let libro = proyectar_libro(&eventos)?;
 
     Ok(libro.monedas)
 }
 
+// Devuelve el código de la moneda base activa del libro
 pub fn ejecutar_obtener_moneda_base<R: RepositorioEventos>(
     repo: &R,
 ) -> Result<String, ErrorDominio> {
     let eventos = repo.obtener_eventos();
     let lista;
 
+    // Valida la lectura del almacenamiento local antes de proyectar el estado
     match eventos {
         Ok(e) => {
             lista = e;
@@ -1172,7 +1177,7 @@ pub fn ejecutar_obtener_moneda_base<R: RepositorioEventos>(
         }
     }
 
-    // Vemos cuál es la moneda base
+    // Obtiene la moneda base tras aplicar los eventos registrados
     let resp = proyectar_libro(&lista)?;
 
     Ok(resp.moneda_base)
