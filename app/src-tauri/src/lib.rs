@@ -9,6 +9,7 @@ mod pruebas_movimientos;
 #[cfg(test)]
 mod pruebas_integracion;
 
+// Registra el módulo de pruebas de tasas y monedas para cargo test
 #[cfg(test)]
 mod pruebas_tasas_monedas;
 
