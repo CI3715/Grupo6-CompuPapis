@@ -282,3 +282,398 @@ fn probar_cambio_moneda_base_preserva_saldos() {
     let resumen = ejecutar_listar_cuentas(&repo).unwrap();
     assert_eq!(resumen.cuentas.len(), 2);
 }
+
+// Reloj fijo en memoria para ejecutar pruebas deterministas sin depender del sistema
+struct RelojPruebaPatrimonio;
+
+impl crate::tasas_monedas::Reloj for RelojPruebaPatrimonio {
+    // Devuelve una fecha fija en UTC para validar reglas temporales
+    fn ahora(&self) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339("2026-10-26T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    }
+}
+
+// Generador secuencial en memoria que garantiza identificadores únicos por evento
+struct IdPruebaPatrimonio {
+    contador: std::cell::Cell<u32>,
+}
+
+impl IdPruebaPatrimonio {
+    // Inicializa el generador de identificadores desde cero
+    fn nuevo() -> Self {
+        Self {
+            contador: std::cell::Cell::new(0),
+        }
+    }
+}
+
+impl crate::tasas_monedas::GeneradorId for IdPruebaPatrimonio {
+    // Incrementa el contador interno para asignar un identificador único nuevo
+    fn nuevo_id(&self) -> String {
+        let actual = self.contador.get() + 1;
+        self.contador.set(actual);
+        format!("ev-pat-{}", actual)
+    }
+}
+
+// Reproduce el ejemplo de la sección 2.3 y el escenario ESC-01 en memoria
+fn test_esc_01_y_ejemplo_seccion_2_3_en_memoria() {
+    use crate::domain::{
+        RegistrarMovimiento, RepositorioEnMemoria, ejecutar_consultar_patrimonio,
+        ejecutar_crear_cuenta, ejecutar_registrar_movimiento,
+    };
+    use crate::tasas_monedas::{
+        ejecutar_cambiar_moneda_base, ejecutar_eliminar_tasa, ejecutar_registrar_tasa,
+    };
+    use chrono::NaiveDate;
+
+    let mut repo = RepositorioEnMemoria::default();
+    let reloj = RelojPruebaPatrimonio;
+    let gen_id = IdPruebaPatrimonio::nuevo();
+    let fecha_consulta = NaiveDate::from_ymd_opt(2026, 10, 23).unwrap();
+
+    // Crea las tres cuentas en monedas distintas y registra movimientos iniciales
+    let cta_ves = ejecutar_crear_cuenta(
+        &mut repo,
+        "Efectivo bolívares",
+        "efectivo",
+        "VES",
+        "80000.00",
+        "dev-local",
+    )
+    .unwrap();
+    ejecutar_registrar_movimiento(
+        &mut repo,
+        RegistrarMovimiento {
+            cuenta_id: cta_ves.id(),
+            tipo_str: "ingreso",
+            monto_str: "8700.00",
+            fecha_str: "2026-10-19",
+            categoria_str: "Salario",
+            nota_opt: None,
+            dispositivo_id: "dev-local",
+        },
+    )
+    .unwrap();
+
+    let cta_usd = ejecutar_crear_cuenta(
+        &mut repo,
+        "Banco en dólares",
+        "banco",
+        "USD",
+        "150.00",
+        "dev-local",
+    )
+    .unwrap();
+    ejecutar_registrar_movimiento(
+        &mut repo,
+        RegistrarMovimiento {
+            cuenta_id: cta_usd.id(),
+            tipo_str: "ingreso",
+            monto_str: "50.00",
+            fecha_str: "2026-10-19",
+            categoria_str: "Ventas",
+            nota_opt: None,
+            dispositivo_id: "dev-local",
+        },
+    )
+    .unwrap();
+
+    let cta_usdt = ejecutar_crear_cuenta(
+        &mut repo,
+        "Billetera USDT",
+        "billetera digital",
+        "USDT",
+        "30.00",
+        "dev-local",
+    )
+    .unwrap();
+    ejecutar_registrar_movimiento(
+        &mut repo,
+        RegistrarMovimiento {
+            cuenta_id: cta_usdt.id(),
+            tipo_str: "ingreso",
+            monto_str: "20.00",
+            fecha_str: "2026-10-19",
+            categoria_str: "Otros ingresos",
+            nota_opt: None,
+            dispositivo_id: "dev-local",
+        },
+    )
+    .unwrap();
+
+    // Registra las tasas de cambio hacia VES con sus fechas y fuentes
+    ejecutar_registrar_tasa(
+        &mut repo,
+        "USD",
+        "VES",
+        "887.00",
+        "2026-10-20",
+        "BCV",
+        "dev-local",
+        &reloj,
+        &gen_id,
+    )
+    .unwrap();
+    ejecutar_registrar_tasa(
+        &mut repo,
+        "USDT",
+        "VES",
+        "1000.00",
+        "2026-10-21",
+        "casa de cambio",
+        "dev-local",
+        &reloj,
+        &gen_id,
+    )
+    .unwrap();
+
+    // Cambia la moneda base a VES para consolidar el patrimonio inicial
+    ejecutar_cambiar_moneda_base(&mut repo, "VES", "dev-local", &reloj, &gen_id).unwrap();
+
+    // Verifica saldos, equivalentes y el total conslidado de 316100.00 VES
+    let pat_ves = ejecutar_consultar_patrimonio(&repo, fecha_consulta).unwrap();
+    assert_eq!(pat_ves.moneda_base, "VES");
+    assert_eq!(pat_ves.total_consolidado.as_deref(), Some("316100.00"));
+    assert!(pat_ves.aviso_tasa_faltante.is_none());
+    assert_eq!(pat_ves.tasas_usadas.len(), 2);
+    assert_eq!(pat_ves.cuentas[0].equivalente_base.as_deref(), Some("88700.00"));
+    assert_eq!(pat_ves.cuentas[1].equivalente_base.as_deref(), Some("177400.00"));
+    assert_eq!(pat_ves.cuentas[2].equivalente_base.as_deref(), Some("50000.00"));
+
+    // Cambia la moneda base a USD sin alterar saldos de las cuentas
+    ejecutar_cambiar_moneda_base(&mut repo, "USD", "dev-local", &reloj, &gen_id).unwrap();
+    let pat_usd_incompleto = ejecutar_consultar_patrimonio(&repo, fecha_consulta).unwrap();
+
+    // Comprueba que falte la tasa USDT->USD y no muestre total consolidado
+    assert!(pat_usd_incompleto.total_consolidado.is_none());
+    assert_eq!(
+        pat_usd_incompleto.aviso_tasa_faltante.as_deref(),
+        Some("Falta una tasa de USDT a USD con fecha igual o anterior al 23/10/2026")
+    );
+    assert_eq!(pat_usd_incompleto.subtotales.len(), 3);
+
+    // Verifica que los bolívares sí se convierten aplicando la tasa inversa exacta
+    assert_eq!(pat_usd_incompleto.cuentas[0].saldo, "88700.00");
+    assert_eq!(
+        pat_usd_incompleto.cuentas[0].equivalente_base.as_deref(),
+        Some("100.00")
+    );
+    assert!(
+        pat_usd_incompleto.cuentas[0]
+            .tasa_usada
+            .as_ref()
+            .unwrap()
+            .es_inversa
+    );
+    assert!(pat_usd_incompleto.cuentas[2].equivalente_base.is_none());
+
+    // Registra la tasa faltante de USDT a USD y consolida 350.00 USD
+    let tasa_usdt_usd = ejecutar_registrar_tasa(
+        &mut repo,
+        "USDT",
+        "USD",
+        "1.00",
+        "2026-10-23",
+        "casa de cambio",
+        "dev-local",
+        &reloj,
+        &gen_id,
+    )
+    .unwrap();
+
+    let pat_usd_completo = ejecutar_consultar_patrimonio(&repo, fecha_consulta).unwrap();
+    assert_eq!(pat_usd_completo.total_consolidado.as_deref(), Some("350.00"));
+    assert!(pat_usd_completo.aviso_tasa_faltante.is_none());
+
+    // Elimina la tasa necesaria para verificar que deje de consolidadr
+    ejecutar_eliminar_tasa(&mut repo, &tasa_usdt_usd.id, "dev-local", &reloj, &gen_id).unwrap();
+    let pat_tras_eliminar = ejecutar_consultar_patrimonio(&repo, fecha_consulta).unwrap();
+    assert!(pat_tras_eliminar.total_consolidado.is_none());
+    assert_eq!(
+        pat_tras_eliminar.aviso_tasa_faltante.as_deref(),
+        Some("Falta una tasa de USDT a USD con fecha igual o anterior al 23/10/2026")
+    );
+}
+
+// Verifica que consultas en fechas pasadas usen saldos y tasas de ese día
+#[test]
+fn test_patrimonio_en_fechas_pasadas_y_desempate_mismo_dia() {
+    use crate::domain::{
+        RegistrarMovimiento, RepositorioEnMemoria, ejecutar_consultar_patrimonio,
+        ejecutar_crear_cuenta, ejecutar_registrar_movimiento,
+    };
+    use crate::tasas_monedas::{ejecutar_cambiar_moneda_base, ejecutar_registrar_tasa};
+    use chrono::NaiveDate;
+
+    let mut repo = RepositorioEnMemoria::default();
+    let reloj = RelojPruebaPatrimonio;
+    let gen_id = IdPruebaPatrimonio::nuevo();
+
+    // Registra movimientos en distintas fechas para evaluar el corte histórico
+    let cta_usd = ejecutar_crear_cuenta(
+        &mut repo,
+        "Ahorros USD",
+        "banco",
+        "USD",
+        "100.00",
+        "dev-local",
+    )
+    .unwrap();
+    ejecutar_registrar_movimiento(
+        &mut repo,
+        RegistrarMovimiento {
+            cuenta_id: cta_usd.id(),
+            tipo_str: "ingreso",
+            monto_str: "50.00",
+            fecha_str: "2026-10-21",
+            categoria_str: "Salario",
+            nota_opt: None,
+            dispositivo_id: "dev-local",
+        },
+    )
+    .unwrap();
+
+    // Registra varias tasas en fechas distintas y dos en el mismo día
+    ejecutar_registrar_tasa(
+        &mut repo,
+        "USD",
+        "VES",
+        "850.00",
+        "2026-10-15",
+        "BCV",
+        "dev-local",
+        &reloj,
+        &gen_id,
+    )
+    .unwrap();
+    ejecutar_registrar_tasa(
+        &mut repo,
+        "USD",
+        "VES",
+        "885.00",
+        "2026-10-20",
+        "BCV mañana",
+        "dev-local",
+        &reloj,
+        &gen_id,
+    )
+    .unwrap();
+    ejecutar_registrar_tasa(
+        &mut repo,
+        "USD",
+        "VES",
+        "887.00",
+        "2026-10-20",
+        "BCV tarde",
+        "dev-local",
+        &reloj,
+        &gen_id,
+    )
+    .unwrap();
+    ejecutar_registrar_tasa(
+        &mut repo,
+        "USD",
+        "VES",
+        "900.00",
+        "2026-10-25",
+        "BCV cierre",
+        "dev-local",
+        &reloj,
+        &gen_id,
+    )
+    .unwrap();
+
+    ejecutar_cambiar_moneda_base(&mut repo, "VES", "dev-local", &reloj, &gen_id).unwrap();
+
+    // En 18/10/2026 usa el saldo inicial y la tasa del 15/10/2026
+    let pat_18 = ejecutar_consultar_patrimonio(
+        &repo,
+        NaiveDate::from_ymd_opt(2026, 10, 18).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(pat_18.total_consolidado.as_deref(), Some("85000.00"));
+    assert_eq!(pat_18.tasas_usadas[0].fecha, "2026-10-15");
+
+    // En 22/10/2026 incluye el segundo movimiento y la última tasa del 10/10/2026
+    let pat_22 = ejecutar_consultar_patrimonio(
+        &repo,
+        NaiveDate::from_ymd_opt(2026, 10, 22).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(pat_22.total_consolidado.as_deref(), Some("133050.00"));
+    assert_eq!(pat_22.tasas_usadas[0].fuente, "BCV tarde");
+
+    // En una fecha previa a toda tasa registrada informa el par faltante
+    let pat_10 = ejecutar_consultar_patrimonio(
+        &repo,
+        NaiveDate::from_ymd_opt(2026, 10, 10).unwrap(),
+    )
+    .unwrap();
+    assert!(pat_10.total_consolidado.is_none());
+    assert_eq!(
+        pat_10.aviso_tasa_faltante.as_deref(),
+        Some("Falta una tasa de USD a VES con fecha igual o anterior al 10/10/2026")
+    );
+}
+
+// Demuestra que el redondeo ocurre una sola vez al final
+#[test]
+fn test_redondeo_unico_al_final_inv_03() {
+    use crate::domain::{
+        RepositorioEnMemoria, ejecutar_consultar_patrimonio, ejecutar_crear_cuenta,
+    };
+    use crate::tasas_monedas::ejecutar_registrar_tasa;
+    use chrono::NaiveDate;
+
+    let mut repo = RepositorioEnMemoria::default();
+    let reloj = RelojPruebaPatrimonio;
+    let gen_id = IdPruebaPatrimonio::nuevo();
+    let fecha = NaiveDate::from_ymd_opt(2026, 10, 23).unwrap();
+
+    ejecutar_crear_cuenta(&mut repo, "Cuenta EUR", "banco", "EUR", "1.00", "dev-local").unwrap();
+    ejecutar_crear_cuenta(
+        &mut repo,
+        "Cuenta USDT",
+        "billetera digital",
+        "USDT",
+        "1.00",
+        "dev-local",
+    )
+    .unwrap();
+
+    // Registra tasa con tres decimales cuyos equivalentes individuales redondearían hacia abajo
+    ejecutar_registrar_tasa(
+        &mut repo,
+        "EUR",
+        "USD",
+        "1.004",
+        "2026-10-20",
+        "BCE",
+        "dev-local",
+        &reloj,
+        &gen_id,
+    )
+    .unwrap();
+    ejecutar_registrar_tasa(
+        &mut repo,
+        "USDT",
+        "USD",
+        "1.004",
+        "2026-10-20",
+        "mercado",
+        "dev-local",
+        &reloj,
+        &gen_id,
+    )
+    .unwrap();
+
+    let pat = ejecutar_consultar_patrimonio(&repo, fecha).unwrap();
+
+    // La suma exacta (1.004 + 1.004 = 2.008) redondea al final a 2.01
+    assert_eq!(pat.cuentas[0].equivalente_base.as_deref(), Some("1.00"));
+    assert_eq!(pat.cuentas[1].equivalente_base.as_deref(), Some("1.00"));
+    assert_eq!(pat.total_consolidado.as_deref(), Some("2.01"));
+}
