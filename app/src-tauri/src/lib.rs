@@ -30,17 +30,21 @@ pub struct AppState {
     pub repo: Mutex<RepositorioSqlite>,
 }
 
+// Obtiene la fecha y hora UTC del sistema
 struct RelojSistema;
 
 impl tasas_monedas::Reloj for RelojSistema {
+    // Retorna el instante actual en UTC consultando el reloj del sistema
     fn ahora(&self) -> chrono::DateTime<chrono::Utc> {
         chrono::Utc::now()
     }
 }
 
+// Adaptador real que genera identificadores únicos
 struct GeneradorUuid;
 
 impl tasas_monedas::GeneradorId for GeneradorUuid {
+    // Genera un identificador único
     fn nuevo_id(&self) -> String {
         let id = uuid::Uuid::new_v4();
         id.to_string()

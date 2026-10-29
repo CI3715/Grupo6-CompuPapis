@@ -25,6 +25,8 @@ impl ErrorDominio {
 // ==========================================
 // CATÁLOGO DE MONEDAS (RF-CAM-01)
 // ==========================================
+
+// Representa moneda registrada con su escala decimal
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Moneda {
     pub codigo: String,
@@ -33,6 +35,7 @@ pub struct Moneda {
     pub decimales: u32,
 }
 
+// Valida formato, unicidad y límite de decimales de una moneda nueva
 pub fn validar_moneda(
     codigo: &str,
     nombre: &str,
