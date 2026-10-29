@@ -638,6 +638,29 @@ impl EstadoCuentaInterno {
             self.ajustes,
         )
     }
+
+    // Calcula el saldo sumando movimientos y ajustes hasta la fecha indicada
+    fn saldo_en_fecha(&self, fecha_consulta: NaiveDate) -> Result<Decimal, ErrorDominio> {
+        let mut saldo = self.inicial;
+
+        // Filtra cada movimiento registrado cuya fecha no supere la fecha consultada
+        for mov in &self.movimientos {
+            let dia = match NaiveDate::parse_from_str(&mov.fecha, "%Y-%m-%d") {
+                Ok(d) => d,
+                Err(_) => return Err(error_libro()),
+            };
+
+            if dia <= fecha_consulta {
+                let monto = match Decimal::from_str(&mov.monto) {
+                    Ok(n) => n,
+                    Err(_) => return Err(error_libro()),
+                };
+                saldo = sumar_exacto(saldo, monto)?;
+            }
+        }
+
+        Ok(saldo)
+    }
 }
 
 struct ProyeccionLibro {
@@ -1500,7 +1523,8 @@ pub fn ejecutar_obtener_detalle_cuenta<R: RepositorioEventos>(
     })
 }
 
-#[derive(Debug, Serialize)]
+// Representa el subtotal acumulado en una moneda específica
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubtotalMoneda {
     pub codigo: String,
     pub simbolo: String,
@@ -1565,6 +1589,119 @@ pub fn ejecutar_listar_cuentas<R: RepositorioEventos>(
         cuentas,
         subtotales,
     })
+}
+
+// Datos de una tasa de cambio aplicada en la consolidación
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TasaUsadaVista {
+    pub origen: String,
+    pub destino: String,
+    pub valor: String,
+    pub fecha: String,
+    pub fuente: String,
+    pub es_inversa: bool,
+}
+
+// Estado de una cuenta dentro del informe de patrimonio
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CuentaPatrimonioVista {
+    pub id: String,
+    pub nombre: String,
+    pub tipo: TipoCuenta,
+    pub moneda: String,
+    pub simbolo: String,
+    pub saldo: String,
+    pub tasa_usada: Option<TasaUsadaVista>,
+    pub equivalente_base: Option<String>,
+}
+
+// Vista completa del patrimonio consolidado en una fecha dada
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PatrimonioConsolidadoVista {
+    pub fecha_consulta: String,
+    pub moneda_base: String,
+    pub simbolo_base: String,
+    pub cuentas: Vec<CuentaPatrimonioVista>,
+    pub subtotales: Vec<SubtotalMoneda>,
+    pub tasas_usadas: Vec<TasaUsadaVista>,
+    pub total_consolidado: Option<String>,
+    pub aviso_tasa_faltante: Option<String>,
+}
+
+// Calcula saldos por cuenta y subtotales por moneda hasta una fecha dada
+fn calcular_saldos_en_fecha(
+    libro: &ProyeccionLibro,
+    fecha_consulta: NaiveDate,
+) -> Result<ResumenCuentas, ErrorDominio> {
+    let mut cuentas = Vec::new();
+    let mut mapa_subtotales: BTreeMap<String, Decimal> = BTreeMap::new();
+
+    // Recorre las cuentas respectando el orden en que fueron creadas
+    for id in &libro.cuentas_orden {
+        if let Some(c) = libro.cuentas.get(id) {
+            let saldo_fecha = c.saldo_en_fecha(fecha_consulta)?;
+            let moneda = buscar_moneda_en(&c.moneda, &libro.monedas)?;
+
+            // Acumula el subtotal exacto correspondiente a la moneda de la cuenta
+            let subtotal = mapa_subtotales.entry(c.moneda.clone()).or_insert(Decimal::ZERO);
+            *subtotal = sumar_exacto(*subtotal, saldo_fecha)?;
+
+            cuentas.push(Cuenta {
+                id: c.id.clone(),
+                nombre: c.nombre.clone(),
+                tipo: c.tipo.clone(),
+                moneda: c.moneda.clone(),
+                saldo: Monto {
+                    cantidad: saldo_fecha.round_dp(moneda.decimales),
+                    moneda: c.moneda.clone(),
+                },
+            });
+        }
+    }
+
+    let mut subtotales = Vec::new();
+
+    // Formatea cada subtotal respetando la escala decimal de su moneda
+    for (codigo, total_dec) in mapa_subtotales {
+        let info_moneda = buscar_moneda_en(&codigo, &libro.monedas)?;
+        subtotales.push(SubtotalMoneda {
+            codigo,
+            simbolo: info_moneda.simbolo,
+            subtotal: format!(
+                ":.*{}{}",
+                info_moneda.decimales as usize,
+                total_dec.round_dp(info_moneda.decimales)
+            ),
+        });
+    }
+
+    Ok(ResumenCuentas {
+        cuentas,
+        subtotales,
+    })
+}
+
+// Obtiene las cuentas y subtotales proyectados hasta una fecha de consulta
+pub fn ejecutar_listar_cuentas_en_fecha<R: RepositorioEventos>(
+    repo: &R,
+    fecha_consulta: NaiveDate,
+) -> Result<ResumenCuentas, ErrorDominio> {
+    // Lee los eventos del repositorio local para reconstruir el libro
+    let eventos = match repo.obtener_eventos() {
+        Ok(e) => e,
+        Err(_) => {
+            return Err(ErrorDominio::nuevo(
+                "general",
+                "No se pudieron cargar las cuentas locales.",
+            ));
+        }
+    };
+
+    let libro = proyectar_libro(&eventos)?;
+    calcular_saldos_en_fecha(&libro, fecha_consulta)
 }
 
 // ==========================================
