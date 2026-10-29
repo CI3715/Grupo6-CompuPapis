@@ -1704,6 +1704,148 @@ pub fn ejecutar_listar_cuentas_en_fecha<R: RepositorioEventos>(
     calcular_saldos_en_fecha(&libro, fecha_consulta)
 }
 
+// Representa la tasa seleccionada con su factor decimal listo para convertir
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TasaAplicable {
+    pub factor: Decimal,
+    pub vista:TasaUsadaVista,
+}
+
+// Genera el aviso exacto indicando el par de monedas y fecha faltante
+pub fn formatear_aviso_tasa_faltante(
+    origen: &str,
+    moneda_base: &str,
+    fecha_consulta: NaiveDate,
+) -> String {
+    format!(
+        "Falta una tasa de {} a {} con fecha igual o anterior al {}",
+        origen.trim().to_uppercase(),
+        moneda_base.trim().to_uppercase(),
+        fecha_consulta.format("%d/%m/%Y")
+    )
+}
+
+// Busca la tasa directa o inversa vigente en la fecha de consulta
+pub fn buscar_tasa_aplicable(
+    origen: &str,
+    moneda_base: &str,
+    fecha_consulta: NaiveDate,
+    tasas: &[TasaCambio],
+) -> Result<TasaAplicable, ErrorDominio> {
+    let cod_origen = origen.trim().to_uppercase();
+    let cod_base = moneda_base.trim().to_uppercase();
+
+    // Caso trivial cuando la moneda origen coincide con la moneda base
+    if cod_origen == cod_base {
+        return Ok(TasaAplicable {
+            factor: Decimal::ONE,
+            vista: TasaUsadaVista {
+                origen: cod_origen.clone(),
+                destino: cod_base,
+                valor: Decimal::ONE.to_string(),
+                fecha: fecha_consulta.format("%Y-%m-%d").to_string(),
+                fuente: "Misma moneda".to_string(),
+                es_inversa: false,
+            },
+        });
+    }
+
+    let mut mejor_directa: Option<(NaiveDate, &TasaCambio)> = None;
+
+    // Prioriza la tasa directa más reciente o la última del mismo día
+    for t in tasas {
+        if t.origen == cod_origen && t.destino == cod_base {
+            if let Ok(dia) = NaiveDate::parse_from_str(&t.fecha, "%Y-%m-%d") {
+                if dia <= fecha_consulta {
+                    // Compara fechas para elegir la más reciente o última registrada
+                    let actualizar = match mejor_directa {
+                        Some((mejor_dia, _)) => dia >= mejor_dia,
+                        None => true,
+                    };
+                    if actualizar {
+                        mejor_directa = Some((dia, t));
+                    }
+                }
+            }
+        }
+    }
+
+    // Retorna la tasa directa encontrada sin necesidad de invertir el valor
+    if let Some((_, t)) = mejor_directa {
+        return Ok(TasaAplicable {
+            factor: t.valor,
+            vista: TasaUsadaVista {
+                origen: t.origen.clone(),
+                destino: t.destino.clone(),
+                valor: t.valor.to_string(),
+                fecha: t.fecha.clone(),
+                fuente: t.fuente.clone(),
+                es_inversa: false,
+            },
+        });
+    }
+
+    let mut mejor_inversa: Option<(NaiveDate, &TasaCambio)> = None;
+
+    // Si no existe una tasa directa, busca en sentido contrario hacia el origen
+    for t in tasas {
+        if t.origen == cod_base && t.destino == cod_origen {
+            if let Ok(dia) = NaiveDate::parse_from_str(&t.fecha, "%Y-%m-%d") {
+                if dia <= fecha_consulta {
+                    let actualizar = match mejor_inversa {
+                        Some((mejor_dia, _)) => dia >= mejor_dia,
+                        None => true,
+                    };
+                    if actualizar {
+                        mejor_inversa = Some((dia, t));
+                    }
+                }
+            }
+        }
+    }
+
+    // Aplica la inversa exacta (1/valor) con precisión decimal
+    if let Some((_, t)) = mejor_inversa {
+        let factor = Decimal::ONE / t.valor;
+        return Ok(TasaAplicable {
+            factor,
+            vista: TasaUsadaVista {
+                origen: t.origen.clone(),
+                destino: t.destino.clone(),
+                valor: t.valor.to_string(),
+                fecha: t.fecha.clone(),
+                fuente: t.fuente.clone(),
+                es_inversa: true,
+            },
+        });
+    }
+
+    // Falla informando el par y fecha faltante sin calcular tasas cruzadas
+    let aviso = formatear_aviso_tasa_faltante(&cod_origen, &cod_base, fecha_consulta);
+    Err(ErrorDominio::nuevo("tasa", &aviso))
+}
+
+// Convierte un monto a la moneda base usando la tasa aplicable
+pub fn convertir_monto_a_base(
+    cantidad: Decimal,
+    origen: &str,
+    moneda_base: &str,
+    fecha_consulta: NaiveDate,
+    tasas: &[TasaCambio],
+) -> Result<(Decimal, Option<TasaUsadaVista>), ErrorDominio> {
+    if origen.trim().eq_ignore_ascii_case(moneda_base.trim()) {
+        return Ok((cantidad, None));
+    }
+
+    let aplicable = buscar_tasa_aplicable(origen, moneda_base, fecha_consulta, tasas)?;
+
+    // Multiplica con precisión decimal exacta sin redondear pasos intermedios
+    let convertido = cantidad.checked_mul(aplicable.factor)
+        .ok_or_else(|| ErrorDominio::nuevo("monto", "El monto excede el rango decimal permitido."))?;
+
+    Ok((convertido, Some(aplicable.vista)))
+}
+
 // ==========================================
 // ADAPTADOR EN MEMORIA Y PRUEBAS (Sección 3)
 // ==========================================
@@ -1989,7 +2131,75 @@ mod tests {
             ejecutar_corregir_movimiento(&mut repo, cta.id(), &id_gasto, "80.00", "dev-1").unwrap();
         assert_eq!(det_segunda.saldo_actual, "420.00");
     }
+
+    // Verifica la selección de tasa vigente, desempate diario, inversa y par faltante
+    #[test]
+    fn test_seleccion_tasa_vigente_inversa_y_par_faltante() {
+        let tasas = vec![
+            TasaCambio {
+                id: "t1".into(),
+                origen: "USD".into(),
+                destino: "VES".into(),
+                valor: Decimal::from_str("880.00").unwrap(),
+                fecha: "2026-10-19".into(),
+                fuente: "BCV".into(),
+            },
+            TasaCambio {
+                id: "t2".into(),
+                origen: "USD".into(),
+                destino: "VES".into(),
+                valor: Decimal::from_str("885.00").unwrap(),
+                fecha: "2026-10-20".into(),
+                fuente: "BCV mañana".into(),
+            },
+            TasaCambio {
+                id: "t3".into(),
+                origen: "USD".into(),
+                destino: "VES".into(),
+                valor: Decimal::from_str("887.00").unwrap(),
+                fecha: "2026-10-20".into(),
+                fuente: "BCV tarde".into(),
+            },
+            TasaCambio {
+                id: "t4".into(),
+                origen: "USDT".into(),
+                destino: "VES".into(),
+                valor: Decimal::from_str("1000.00").unwrap(),
+                fecha: "2026-10-21".into(),
+                fuente: "casa de cambio".into(),
+            },
+        ];
+
+        let fecha_consulta = NaiveDate::from_ymd_opt(2026, 10, 23).unwrap();
+
+        // Selecciona la última tasa directa registrada del día más reciente
+        let directa = buscar_tasa_aplicable("USD", "VES", fecha_consulta, &tasas).unwrap();
+        assert!(!directa.vista.es_inversa);
+        assert_eq!(directa.factor, Decimal::from_str("887.00").unwrap());
+        assert_eq!(directa.vista.fuente, "BCV tarde");
+
+        // Aplica la inversa exacta de VES a USD
+        let (en_usd, vista_inv) = convertir_monto_a_base(
+            Decimal::from_str("88700.00").unwrap(),
+            "VES",
+            "USD",
+            fecha_consulta,
+            &tasas,
+        )
+        .unwrap();
+        assert!(vista_inv.unwrap().es_inversa);
+        assert_eq!(en_usd.round_dp(2), Decimal::from_str("100.00").unwrap());
+
+        // Rechaza tasas cruzadas (USDT -> VES -> USD) e informa el par faltante
+        let err_faltante = buscar_tasa_aplicable("USDT", "USD", fecha_consulta, &tasas).unwrap_err();
+        assert_eq!(err_faltante.campo, "tasa");
+        assert_eq!(
+            err_faltante.mensaje,
+            "Falta una tasa de USDT a USD con fecha igual o anterior al 23/10/2026"
+        );
+    }
 }
+
 #[test]
 fn probar_crear_cuentas() {
     let mut repo = RepositorioEnMemoria::default();
