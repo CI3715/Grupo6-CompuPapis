@@ -11,15 +11,16 @@ mod pruebas_integracion;
 
 // Registra el módulo de pruebas de tasas y monedas para cargo test
 #[cfg(test)]
+mod pruebas_tasas_cambio;
+#[cfg(test)]
 mod pruebas_tasas_monedas;
 
 // Importa los tipos y casos de uso del dominio, incluyendo consulta de patrimonio
 use domain::{
-    Categoria, Cuenta, DetalleCuenta, ErrorDominio, Moneda, PatrimonioConsolidadoVista,
-    ResumenCuentas, TasaCambio, ejecutar_consultar_patrimonio, ejecutar_corregir_movimiento,
-    ejecutar_crear_categoria, ejecutar_crear_cuenta, ejecutar_listar_categorias,
-    ejecutar_listar_cuentas, ejecutar_listar_monedas, ejecutar_obtener_detalle_cuenta,
-    ejecutar_obtener_moneda_base, ejecutar_registrar_movimiento,
+    Categoria, Cuenta, DetalleCuenta, ErrorDominio, Moneda, ResumenCuentas, TasaCambio,
+    ejecutar_corregir_movimiento, ejecutar_crear_categoria, ejecutar_crear_cuenta,
+    ejecutar_listar_categorias, ejecutar_listar_cuentas, ejecutar_listar_monedas,
+    ejecutar_obtener_detalle_cuenta, ejecutar_obtener_moneda_base, ejecutar_registrar_movimiento,
 };
 
 use sqlite_repo::RepositorioSqlite;
@@ -135,7 +136,7 @@ fn crear_moneda(
     codigo: String,
     nombre: String,
     simbolo: String,
-    decimales: u32,
+    decimales: String,
 ) -> Result<Moneda, ErrorDominio> {
     let mut repo = match state.repo.lock() {
         Ok(r) => r,
@@ -152,7 +153,9 @@ fn crear_moneda(
         &codigo,
         &nombre,
         &simbolo,
-        decimales,
+        decimales
+            .parse::<u32>()
+            .map_err(|_| ErrorDominio::nuevo("decimales", "Indica un entero de 0 a 8."))?,
         "dispositivo-local",
         &RelojSistema,
         &GeneradorUuid,
@@ -164,11 +167,11 @@ fn crear_moneda(
 #[tauri::command]
 fn registrar_tasa(
     state: State<'_, AppState>,
-    origen: String,
-    destino: String,
-    valor: String,
-    fecha: String,
-    fuente: String,
+    origen: Option<String>,
+    destino: Option<String>,
+    valor: Option<String>,
+    fecha: Option<String>,
+    fuente: Option<String>,
 ) -> Result<TasaCambio, ErrorDominio> {
     let mut repo = match state.repo.lock() {
         Ok(r) => r,
@@ -180,20 +183,44 @@ fn registrar_tasa(
         }
     };
 
-    // Registramos la tasa
-    let nueva = tasas_monedas::ejecutar_registrar_tasa(
+    tasas_monedas::registrar_tasa_desde_entrada(
         &mut *repo,
-        &origen,
-        &destino,
-        &valor,
-        &fecha,
-        &fuente,
+        tasas_monedas::EntradaTasa {
+            origen,
+            destino,
+            valor,
+            fecha,
+            fuente,
+        },
         "dispositivo-local",
         &RelojSistema,
         &GeneradorUuid,
-    )?;
+    )
+}
 
-    Ok(nueva)
+#[tauri::command]
+fn listar_tasas(state: State<'_, AppState>) -> Result<Vec<TasaCambio>, ErrorDominio> {
+    let repo = state
+        .repo
+        .lock()
+        .map_err(|_| ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."))?;
+    domain::ejecutar_listar_tasas(&*repo)
+}
+
+#[tauri::command]
+fn consultar_patrimonio(
+    state: State<'_, AppState>,
+    fecha: Option<String>,
+) -> Result<domain::Patrimonio, ErrorDominio> {
+    let repo = state
+        .repo
+        .lock()
+        .map_err(|_| ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."))?;
+    domain::ejecutar_consultar_patrimonio(
+        &*repo,
+        fecha.as_deref(),
+        chrono::Local::now().date_naive(),
+    )
 }
 
 #[tauri::command]
@@ -242,19 +269,10 @@ fn eliminar_tasa(state: State<'_, AppState>, tasa_id: String) -> Result<(), Erro
 
 #[tauri::command]
 fn obtener_moneda_base(state: State<'_, AppState>) -> Result<String, ErrorDominio> {
-    let repo;
-
-    match state.repo.lock() {
-        Ok(r) => {
-            repo = r;
-        }
-        Err(_) => {
-            return Err(ErrorDominio::nuevo(
-                "general",
-                "No se pudieron cargar los datos.",
-            ));
-        }
-    }
+    let repo = state
+        .repo
+        .lock()
+        .map_err(|_| ErrorDominio::nuevo("general", "No se pudieron cargar los datos."))?;
 
     // Vemos cuál es la moneda base
     let resp = ejecutar_obtener_moneda_base(&*repo)?;
@@ -288,43 +306,6 @@ fn cambiar_moneda_base(state: State<'_, AppState>, codigo: String) -> Result<Str
     )?;
 
     Ok(resp)
-}
-
-// Expone la consulta de patrimonio conslidado para la fecha indicada u hoy
-#[tauri::command]
-fn consultar_patrimonio(
-    state: State<'_, AppState>,
-    fecha: Option<String>,
-    fecha_consulta: Option<String>,
-) -> Result<PatrimonioConsolidadoVista, ErrorDominio> {
-    let repo = match state.repo.lock() {
-        Ok(r) => r,
-        Err(_) => {
-            return Err(ErrorDominio::nuevo(
-                "general",
-                "Error de acceso al almacenamiento.",
-            ));
-        }
-    };
-
-    // Usa la fecha recibida o toma por defecto la fecha local actual
-    let texto_fecha = fecha_consulta.or(fecha);
-    let dia = match texto_fecha {
-        Some(f) if !f.trim().is_empty() => {
-            match chrono::NaiveDate::parse_from_str(f.trim(), "%Y-%m-%d") {
-                Ok(d) => d,
-                Err(_) => {
-                    return Err(ErrorDominio::nuevo(
-                        "fecha",
-                        "La fecha debe tener el formato válido AAAA-MM-DD.",
-                    ));
-                }
-            }
-        }
-        _ => chrono::Local::now().date_naive(),
-    };
-
-    ejecutar_consultar_patrimonio(&*repo, dia)
 }
 
 #[tauri::command]
@@ -477,10 +458,11 @@ pub fn run() {
             crear_moneda,
             registrar_tasa,
             historial_tasas,
+            listar_tasas,
+            consultar_patrimonio,
             eliminar_tasa,
             obtener_moneda_base,
             cambiar_moneda_base,
-            consultar_patrimonio,
             listar_cuentas,
             crear_cuenta,
             obtener_detalle_cuenta,

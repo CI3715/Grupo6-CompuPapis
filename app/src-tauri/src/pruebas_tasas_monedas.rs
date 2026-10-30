@@ -2,7 +2,7 @@
 use crate::domain::{
     RegistrarMovimiento, RepositorioEnMemoria, ejecutar_corregir_movimiento, ejecutar_crear_cuenta,
     ejecutar_listar_cuentas, ejecutar_listar_monedas, ejecutar_obtener_detalle_cuenta,
-    ejecutar_registrar_movimiento, evaluar_movimiento, ejecutar_obtener_moneda_base,
+    ejecutar_obtener_moneda_base, ejecutar_registrar_movimiento, evaluar_movimiento,
 };
 
 // Importa casos de uso de escritura para monedas propias y moneda base
@@ -188,11 +188,11 @@ fn probar_validaciones_moneda_propia() {
         ("CLP", "Duplicada propia", "$", 2, "codigo"),
         ("COP", "   ", "$", 2, "nombre"),
         ("COP", "Peso colombiano", "   ", 2, "simbolo"),
-        ("BTC", "Bitcoin", "₿", 9, "decimales"), 
+        ("BTC", "Bitcoin", "₿", 9, "decimales"),
     ];
 
     for (codigo, nombre, simbolo, decimales, campo_esperado) in casos {
-         let err = ejecutar_crear_moneda(
+        let err = ejecutar_crear_moneda(
             &mut repo,
             codigo,
             nombre,
@@ -232,8 +232,9 @@ fn probar_cambio_moneda_base_preserva_saldos() {
     let cta_usd =
         ejecutar_crear_cuenta(&mut repo, "Banco USD", "banco", "USD", "200.00", "prueba").unwrap();
     let cta_abc =
-        ejecutar_crear_cuenta(&mut repo, "Caja ABC", "efectivo", "ABC", "10.500", "prueba").unwrap();
-    
+        ejecutar_crear_cuenta(&mut repo, "Caja ABC", "efectivo", "ABC", "10.500", "prueba")
+            .unwrap();
+
     ejecutar_registrar_movimiento(
         &mut repo,
         RegistrarMovimiento {
@@ -319,10 +320,11 @@ impl crate::tasas_monedas::GeneradorId for IdPruebaPatrimonio {
 }
 
 // Reproduce el ejemplo de la sección 2.3 y el escenario ESC-01 en memoria
+#[test]
 fn test_esc_01_y_ejemplo_seccion_2_3_en_memoria() {
     use crate::domain::{
-        RegistrarMovimiento, RepositorioEnMemoria, ejecutar_consultar_patrimonio,
-        ejecutar_crear_cuenta, ejecutar_registrar_movimiento,
+        RegistrarMovimiento, RepositorioEnMemoria, ejecutar_crear_cuenta,
+        ejecutar_registrar_movimiento,
     };
     use crate::tasas_monedas::{
         ejecutar_cambiar_moneda_base, ejecutar_eliminar_tasa, ejecutar_registrar_tasa,
@@ -434,41 +436,63 @@ fn test_esc_01_y_ejemplo_seccion_2_3_en_memoria() {
     ejecutar_cambiar_moneda_base(&mut repo, "VES", "dev-local", &reloj, &gen_id).unwrap();
 
     // Verifica saldos, equivalentes y el total conslidado de 316100.00 VES
-    let pat_ves = ejecutar_consultar_patrimonio(&repo, fecha_consulta).unwrap();
+    let pat_ves = consultar_fixture_en_fecha(&repo, fecha_consulta).unwrap();
     assert_eq!(pat_ves.moneda_base, "VES");
-    assert_eq!(pat_ves.total_consolidado.as_deref(), Some("316100.00"));
-    assert!(pat_ves.aviso_tasa_faltante.is_none());
-    assert_eq!(pat_ves.tasas_usadas.len(), 2);
-    assert_eq!(pat_ves.cuentas[0].equivalente_base.as_deref(), Some("88700.00"));
-    assert_eq!(pat_ves.cuentas[1].equivalente_base.as_deref(), Some("177400.00"));
-    assert_eq!(pat_ves.cuentas[2].equivalente_base.as_deref(), Some("50000.00"));
+    assert_eq!(pat_ves.total.as_deref(), Some("316100.00"));
+    assert!(pat_ves.faltantes.is_empty());
+    assert_eq!(
+        pat_ves
+            .subtotales
+            .iter()
+            .filter(|s| s.tasa.is_some())
+            .count(),
+        2
+    );
+    assert_eq!(
+        pat_ves.filas[0]
+            .en_base
+            .as_deref()
+            .map(|v| v.parse::<rust_decimal::Decimal>().unwrap()),
+        Some("88700.00".parse::<rust_decimal::Decimal>().unwrap())
+    );
+    assert_eq!(
+        pat_ves.filas[1]
+            .en_base
+            .as_deref()
+            .map(|v| v.parse::<rust_decimal::Decimal>().unwrap()),
+        Some("177400.00".parse::<rust_decimal::Decimal>().unwrap())
+    );
+    assert_eq!(
+        pat_ves.filas[2]
+            .en_base
+            .as_deref()
+            .map(|v| v.parse::<rust_decimal::Decimal>().unwrap()),
+        Some("50000.00".parse::<rust_decimal::Decimal>().unwrap())
+    );
 
     // Cambia la moneda base a USD sin alterar saldos de las cuentas
     ejecutar_cambiar_moneda_base(&mut repo, "USD", "dev-local", &reloj, &gen_id).unwrap();
-    let pat_usd_incompleto = ejecutar_consultar_patrimonio(&repo, fecha_consulta).unwrap();
+    let pat_usd_incompleto = consultar_fixture_en_fecha(&repo, fecha_consulta).unwrap();
 
     // Comprueba que falte la tasa USDT->USD y no muestre total consolidado
-    assert!(pat_usd_incompleto.total_consolidado.is_none());
+    assert!(pat_usd_incompleto.total.is_none());
     assert_eq!(
-        pat_usd_incompleto.aviso_tasa_faltante.as_deref(),
+        aviso_faltante(&pat_usd_incompleto).as_deref(),
         Some("Falta una tasa de USDT a USD con fecha igual o anterior al 23/10/2026")
     );
     assert_eq!(pat_usd_incompleto.subtotales.len(), 3);
 
     // Verifica que los bolívares sí se convierten aplicando la tasa inversa exacta
-    assert_eq!(pat_usd_incompleto.cuentas[0].saldo, "88700.00");
+    assert_eq!(pat_usd_incompleto.filas[0].saldo, "88700.00");
     assert_eq!(
-        pat_usd_incompleto.cuentas[0].equivalente_base.as_deref(),
-        Some("100.00")
+        pat_usd_incompleto.filas[0]
+            .en_base
+            .as_deref()
+            .map(|v| v.parse::<rust_decimal::Decimal>().unwrap()),
+        Some("100.00".parse::<rust_decimal::Decimal>().unwrap())
     );
-    assert!(
-        pat_usd_incompleto.cuentas[0]
-            .tasa_usada
-            .as_ref()
-            .unwrap()
-            .es_inversa
-    );
-    assert!(pat_usd_incompleto.cuentas[2].equivalente_base.is_none());
+    assert!(pat_usd_incompleto.filas[0].inversa);
+    assert!(pat_usd_incompleto.filas[2].en_base.is_none());
 
     // Registra la tasa faltante de USDT a USD y consolida 350.00 USD
     let tasa_usdt_usd = ejecutar_registrar_tasa(
@@ -484,16 +508,16 @@ fn test_esc_01_y_ejemplo_seccion_2_3_en_memoria() {
     )
     .unwrap();
 
-    let pat_usd_completo = ejecutar_consultar_patrimonio(&repo, fecha_consulta).unwrap();
-    assert_eq!(pat_usd_completo.total_consolidado.as_deref(), Some("350.00"));
-    assert!(pat_usd_completo.aviso_tasa_faltante.is_none());
+    let pat_usd_completo = consultar_fixture_en_fecha(&repo, fecha_consulta).unwrap();
+    assert_eq!(pat_usd_completo.total.as_deref(), Some("350.00"));
+    assert!(pat_usd_completo.faltantes.is_empty());
 
     // Elimina la tasa necesaria para verificar que deje de consolidadr
     ejecutar_eliminar_tasa(&mut repo, &tasa_usdt_usd.id, "dev-local", &reloj, &gen_id).unwrap();
-    let pat_tras_eliminar = ejecutar_consultar_patrimonio(&repo, fecha_consulta).unwrap();
-    assert!(pat_tras_eliminar.total_consolidado.is_none());
+    let pat_tras_eliminar = consultar_fixture_en_fecha(&repo, fecha_consulta).unwrap();
+    assert!(pat_tras_eliminar.total.is_none());
     assert_eq!(
-        pat_tras_eliminar.aviso_tasa_faltante.as_deref(),
+        aviso_faltante(&pat_tras_eliminar).as_deref(),
         Some("Falta una tasa de USDT a USD con fecha igual o anterior al 23/10/2026")
     );
 }
@@ -502,8 +526,8 @@ fn test_esc_01_y_ejemplo_seccion_2_3_en_memoria() {
 #[test]
 fn test_patrimonio_en_fechas_pasadas_y_desempate_mismo_dia() {
     use crate::domain::{
-        RegistrarMovimiento, RepositorioEnMemoria, ejecutar_consultar_patrimonio,
-        ejecutar_crear_cuenta, ejecutar_registrar_movimiento,
+        RegistrarMovimiento, RepositorioEnMemoria, ejecutar_crear_cuenta,
+        ejecutar_registrar_movimiento,
     };
     use crate::tasas_monedas::{ejecutar_cambiar_moneda_base, ejecutar_registrar_tasa};
     use chrono::NaiveDate;
@@ -589,32 +613,23 @@ fn test_patrimonio_en_fechas_pasadas_y_desempate_mismo_dia() {
     ejecutar_cambiar_moneda_base(&mut repo, "VES", "dev-local", &reloj, &gen_id).unwrap();
 
     // En 18/10/2026 usa el saldo inicial y la tasa del 15/10/2026
-    let pat_18 = ejecutar_consultar_patrimonio(
-        &repo,
-        NaiveDate::from_ymd_opt(2026, 10, 18).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(pat_18.total_consolidado.as_deref(), Some("85000.00"));
-    assert_eq!(pat_18.tasas_usadas[0].fecha, "2026-10-15");
+    let pat_18 =
+        consultar_fixture_en_fecha(&repo, NaiveDate::from_ymd_opt(2026, 10, 18).unwrap()).unwrap();
+    assert_eq!(pat_18.total.as_deref(), Some("85000.00"));
+    assert_eq!(pat_18.filas[0].tasa.as_ref().unwrap().fecha, "2026-10-15");
 
     // En 22/10/2026 incluye el segundo movimiento y la última tasa del 10/10/2026
-    let pat_22 = ejecutar_consultar_patrimonio(
-        &repo,
-        NaiveDate::from_ymd_opt(2026, 10, 22).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(pat_22.total_consolidado.as_deref(), Some("133050.00"));
-    assert_eq!(pat_22.tasas_usadas[0].fuente, "BCV tarde");
+    let pat_22 =
+        consultar_fixture_en_fecha(&repo, NaiveDate::from_ymd_opt(2026, 10, 22).unwrap()).unwrap();
+    assert_eq!(pat_22.total.as_deref(), Some("133050.00"));
+    assert_eq!(pat_22.filas[0].tasa.as_ref().unwrap().fuente, "BCV tarde");
 
     // En una fecha previa a toda tasa registrada informa el par faltante
-    let pat_10 = ejecutar_consultar_patrimonio(
-        &repo,
-        NaiveDate::from_ymd_opt(2026, 10, 10).unwrap(),
-    )
-    .unwrap();
-    assert!(pat_10.total_consolidado.is_none());
+    let pat_10 =
+        consultar_fixture_en_fecha(&repo, NaiveDate::from_ymd_opt(2026, 10, 10).unwrap()).unwrap();
+    assert!(pat_10.total.is_none());
     assert_eq!(
-        pat_10.aviso_tasa_faltante.as_deref(),
+        aviso_faltante(&pat_10).as_deref(),
         Some("Falta una tasa de USD a VES con fecha igual o anterior al 10/10/2026")
     );
 }
@@ -622,9 +637,7 @@ fn test_patrimonio_en_fechas_pasadas_y_desempate_mismo_dia() {
 // Demuestra que el redondeo ocurre una sola vez al final
 #[test]
 fn test_redondeo_unico_al_final_inv_03() {
-    use crate::domain::{
-        RepositorioEnMemoria, ejecutar_consultar_patrimonio, ejecutar_crear_cuenta,
-    };
+    use crate::domain::{RepositorioEnMemoria, ejecutar_crear_cuenta};
     use crate::tasas_monedas::ejecutar_registrar_tasa;
     use chrono::NaiveDate;
 
@@ -670,10 +683,57 @@ fn test_redondeo_unico_al_final_inv_03() {
     )
     .unwrap();
 
-    let pat = ejecutar_consultar_patrimonio(&repo, fecha).unwrap();
+    let pat = consultar_fixture_en_fecha(&repo, fecha).unwrap();
 
+    // Los equivalentes conservan 1.004 sin redondeo de presentación.
     // La suma exacta (1.004 + 1.004 = 2.008) redondea al final a 2.01
-    assert_eq!(pat.cuentas[0].equivalente_base.as_deref(), Some("1.00"));
-    assert_eq!(pat.cuentas[1].equivalente_base.as_deref(), Some("1.00"));
-    assert_eq!(pat.total_consolidado.as_deref(), Some("2.01"));
+    assert_eq!(
+        pat.filas[0]
+            .en_base
+            .as_deref()
+            .map(|v| v.parse::<rust_decimal::Decimal>().unwrap()),
+        Some("1.004".parse::<rust_decimal::Decimal>().unwrap())
+    );
+    assert_eq!(
+        pat.filas[1]
+            .en_base
+            .as_deref()
+            .map(|v| v.parse::<rust_decimal::Decimal>().unwrap()),
+        Some("1.004".parse::<rust_decimal::Decimal>().unwrap())
+    );
+    assert_eq!(pat.total.as_deref(), Some("2.01"));
+}
+
+/// Las cuentas del fixture existían antes de las consultas de octubre. La
+/// creación normal usa el reloj del sistema: copiamos SOLO estos eventos de
+/// prueba con fecha explícita; no se reescribe ningún libro SQLite.
+pub(crate) fn consultar_fixture_en_fecha(
+    repo: &impl crate::domain::RepositorioEventos,
+    fecha: chrono::NaiveDate,
+) -> Result<crate::domain::Patrimonio, crate::domain::ErrorDominio> {
+    use crate::domain::RepositorioEventos;
+    let mut fixture = RepositorioEnMemoria::default();
+    for mut evento in repo.obtener_eventos().unwrap() {
+        if evento.tipo == "CuentaCreada" {
+            evento.momento_registro = chrono::DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc);
+        }
+        fixture.guardar_evento(&evento).unwrap();
+    }
+    crate::domain::ejecutar_consultar_patrimonio(
+        &fixture,
+        Some(&fecha.to_string()),
+        chrono::NaiveDate::from_ymd_opt(2026, 10, 26).unwrap(),
+    )
+}
+
+pub(crate) fn aviso_faltante(p: &crate::domain::Patrimonio) -> Option<String> {
+    p.faltantes.first().map(|par| {
+        crate::domain::formatear_aviso_tasa_faltante(
+            &par.origen,
+            &par.destino,
+            chrono::NaiveDate::parse_from_str(&p.fecha, "%Y-%m-%d").unwrap(),
+        )
+    })
 }

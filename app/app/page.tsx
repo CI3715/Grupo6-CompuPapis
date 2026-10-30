@@ -4,94 +4,24 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 
+import PantallaPatrimonio from "@/app/patrimonio";
+import PantallaTasas from "@/app/tasas";
 import { formatearMontoLocal } from "@/lib/money";
-
-// --- INTERFACES ---
-interface Moneda {
-  codigo: string;
-  nombre: string;
-  simbolo: string;
-  decimales: number;
-}
-
-interface Cuenta {
-  id: string;
-  nombre: string;
-  tipo: string;
-  moneda: string;
-  saldo: {
-    cantidad: string;
-    moneda: string;
-  };
-}
-
-interface SubtotalMoneda {
-  codigo: string;
-  simbolo: string;
-  subtotal: string;
-}
-
-interface ResumenCuentas {
-  cuentas: Cuenta[];
-  subtotales: SubtotalMoneda[];
-}
-
-interface ErrorDominio {
-  campo: string;
-  mensaje: string;
-}
-
-interface Categoria {
-  nombre: string;
-  tipo: "ingreso" | "gasto";
-}
-
-interface Movimiento {
-  id: string;
-  fecha: string;
-  tipo: "ingreso" | "gasto" | "ajuste";
-  categoria: string;
-  nota?: string;
-  monto: string;
-  montoVigente: string;
-  corregido: boolean;
-  esAjuste: boolean;
-  referenciaId?: string;
-}
-
-interface DetalleCuenta {
-  saldoActual: string;
-  composicion: {
-    inicial: string;
-    ingresos: string;
-    gastos: string;
-    ajustes: string;
-  };
-  movimientos: Movimiento[];
-}
+import type {
+  Categoria,
+  DetalleCuenta,
+  ErrorDominio,
+  Moneda,
+  Movimiento,
+  Pantalla,
+  ResumenCuentas,
+} from "@/lib/tipos";
+import { normalizarError, obtenerClaseBadgeMoneda } from "@/lib/utilidades";
 
 // --- FUNCIONES UTILERÍA ---
 interface EvaluacionMovimiento {
   dejaSaldoNegativo: boolean;
   saldoResultante: string;
-}
-
-function normalizarError(error: unknown): ErrorDominio {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "campo" in error &&
-    "mensaje" in error &&
-    typeof error.campo === "string" &&
-    typeof error.mensaje === "string"
-  ) {
-    return { campo: error.campo, mensaje: error.mensaje };
-  }
-  return {
-    campo: "general",
-    mensaje:
-      "No se pudo completar la operación. Abre la aplicación con Tauri e inténtalo de nuevo.",
-  };
 }
 
 async function leerDatos() {
@@ -103,22 +33,11 @@ async function leerDatos() {
   return { resumen, monedas, categorias };
 }
 
-function obtenerClaseBadgeMoneda(codigo: string): string {
-  switch (codigo.toUpperCase()) {
-    case "USD":
-      return "badge badge-usd";
-    case "VES":
-      return "badge badge-ves";
-    case "EUR":
-      return "badge badge-eur";
-    case "USDT":
-      return "badge badge-usdt";
-    default:
-      return "badge";
-  }
-}
-
 export default function MisCuentasPage() {
+  // --- NAVEGACIÓN Y MODO PANTALLA COMPLETA (ENTREGA 4) ---
+  const [pantalla, setPantalla] = useState<Pantalla>("cuentas");
+  const [pantallaCompleta, setPantallaCompleta] = useState(false);
+
   // --- ESTADOS CUENTAS ---
   const [resumen, setResumen] = useState<ResumenCuentas>({
     cuentas: [],
@@ -225,12 +144,48 @@ export default function MisCuentasPage() {
     };
   }, []);
 
-  // Redimensionar ventana Tauri dinámicamente
+  // Detectar si la ventana está maximizada o en pantalla completa
   useEffect(() => {
+    let activo = true;
+    let dejarDeEscuchar: (() => void) | undefined;
+    const revisar = async () => {
+      try {
+        const ventana = getCurrentWindow();
+        const [maximizada, completa] = await Promise.all([
+          ventana.isMaximized(),
+          ventana.isFullscreen(),
+        ]);
+        if (activo) setPantallaCompleta(maximizada || completa);
+      } catch (err) {
+        console.error("Error al consultar el estado de la ventana:", err);
+      }
+    };
+    revisar();
+    try {
+      getCurrentWindow()
+        .onResized(revisar)
+        .then((quitar) => {
+          if (activo) dejarDeEscuchar = quitar;
+          else quitar();
+        })
+        .catch(() => {});
+    } catch {
+      // Fuera de Tauri no hay ventana que observar.
+    }
+    return () => {
+      activo = false;
+      dejarDeEscuchar?.();
+    };
+  }, []);
+
+  // Redimensionar ventana Tauri dinámicamente (no en pantalla completa)
+  useEffect(() => {
+    if (pantallaCompleta) return;
     const ajustarTamanoVentana = async () => {
       try {
         const numCuentas = resumen.cuentas.length;
-        const anchoBase = cuentaSeleccionadaId ? 1120 : 620;
+        const anchoBase =
+          cuentaSeleccionadaId || pantalla !== "cuentas" ? 1120 : 620;
         const altoBase = 560;
         const crecimientoAlto = 80;
         const maximoAlto = 900;
@@ -247,7 +202,12 @@ export default function MisCuentasPage() {
     };
 
     ajustarTamanoVentana();
-  }, [resumen.cuentas.length, cuentaSeleccionadaId]);
+  }, [
+    resumen.cuentas.length,
+    cuentaSeleccionadaId,
+    pantalla,
+    pantallaCompleta,
+  ]);
 
   const obtenerSimbolo = (codigo: string) =>
     monedas.find((m) => m.codigo === codigo)?.simbolo ?? codigo;
@@ -404,6 +364,28 @@ export default function MisCuentasPage() {
     (c) => c.tipo === tipoMovimiento,
   );
 
+  const irAPantalla = (destino: Pantalla) => {
+    setPantalla(destino);
+    if (destino === "cuentas") void cargarDatos();
+  };
+
+  if (pantalla === "patrimonio") {
+    return (
+      <PantallaPatrimonio
+        onVolver={() => irAPantalla("cuentas")}
+        onIr={() => irAPantalla("tasas")}
+      />
+    );
+  }
+  if (pantalla === "tasas") {
+    return (
+      <PantallaTasas
+        onVolver={() => irAPantalla("cuentas")}
+        onIr={() => irAPantalla("patrimonio")}
+      />
+    );
+  }
+
   // --- RENDER ---
   return (
     <div
@@ -429,8 +411,25 @@ export default function MisCuentasPage() {
           )}
         </header>
 
+        <div className="acciones-movimientos" style={{ marginBottom: "20px" }}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => irAPantalla("patrimonio")}
+          >
+            Patrimonio
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => irAPantalla("tasas")}
+          >
+            Tasas de cambio
+          </button>
+        </div>
+
         <details>
-          <summary>Conexión con el servidor · Entrega 1</summary>
+          <summary>Conexión con el servidor</summary>
           <button
             type="button"
             className="btn btn-ghost"
@@ -630,7 +629,7 @@ export default function MisCuentasPage() {
             className="btn btn-ghost"
             onClick={() => setCuentaSeleccionadaId(null)}
           >
-            <span style={{ fontSize: "24px", lineHeight: "0.8" }}>
+            <span style={{ fontSize: "14px", lineHeight: "0.8" }}>
               ← Volver
             </span>
           </button>
@@ -1093,7 +1092,7 @@ export default function MisCuentasPage() {
                           <button
                             type="button"
                             onClick={() => iniciarCorreccion(mov)}
-                            className="btn btn-ghost"
+                            className="btn btn-primary"
                             style={{
                               border: "1px solid var(--border-subtle)",
                               padding: "6px 12px",

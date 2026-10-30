@@ -20,6 +20,7 @@ pub trait GeneradorId {
 }
 
 // Valida una moneda propia
+#[allow(clippy::too_many_arguments)] // Preserva el contrato e inyección de reloj e identificadores.
 pub fn ejecutar_crear_moneda<R: RepositorioEventos>(
     repo: &mut R,
     codigo: &str,
@@ -65,6 +66,7 @@ pub fn ejecutar_crear_moneda<R: RepositorioEventos>(
     Ok(nueva)
 }
 
+#[allow(clippy::too_many_arguments)] // Preserva el contrato e inyección de reloj e identificadores.
 pub fn ejecutar_registrar_tasa<R: RepositorioEventos>(
     repo: &mut R,
     origen: &str,
@@ -95,7 +97,7 @@ pub fn ejecutar_registrar_tasa<R: RepositorioEventos>(
 
     // Guardamos la tasa
     let evento = EventoLibro {
-        id: id,
+        id,
         tipo: "TasaRegistrada".to_string(),
         momento_registro: reloj.ahora(),
         dispositivo_origen: dispositivo_id.to_string(),
@@ -119,44 +121,22 @@ pub fn ejecutar_historial_tasas<R: RepositorioEventos>(
     origen: &str,
     destino: &str,
 ) -> Result<Vec<TasaCambio>, ErrorDominio> {
-    let eventos = repo.obtener_eventos();
-
-    let lista = match eventos {
-        Ok(e) => e,
-        Err(_) => {
-            return Err(ErrorDominio::nuevo(
-                "general",
-                "No se pudieron cargar las tasas.",
-            ));
-        }
-    };
-
-    let mut resp = Vec::new();
-
-    // Chequeamos las tasas que tenemos guardadas
-    for ev in lista {
-        if ev.tipo == "TasaRegistrada" {
-            let tasa: TasaCambio = match serde_json::from_str(&ev.datos_json) {
-                Ok(t) => t,
-                Err(_) => {
-                    return Err(ErrorDominio::nuevo(
-                        "general",
-                        "Hubo un problema al leer una tasa.",
-                    ));
-                }
-            };
-
-            if tasa.id != ev.id {
-                return Err(ErrorDominio::nuevo("general", "Hay un error en una tasa."));
-            }
-
-            if tasa.origen == origen && tasa.destino == destino {
-                resp.push(tasa);
-            }
-        }
+    let monedas = ejecutar_listar_monedas(repo)?;
+    let origen = crate::domain::buscar_moneda_en(origen, &monedas)
+        .map_err(|_| ErrorDominio::nuevo("origen", "Esa moneda no existe."))?;
+    let destino = crate::domain::buscar_moneda_en(destino, &monedas)
+        .map_err(|_| ErrorDominio::nuevo("destino", "Esa moneda no existe."))?;
+    if origen.codigo == destino.codigo {
+        return Err(ErrorDominio::nuevo(
+            "destino",
+            "No se puede usar la misma moneda.",
+        ));
     }
-
-    Ok(resp)
+    // Historial de tasas activas; el libro conserva también las anuladas.
+    Ok(ejecutar_listar_tasas(repo)?
+        .into_iter()
+        .filter(|t| t.origen == origen.codigo && t.destino == destino.codigo)
+        .collect())
 }
 
 pub fn ejecutar_eliminar_tasa<R: RepositorioEventos>(
@@ -239,7 +219,7 @@ pub fn ejecutar_cambiar_moneda_base<R: RepositorioEventos>(
     }
 
     // Rechaza el cambio indicando el campo exacto si la moneda no existe
-    if existe == false {
+    if !existe {
         return Err(ErrorDominio::nuevo("codigo", "Esa moneda no existe."));
     }
 
@@ -247,20 +227,8 @@ pub fn ejecutar_cambiar_moneda_base<R: RepositorioEventos>(
         codigo: codigo.to_string(),
     };
 
-    let datos;
-
-    // Serializa el código de la nueva moneda base para el evento
-    match serde_json::to_string(&dato) {
-        Ok(d) => {
-            datos = d;
-        }
-        Err(_) => {
-            return Err(ErrorDominio::nuevo(
-                "general",
-                "No se pudo guardar el cambio.",
-            ));
-        }
-    }
+    let datos = serde_json::to_string(&dato)
+        .map_err(|_| ErrorDominio::nuevo("general", "No se pudo guardar el cambio."))?;
 
     // Registra el evento MonedaBaseCambiada con su tiempo e ID
     let evento = EventoLibro {
@@ -282,4 +250,38 @@ pub fn ejecutar_cambiar_moneda_base<R: RepositorioEventos>(
     }
 
     Ok(codigo.to_string())
+}
+
+/// Entrada de aplicación compartida por IPC y pruebas sin runtime Tauri.
+#[derive(Default, serde::Deserialize)]
+pub struct EntradaTasa {
+    pub origen: Option<String>,
+    pub destino: Option<String>,
+    pub valor: Option<String>,
+    pub fecha: Option<String>,
+    pub fuente: Option<String>,
+}
+
+pub fn registrar_tasa_desde_entrada<R: RepositorioEventos>(
+    repo: &mut R,
+    entrada: EntradaTasa,
+    dispositivo_id: &str,
+    reloj: &impl Reloj,
+    ids: &impl GeneradorId,
+) -> Result<TasaCambio, ErrorDominio> {
+    let obligatorio = |campo: &str, valor: Option<String>| {
+        valor
+            .ok_or_else(|| ErrorDominio::nuevo(campo, &format!("El campo {campo} es obligatorio.")))
+    };
+    ejecutar_registrar_tasa(
+        repo,
+        &obligatorio("origen", entrada.origen)?,
+        &obligatorio("destino", entrada.destino)?,
+        &obligatorio("valor", entrada.valor)?,
+        &obligatorio("fecha", entrada.fecha)?,
+        &obligatorio("fuente", entrada.fuente)?,
+        dispositivo_id,
+        reloj,
+        ids,
+    )
 }
