@@ -43,7 +43,7 @@ pub fn validar_moneda(
     // Revisa que el código tenga entre 3 y 5 caracteres
     let n = codigo.len();
 
-    if n < 3 || n > 5 {
+    if !(3..=5).contains(&n) {
         return Err(ErrorDominio::nuevo(
             "codigo",
             "El código tiene que tener de 3 a 5 letras.",
@@ -99,6 +99,7 @@ pub struct TasaCambio {
     pub id: String,
     pub origen: String,
     pub destino: String,
+    #[serde(with = "rust_decimal::serde::str")]
     pub valor: Decimal,
     pub fecha: String,
     pub fuente: String,
@@ -115,6 +116,7 @@ pub struct DatosMonedaBaseCambiada {
     pub codigo: String,
 }
 
+#[allow(clippy::too_many_arguments)] // Contrato existente, reloj y catálogo explícitos.
 pub fn validar_tasa(
     id: &str,
     origen: &str,
@@ -163,7 +165,14 @@ pub fn validar_tasa(
         return Err(ErrorDominio::nuevo("valor", "Falta poner el valor."));
     }
 
-    let num = match Decimal::from_str(&texto) {
+    if texto
+        .split_once('.')
+        .is_some_and(|(_, fraccion)| fraccion.len() > 8)
+    {
+        return Err(ErrorDominio::nuevo("valor", "Máximo 8 decimales."));
+    }
+
+    let num = match Decimal::from_str_exact(&texto) {
         Ok(n) => n,
         Err(_) => return Err(ErrorDominio::nuevo("valor", "El valor esta mal.")),
     };
@@ -201,7 +210,7 @@ pub fn validar_tasa(
         origen: m1.codigo,
         destino: m2.codigo,
         valor: num,
-        fecha: fecha.trim().to_string(),
+        fecha: dia.to_string(),
         fuente: fuente.trim().to_string(),
     })
 }
@@ -973,7 +982,7 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                         }
                     }
                 };
-                
+
                 let cta = cuentas.get_mut(&d.cuenta_id).ok_or_else(error_libro)?;
                 // Revalida el monto corregido y formatea el ajuste según sus decimales
                 let moneda = buscar_moneda_en(&cta.moneda, &monedas).map_err(|_| error_libro())?;
@@ -1157,20 +1166,9 @@ pub fn ejecutar_listar_monedas<R: RepositorioEventos>(
 pub fn ejecutar_obtener_moneda_base<R: RepositorioEventos>(
     repo: &R,
 ) -> Result<String, ErrorDominio> {
-    let eventos = repo.obtener_eventos();
-    let lista;
-
-    match eventos {
-        Ok(e) => {
-            lista = e;
-        }
-        Err(_) => {
-            return Err(ErrorDominio::nuevo(
-                "general",
-                "No se pudieron cargar los datos.",
-            ));
-        }
-    }
+    let lista = repo
+        .obtener_eventos()
+        .map_err(|_| ErrorDominio::nuevo("general", "No se pudieron cargar los datos."))?;
 
     // Vemos cuál es la moneda base
     let resp = proyectar_libro(&lista)?;
@@ -1193,7 +1191,10 @@ pub fn ejecutar_listar_tasas<R: RepositorioEventos>(
 
     let libro = proyectar_libro(&eventos)?;
 
-    Ok(libro.tasas)
+    let mut tasas = libro.tasas;
+    tasas.reverse();
+    tasas.sort_by(|a, b| b.fecha.cmp(&a.fecha));
+    Ok(tasas)
 }
 
 pub fn ejecutar_listar_categorias<R: RepositorioEventos>(
@@ -1402,7 +1403,7 @@ pub fn ejecutar_corregir_movimiento<R: RepositorioEventos>(
     // El monto correcto puede ser 0 (para anular un movimiento que no debió existir) o positivo
     let moneda = buscar_moneda_en(&cta.moneda, &proyeccion.monedas)?;
     let monto_correcto = Monto::desde_str_con_moneda(monto_correcto_str, &moneda, "monto", true)?;
-    
+
     let nuevo_valor = monto_correcto.cantidad();
 
     if nuevo_valor == *monto_vigente {
@@ -1424,7 +1425,7 @@ pub fn ejecutar_corregir_movimiento<R: RepositorioEventos>(
     sumar_exacto(cta.saldo_actual()?, diferencia)?;
     validar_efecto_subtotal(&proyeccion, &cta.moneda, diferencia)?;
     let hoy_str = Local::now().date_naive().format("%Y-%m-%d").to_string();
-    
+
     let dec = moneda.decimales as usize;
 
     let nota = format!(
@@ -1947,7 +1948,7 @@ pub fn evaluar_movimiento<R: RepositorioEventos>(
         .cuentas
         .get(cuenta_id)
         .ok_or_else(|| ErrorDominio::nuevo("cuenta", "La cuenta seleccionada no existe."))?;
-    
+
     let tipo = TipoMovimiento::desde_str(tipo)?;
     // Calcula y formatea el saldo resultante con la escala de la moneda
     let moneda = buscar_moneda_en(&cuenta.moneda, &libro.monedas)?;
@@ -1977,4 +1978,182 @@ pub fn validar_fecha_movimiento(fecha: &str, hoy: NaiveDate) -> Result<NaiveDate
         ));
     }
     Ok(fecha)
+}
+
+// Dependencia mínima de aplicación para consultar_patrimonio. Reutiliza el libro,
+// catálogo y moneda base existentes; no guarda conversiones ni saldos derivados.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilaPatrimonio {
+    pub cuenta_id: String,
+    pub nombre: String,
+    pub moneda: String,
+    pub saldo: String,
+    pub tasa: Option<TasaCambio>,
+    pub inversa: bool,
+    pub en_base: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubtotalPatrimonio {
+    pub codigo: String,
+    pub simbolo: String,
+    pub subtotal: String,
+    pub tasa: Option<TasaCambio>,
+    pub inversa: bool,
+    pub en_base: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ParFaltante {
+    pub origen: String,
+    pub destino: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Patrimonio {
+    pub moneda_base: String,
+    pub fecha: String,
+    pub filas: Vec<FilaPatrimonio>,
+    pub subtotales: Vec<SubtotalPatrimonio>,
+    pub total: Option<String>,
+    pub faltantes: Vec<ParFaltante>,
+}
+
+pub fn ejecutar_consultar_patrimonio<R: RepositorioEventos>(
+    repo: &R,
+    fecha: Option<&str>,
+    hoy: NaiveDate,
+) -> Result<Patrimonio, ErrorDominio> {
+    let fecha = match fecha {
+        Some(f) => validar_fecha_movimiento(f, hoy)?,
+        None => hoy,
+    }
+    .to_string();
+    let eventos = repo.obtener_eventos().map_err(|_| error_libro())?;
+    // Valida el libro completo antes de derivar una vista histórica.
+    let libro = proyectar_libro(&eventos)?;
+    let base = buscar_moneda_en(&libro.moneda_base, &libro.monedas)?;
+    let tasas = ejecutar_listar_tasas(repo)?; // fecha descendente, último registro primero
+    let convertir = |cantidad: Decimal,
+                     moneda: &str|
+     -> Result<(Option<Decimal>, Option<TasaCambio>, bool), ErrorDominio> {
+        if moneda == base.codigo {
+            return Ok((Some(cantidad), None, false));
+        }
+        let vigente = |t: &&TasaCambio| t.fecha <= fecha;
+        // Una directa vigente tiene prioridad; la inversa se usa solo si no hay directa.
+        let directa = tasas
+            .iter()
+            .filter(vigente)
+            .find(|t| t.origen == moneda && t.destino == base.codigo);
+        let inversa = directa.is_none();
+        let tasa = directa.or_else(|| {
+            tasas
+                .iter()
+                .filter(vigente)
+                .find(|t| t.origen == base.codigo && t.destino == moneda)
+        });
+        match tasa {
+            Some(t) => {
+                // Dividir el saldo directamente evita redondear antes la inversa 1/valor.
+                let valor = if inversa {
+                    cantidad.checked_div(t.valor)
+                } else {
+                    cantidad.checked_mul(t.valor)
+                }
+                .ok_or_else(|| {
+                    ErrorDominio::nuevo("valor", "La conversión excede el rango decimal permitido.")
+                })?;
+                Ok((Some(valor), Some(t.clone()), inversa))
+            }
+            None => Ok((None, None, false)),
+        }
+    };
+    let mut filas = Vec::new();
+    let mut por_moneda = BTreeMap::new();
+    for id in &libro.cuentas_orden {
+        let creada = eventos
+            .iter()
+            .find(|e| {
+                e.tipo == "CuentaCreada"
+                    && serde_json::from_str::<DatosCuentaCreada>(&e.datos_json)
+                        .is_ok_and(|d| d.cuenta_id == *id)
+            })
+            .ok_or_else(error_libro)?;
+        if creada
+            .momento_registro
+            .with_timezone(&Local)
+            .date_naive()
+            .to_string()
+            > fecha
+        {
+            continue;
+        }
+        let cuenta = &libro.cuentas[id];
+        let saldo = cuenta
+            .movimientos
+            .iter()
+            .filter(|m| m.fecha <= fecha)
+            .try_fold(cuenta.inicial, |saldo, m| {
+                let monto = Decimal::from_str(&m.monto).map_err(|_| error_libro())?;
+                sumar_exacto(saldo, if m.tipo == "gasto" { -monto } else { monto })
+            })?;
+        let subtotal = por_moneda
+            .entry(cuenta.moneda.clone())
+            .or_insert(Decimal::ZERO);
+        *subtotal = sumar_exacto(*subtotal, saldo)?;
+        let moneda = buscar_moneda_en(&cuenta.moneda, &libro.monedas)?;
+        let (en_base, tasa, inversa) = convertir(saldo, &cuenta.moneda)?;
+        filas.push(FilaPatrimonio {
+            cuenta_id: id.clone(),
+            nombre: cuenta.nombre.clone(),
+            moneda: cuenta.moneda.clone(),
+            saldo: format!("{:.*}", moneda.decimales as usize, saldo),
+            tasa,
+            inversa,
+            en_base: en_base.map(|v| v.to_string()),
+        });
+    }
+    let mut subtotales = Vec::new();
+    let mut faltantes = Vec::new();
+    let mut total = Decimal::ZERO;
+    for (codigo, subtotal) in por_moneda {
+        let moneda = buscar_moneda_en(&codigo, &libro.monedas)?;
+        let (en_base, tasa, inversa) = convertir(subtotal, &codigo)?;
+        if let Some(valor) = en_base {
+            total = sumar_exacto(total, valor)?;
+        } else {
+            faltantes.push(ParFaltante {
+                origen: codigo.clone(),
+                destino: base.codigo.clone(),
+            });
+        }
+        subtotales.push(SubtotalPatrimonio {
+            codigo,
+            simbolo: moneda.simbolo,
+            subtotal: format!("{:.*}", moneda.decimales as usize, subtotal),
+            tasa,
+            inversa,
+            en_base: en_base.map(|v| v.to_string()),
+        });
+    }
+    Ok(Patrimonio {
+        moneda_base: base.codigo,
+        fecha,
+        filas,
+        subtotales,
+        total: if faltantes.is_empty() {
+            Some(format!(
+                "{:.*}",
+                base.decimales as usize,
+                total.round_dp(base.decimales)
+            ))
+        } else {
+            None
+        },
+        faltantes,
+    })
 }

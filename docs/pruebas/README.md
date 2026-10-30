@@ -1,6 +1,6 @@
 # Guía de pruebas de Cuentas Claras
 
-Esta guía explica cómo ejecutar las pruebas de las Entregas 2 y 3, qué comprueba cada grupo y cómo demostrar el funcionamiento en la aplicación. Complementa el [README del proyecto](../../README.md) y el [informe de verificación de la integración](../entregas-2-3-verificacion.md).
+Esta guía explica cómo ejecutar las pruebas de las Entregas 2, 3 y 4, qué comprueba cada grupo y cómo demostrar el funcionamiento en la aplicación. Complementa el [README del proyecto](../../README.md) y el [informe de verificación de la integración](../entregas-2-3-verificacion.md).
 
 ## 1. Preparación y directorios
 
@@ -65,18 +65,18 @@ Ejecutar los comandos uno por uno. Si alguno falla, guardar su salida completa y
 | Comando                           | Qué comprueba                                                                                                   | Resultado esperado                                    |
 | --------------------------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | `cargo check`                     | Que el paquete Rust y sus dependencias compilan para comprobación de tipos. No ejecuta pruebas.                 | Termina con `Finished` sin errores.                   |
-| `cargo test` de Tauri             | Validaciones, invariantes, saldos, compatibilidad, persistencia, migración y protección de moneda.              | 28 pruebas unitarias y 1 doctest aprobados.           |
+| `cargo test` de Tauri             | Validaciones, invariantes, saldos, compatibilidad, persistencia, migración y protección de moneda.              | 38 pruebas unitarias y 1 doctest aprobados.           |
 | `cargo test` del servidor         | El contrato del manejador de ping: estado, mensaje, versión y timestamp válido. No hace una petición HTTP real. | 1 prueba aprobada.                                    |
 | `cargo fmt ... -- --check`        | Formato Rust sin modificar archivos.                                                                            | Termina sin diferencias; normalmente no imprime nada. |
 | `cargo clippy ... -- -D warnings` | Análisis estático Rust; las advertencias se consideran errores.                                                 | Sin errores ni advertencias.                          |
-| `npm test`                        | Representación decimal exacta del dinero en la UI.                                                              | 3 pruebas aprobadas.                                  |
+| `npm test`                        | Representación decimal exacta del dinero en la UI.                                                              | 4 pruebas aprobadas.                                  |
 | `npm run lint`                    | Reglas de TypeScript/React y hooks mediante ESLint.                                                             | Sin errores ni advertencias.                          |
 | `npm run format:check`            | Prettier del frontend y formato de ambos paquetes Rust. No modifica archivos.                                   | Todos los pasos aprobados.                            |
 | `npm run build`                   | Compilación de Next.js, comprobación de TypeScript y exportación estática.                                      | Build exitoso; archivos generados en `app/out/`.      |
 
-Los recuentos corresponden a los casos documentados; pueden aumentar cuando se agreguen pruebas. El doctest de moneda usa `compile_fail`: **pasa cuando el compilador rechaza modificar el campo privado**, que es el comportamiento esperado de INV-18. Los bloques que dicen `running 0 tests` para otros targets no significan que se omitieran las 28 pruebas de la biblioteca.
+Los recuentos corresponden a los casos documentados; pueden aumentar cuando se agreguen pruebas. El doctest de moneda usa `compile_fail`: **pasa cuando el compilador rechaza modificar el campo privado**, que es el comportamiento esperado de INV-18. Los bloques que dicen `running 0 tests` para otros targets no significan que se omitieran las 38 pruebas de la biblioteca.
 
-Node puede mostrar un aviso `MODULE_TYPELESS_PACKAGE_JSON` al inferir ESM en `money.ts`; no representa un fallo de las tres pruebas. Un error de descarga o una dependencia nativa de Tauri ausente bloquea la ejecución: no cuenta como prueba aprobada.
+Node puede mostrar un aviso `MODULE_TYPELESS_PACKAGE_JSON` al inferir ESM en `money.ts`; no representa un fallo de las pruebas. Un error de descarga o una dependencia nativa de Tauri ausente bloquea la ejecución: no cuenta como prueba aprobada.
 
 ## 3. Qué prueban los casos automatizados
 
@@ -286,3 +286,88 @@ No borrar, editar ni eliminar eventos para preparar una demostración. Ante un e
 Para cada ejecución guardar: commit probado (`git rev-parse --short HEAD`), sistema operativo, comando o caso manual, resultado y salida/mensaje si falla. No marcar como aprobadas pruebas que no se ejecutaron.
 
 Esta guía describe procedimientos y resultados esperados, no certifica una ejecución particular. Los resultados históricos están en el [informe de verificación](../entregas-2-3-verificacion.md). Las comprobaciones manuales de ventana, red apagada y base real del equipo siguen pendientes hasta que quien haga la demostración las ejecute y registre. La generación de instaladores release se prueba por separado con `npm run tauri build` desde `app`; no está incluida en el build debug sin bundle.
+
+## Entrega 4: monedas y tasas
+
+Auditoría, capas técnicas y contratos: [backend local de monedas, tasas y patrimonio](../entrega-4-backend.md).
+Todos los comandos siguientes parten de la raíz del repositorio y funcionan
+sin depender del nombre de una rama ni de directorios personales.
+
+```bash
+cargo test --manifest-path app/src-tauri/Cargo.toml
+cargo test --manifest-path app/src-tauri/Cargo.toml pruebas_tasas_cambio
+cargo clippy --manifest-path app/src-tauri/Cargo.toml --all-targets -- -D warnings
+cargo fmt --manifest-path app/src-tauri/Cargo.toml -- --check
+cargo test --manifest-path server/Cargo.toml
+cargo fmt --manifest-path server/Cargo.toml -- --check
+cd app
+npm test
+npm run lint
+npx tsc --noEmit
+npm run format:check
+npm run build
+npm run tauri -- build --debug --no-bundle
+```
+
+Resultado esperado del backend de Entrega 4: 38 pruebas unitarias Rust y 1
+doctest; el filtro `pruebas_tasas_cambio` ejecuta 8 de ellas. Servidor: 1 prueba
+del ping. Frontend: 4 pruebas de representación exacta. Todos deben pasar,
+sin tests ignorados. Las suites anteriores de E2/E3 siguen incluidas y
+comprueban el saldo 1750, formatos históricos, inmutabilidad e idempotencia.
+
+| Caso automatizado de tasas y patrimonio                             | Evidencia esperada                                                                                                                                                |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `registro_exacto_validaciones_por_campo_y_rechazos_sin_eventos`     | Registro con 8 decimales exactos, catálogo personalizado, fuente recortada; rechazo por origen, destino, valor, fecha y fuente sin eventos nuevos.                |
+| `entrada_comando_ausente_o_null_devuelve_campo_sin_escribir`        | Los cinco campos omitidos/null devuelven su nombre; un decimal demasiado largo no se redondea para aceptarlo.                                                     |
+| `historial_desempate_anulacion_y_movimientos_intactos`              | Varias fechas y misma fecha, último registro primero; anulación por evento y rechazo de repetida/inexistente sin nuevas escrituras; detalle/movimientos intactos. |
+| `ejemplo_23_inv02_inversa_sin_cruces_y_cambio_base`                 | 316100.00 VES, falta USDT→USD sin total pese a posible cruce, luego 350.00 USD; eliminación excluye la tasa; cuentas intactas.                                    |
+| `tasa_vigente_y_saldos_a_fecha_redondeo_solo_al_final`              | Se excluyen tasas y movimientos posteriores; 0.004 + 0.004 se redondea a 0.01 al final.                                                                           |
+| `sqlite_reapertura_conserva_tasas_anulaciones_y_rechazos`           | Tasa exacta tras reabrir, evento nuevo al anular, replay sin tasa activa, rechazos sin eventos.                                                                   |
+| `sqlite_reapertura_conserva_catalogo_base_y_patrimonio`             | Moneda de 8 decimales, base, saldo y consulta idénticos tras reabrir.                                                                                             |
+| `tasas_reproyeccion_idempotente_y_eventos_incompatibles_explicitos` | Guardar otra vez el mismo evento no duplica efectos; referencia incompatible produce error de almacenamiento explícito.                                           |
+
+Las pruebas SQLite crean archivos temporales únicos; nunca abren ni borran
+el libro personal de la aplicación. El repositorio existente sigue usando
+solo INSERT para operaciones financieras y triggers contra UPDATE/DELETE.
+
+### Demostración manual pendiente
+
+1. Con un perfil de prueba vacío, abre la aplicación desde `app` con
+   `npm run tauri -- dev`. No borres una base existente para preparar el caso;
+   usa un usuario/perfil del sistema separado si necesitas datos limpios.
+2. Crea Efectivo VES `88700`, Banco USD `200` y Billetera USDT `50`.
+3. Abre Tasas. Registra USD→VES `887`, fecha `2026-10-20`, fuente `BCV`;
+   USDT→VES `1000`, fecha `2026-10-21`, fuente `casa de cambio`.
+4. Abre Patrimonio, elige fecha de hoy y base VES. Comprueba saldos por
+   cuenta, subtotales, tasas usadas y total `316.100,00 VES`.
+5. Cambia a USD. Debe aparecer el par faltante USDT→USD y ningún total
+   consolidado. El saldo VES se convierte mediante la inversa de 887.
+6. Registra USDT→USD `1`, fecha `2026-10-21`, fuente `estimación propia`.
+   Patrimonio debe mostrar `350,00 USD`.
+7. Elimina esa tasa. Debe desaparecer del historial activo y volver el aviso,
+   sin alterar cuentas, movimientos ni saldos. Regístrala de nuevo para
+   continuar. El libro conserva ambos eventos y no modifica el primero.
+8. Registra otra USD→VES en la misma fecha y otra en fecha anterior. Comprueba
+   el orden del historial y el desempate por último registro. Anula la más
+   reciente y verifica que vuelva a aplicar la anterior correspondiente.
+9. Intenta registrar sin fecha/fuente, con espacios en fuente, valor cero,
+   negativo, más de 8 decimales, fecha futura y monedas iguales. Comprueba el
+   campo del error y que el historial no aumente.
+10. Crea una moneda `ABC`, nombre `Moneda de prueba`, símbolo `A`, decimales
+    `3`; vuelve a Mis cuentas y crea una cuenta `ABC` con saldo `12.345`.
+    Registra ABC→USD `2` y confirma su participación en Patrimonio.
+11. Consulta una fecha pasada: solo deben aparecer cuentas ya creadas en ese
+    día y sus movimientos/tasas hasta esa fecha. No cambian los saldos actuales.
+12. Compila el ejecutable con el último comando anterior, cierra la aplicación,
+    detén el servidor, desactiva la red y abre `app/src-tauri/target/debug/app`
+    (en Windows/macOS usa el ejecutable de tu plataforma). Comprueba mismos
+    datos, moneda base, tasas y patrimonio; registra/anula otra tasa sin red y
+    vuelve a abrir. Esto está pendiente de demostración en una ventana real.
+13. Por separado, levanta el servidor y verifica el ping de Entrega 1. Su caída
+    debe afectar únicamente a ese indicador; los flujos financieros son locales.
+
+Pendiente del frontend: ajustar la presentación de monedas propias con cero
+posiciones (el formateador todavía muestra un mínimo de dos), revisar visualmente
+formularios, cambios de base/errores y tamaños de ventana. El formato ya conserva
+hasta 28 posiciones recibidas para conversiones sin pasar por Number; no debe
+redondear cada fila antes de sumar.
