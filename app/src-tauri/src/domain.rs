@@ -25,6 +25,8 @@ impl ErrorDominio {
 // ==========================================
 // CATÁLOGO DE MONEDAS (RF-CAM-01)
 // ==========================================
+
+// Representa moneda registrada con su escala decimal
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Moneda {
     pub codigo: String,
@@ -33,6 +35,7 @@ pub struct Moneda {
     pub decimales: u32,
 }
 
+// Valida formato, unicidad y límite de decimales de una moneda nueva
 pub fn validar_moneda(
     codigo: &str,
     nombre: &str,
@@ -628,6 +631,7 @@ struct EstadoCuentaInterno {
     tipo: TipoCuenta,
     moneda: String,
     inicial: Decimal,
+    fecha_creacion: String,
     ingresos: Decimal,
     gastos: Decimal,
     ajustes: Decimal,
@@ -643,6 +647,29 @@ impl EstadoCuentaInterno {
             sumar_exacto(sumar_exacto(self.inicial, self.ingresos)?, -self.gastos)?,
             self.ajustes,
         )
+    }
+
+    // Calcula el saldo sumando movimientos y ajustes hasta la fecha indicada
+    fn saldo_en_fecha(&self, fecha_consulta: NaiveDate) -> Result<Decimal, ErrorDominio> {
+        let mut saldo = self.inicial;
+
+        // Filtra cada movimiento registrado cuya fecha no supere la fecha consultada
+        for mov in &self.movimientos {
+            let dia = match NaiveDate::parse_from_str(&mov.fecha, "%Y-%m-%d") {
+                Ok(d) => d,
+                Err(_) => return Err(error_libro()),
+            };
+
+            if dia <= fecha_consulta {
+                let monto = match Decimal::from_str(&mov.monto) {
+                    Ok(n) => n,
+                    Err(_) => return Err(error_libro()),
+                };
+                saldo = sumar_exacto(saldo, monto)?;
+            }
+        }
+
+        Ok(saldo)
     }
 }
 
@@ -843,6 +870,7 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                         tipo: d.tipo,
                         moneda: inicial.moneda().to_string(),
                         inicial: inicial.cantidad(),
+                        fecha_creacion: fecha_registro,
                         ingresos: Decimal::ZERO,
                         gastos: Decimal::ZERO,
                         ajustes: Decimal::ZERO,
@@ -1145,9 +1173,11 @@ pub fn ejecutar_crear_cuenta<R: RepositorioEventos>(
     })
 }
 
+// Devuelve el catálogo completo de monedas de fábrica y propias
 pub fn ejecutar_listar_monedas<R: RepositorioEventos>(
     repo: &R,
 ) -> Result<Vec<Moneda>, ErrorDominio> {
+    // Convierte fallos de lectura del repositorio en un error de dominio
     let eventos = match repo.obtener_eventos() {
         Ok(e) => e,
         Err(_) => {
@@ -1158,11 +1188,13 @@ pub fn ejecutar_listar_monedas<R: RepositorioEventos>(
         }
     };
 
+    // Reconstruye el estado del libro aplicando la secuencia histórica de eventos
     let libro = proyectar_libro(&eventos)?;
 
     Ok(libro.monedas)
 }
 
+// Devuelve el código de la moneda base activa del libro
 pub fn ejecutar_obtener_moneda_base<R: RepositorioEventos>(
     repo: &R,
 ) -> Result<String, ErrorDominio> {
@@ -1170,7 +1202,7 @@ pub fn ejecutar_obtener_moneda_base<R: RepositorioEventos>(
         .obtener_eventos()
         .map_err(|_| ErrorDominio::nuevo("general", "No se pudieron cargar los datos."))?;
 
-    // Vemos cuál es la moneda base
+    // Obtiene la moneda base tras aplicar los eventos registrados
     let resp = proyectar_libro(&lista)?;
 
     Ok(resp.moneda_base)
@@ -1493,7 +1525,8 @@ pub fn ejecutar_obtener_detalle_cuenta<R: RepositorioEventos>(
     })
 }
 
-#[derive(Debug, Serialize)]
+// Representa el subtotal acumulado en una moneda específica
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubtotalMoneda {
     pub codigo: String,
     pub simbolo: String,
@@ -1560,6 +1593,172 @@ pub fn ejecutar_listar_cuentas<R: RepositorioEventos>(
     })
 }
 
+// Calcula saldos por cuenta y subtotales por moneda hasta una fecha dada
+fn calcular_saldos_en_fecha(
+    libro: &ProyeccionLibro,
+    fecha_consulta: NaiveDate,
+) -> Result<ResumenCuentas, ErrorDominio> {
+    let mut cuentas = Vec::new();
+    let mut mapa_subtotales: BTreeMap<String, Decimal> = BTreeMap::new();
+
+    // Recorre las cuentas respectando el orden en que fueron creadas
+    for id in &libro.cuentas_orden {
+        if let Some(c) = libro.cuentas.get(id) {
+            if c.fecha_creacion > fecha_consulta.to_string() {
+                continue;
+            }
+            let saldo_fecha = c.saldo_en_fecha(fecha_consulta)?;
+            let moneda = buscar_moneda_en(&c.moneda, &libro.monedas)?;
+
+            // Acumula el subtotal exacto correspondiente a la moneda de la cuenta
+            let subtotal = mapa_subtotales
+                .entry(c.moneda.clone())
+                .or_insert(Decimal::ZERO);
+            *subtotal = sumar_exacto(*subtotal, saldo_fecha)?;
+
+            cuentas.push(Cuenta {
+                id: c.id.clone(),
+                nombre: c.nombre.clone(),
+                tipo: c.tipo.clone(),
+                moneda: c.moneda.clone(),
+                saldo: Monto {
+                    cantidad: saldo_fecha.round_dp(moneda.decimales),
+                    moneda: c.moneda.clone(),
+                },
+            });
+        }
+    }
+
+    let mut subtotales = Vec::new();
+
+    // Formatea cada subtotal respetando la escala decimal de su moneda
+    for (codigo, total_dec) in mapa_subtotales {
+        let info_moneda = buscar_moneda_en(&codigo, &libro.monedas)?;
+        subtotales.push(SubtotalMoneda {
+            codigo,
+            simbolo: info_moneda.simbolo,
+            subtotal: format!(
+                "{:.*}",
+                info_moneda.decimales as usize,
+                total_dec.round_dp(info_moneda.decimales)
+            ),
+        });
+    }
+
+    Ok(ResumenCuentas {
+        cuentas,
+        subtotales,
+    })
+}
+
+// Obtiene las cuentas y subtotales proyectados hasta una fecha de consulta
+pub fn ejecutar_listar_cuentas_en_fecha<R: RepositorioEventos>(
+    repo: &R,
+    fecha_consulta: NaiveDate,
+) -> Result<ResumenCuentas, ErrorDominio> {
+    let fecha_consulta =
+        validar_fecha_movimiento(&fecha_consulta.to_string(), Local::now().date_naive())?;
+    // Lee los eventos del repositorio local para reconstruir el libro
+    let eventos = match repo.obtener_eventos() {
+        Ok(e) => e,
+        Err(_) => {
+            return Err(ErrorDominio::nuevo(
+                "general",
+                "No se pudieron cargar las cuentas locales.",
+            ));
+        }
+    };
+
+    let libro = proyectar_libro(&eventos)?;
+    calcular_saldos_en_fecha(&libro, fecha_consulta)
+}
+
+/// Tasa original seleccionada y sentido de aplicación. Las tasas se reciben
+/// en orden de inserción del libro, con las anuladas ya excluidas.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TasaAplicable {
+    pub tasa: Option<TasaCambio>,
+    pub inversa: bool,
+}
+
+pub fn formatear_aviso_tasa_faltante(origen: &str, base: &str, fecha: NaiveDate) -> String {
+    format!(
+        "Falta una tasa de {} a {} con fecha igual o anterior al {}",
+        origen.trim().to_uppercase(),
+        base.trim().to_uppercase(),
+        fecha.format("%d/%m/%Y")
+    )
+}
+
+pub fn buscar_tasa_aplicable(
+    origen: &str,
+    moneda_base: &str,
+    fecha: NaiveDate,
+    tasas: &[TasaCambio],
+) -> Result<TasaAplicable, ErrorDominio> {
+    let origen = origen.trim().to_uppercase();
+    let base = moneda_base.trim().to_uppercase();
+    if origen == base {
+        return Ok(TasaAplicable {
+            tasa: None,
+            inversa: false,
+        });
+    }
+    // Prioridad a la directa vigente; la inversa solo se usa si no hay directa.
+    for inversa in [false, true] {
+        let (desde, hasta) = if inversa {
+            (&base, &origen)
+        } else {
+            (&origen, &base)
+        };
+        let mut mejor: Option<(NaiveDate, &TasaCambio)> = None;
+        for tasa in tasas
+            .iter()
+            .filter(|t| &t.origen == desde && &t.destino == hasta)
+        {
+            let dia =
+                NaiveDate::parse_from_str(&tasa.fecha, "%Y-%m-%d").map_err(|_| error_libro())?;
+            if tasa.valor <= Decimal::ZERO || tasa.valor.scale() > 8 {
+                return Err(error_libro());
+            }
+            if dia <= fecha && mejor.as_ref().is_none_or(|(anterior, _)| dia >= *anterior) {
+                mejor = Some((dia, tasa));
+            }
+        }
+        if let Some((_, tasa)) = mejor {
+            return Ok(TasaAplicable {
+                tasa: Some(tasa.clone()),
+                inversa,
+            });
+        }
+    }
+    Err(ErrorDominio::nuevo(
+        "tasa",
+        &formatear_aviso_tasa_faltante(&origen, &base, fecha),
+    ))
+}
+
+/// Convierte sin redondeo de presentación ni multiplicar por una inversa
+/// previamente aproximada: en sentido inverso divide directamente por la tasa.
+pub fn convertir_monto_a_base(
+    cantidad: Decimal,
+    origen: &str,
+    base: &str,
+    fecha: NaiveDate,
+    tasas: &[TasaCambio],
+) -> Result<(Decimal, Option<TasaCambio>, bool), ErrorDominio> {
+    let aplicable = buscar_tasa_aplicable(origen, base, fecha, tasas)?;
+    let convertido = match &aplicable.tasa {
+        None => Some(cantidad),
+        Some(t) if aplicable.inversa => cantidad.checked_div(t.valor),
+        Some(t) => cantidad.checked_mul(t.valor),
+    }
+    .ok_or_else(|| {
+        ErrorDominio::nuevo("valor", "La conversión excede el rango decimal permitido.")
+    })?;
+    Ok((convertido, aplicable.tasa, aplicable.inversa))
+}
+
 // ==========================================
 // ADAPTADOR EN MEMORIA Y PRUEBAS (Sección 3)
 // ==========================================
@@ -1588,6 +1787,7 @@ impl RepositorioEventos for RepositorioEnMemoria {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pruebas_tasas_monedas::{aviso_faltante, consultar_fixture_en_fecha};
 
     #[test]
     fn test_ejemplo_seccion_2_2_correccion_e_inv_04_inv_05() {
@@ -1845,7 +2045,210 @@ mod tests {
             ejecutar_corregir_movimiento(&mut repo, cta.id(), &id_gasto, "80.00", "dev-1").unwrap();
         assert_eq!(det_segunda.saldo_actual, "420.00");
     }
+
+    // Verifica la selección de tasa vigente, desempate diario, inversa y par faltante
+    #[test]
+    fn test_seleccion_tasa_vigente_inversa_y_par_faltante() {
+        let tasas = vec![
+            TasaCambio {
+                id: "t1".into(),
+                origen: "USD".into(),
+                destino: "VES".into(),
+                valor: Decimal::from_str("880.00").unwrap(),
+                fecha: "2026-10-19".into(),
+                fuente: "BCV".into(),
+            },
+            TasaCambio {
+                id: "t2".into(),
+                origen: "USD".into(),
+                destino: "VES".into(),
+                valor: Decimal::from_str("885.00").unwrap(),
+                fecha: "2026-10-20".into(),
+                fuente: "BCV mañana".into(),
+            },
+            TasaCambio {
+                id: "t3".into(),
+                origen: "USD".into(),
+                destino: "VES".into(),
+                valor: Decimal::from_str("887.00").unwrap(),
+                fecha: "2026-10-20".into(),
+                fuente: "BCV tarde".into(),
+            },
+            TasaCambio {
+                id: "t4".into(),
+                origen: "USDT".into(),
+                destino: "VES".into(),
+                valor: Decimal::from_str("1000.00").unwrap(),
+                fecha: "2026-10-21".into(),
+                fuente: "casa de cambio".into(),
+            },
+        ];
+
+        let fecha_consulta = NaiveDate::from_ymd_opt(2026, 10, 23).unwrap();
+
+        // Selecciona la última tasa directa registrada del día más reciente
+        let directa = buscar_tasa_aplicable("USD", "VES", fecha_consulta, &tasas).unwrap();
+        assert!(!directa.inversa);
+        assert_eq!(
+            directa.tasa.as_ref().unwrap().valor,
+            Decimal::from_str("887.00").unwrap()
+        );
+        assert_eq!(directa.tasa.as_ref().unwrap().fuente, "BCV tarde");
+
+        // Aplica la inversa exacta de VES a USD
+        let (en_usd, vista_inv, inversa) = convertir_monto_a_base(
+            Decimal::from_str("88700.00").unwrap(),
+            "VES",
+            "USD",
+            fecha_consulta,
+            &tasas,
+        )
+        .unwrap();
+        assert!(inversa);
+        assert_eq!(vista_inv.unwrap().id, "t3");
+        assert_eq!(en_usd.round_dp(2), Decimal::from_str("100.00").unwrap());
+
+        // Rechaza tasas cruzadas (USDT -> VES -> USD) e informa el par faltante
+        let err_faltante =
+            buscar_tasa_aplicable("USDT", "USD", fecha_consulta, &tasas).unwrap_err();
+        assert_eq!(err_faltante.campo, "tasa");
+        assert_eq!(
+            err_faltante.mensaje,
+            "Falta una tasa de USDT a USD con fecha igual o anterior al 23/10/2026"
+        );
+    }
+
+    // Verifica el ejemplo de la sección 2.3, aviso de tasa faltante y redondeo único
+    #[test]
+    fn test_consultar_patrimonio_seccion_2_3_y_redondeo_final() {
+        let mut repo = RepositorioEnMemoria::default();
+        let fecha = NaiveDate::from_ymd_opt(2026, 10, 23).unwrap();
+        // Crea las tres cuentas del ejemplo de la especificación
+        ejecutar_crear_cuenta(
+            &mut repo,
+            "Efectivo bolívares",
+            "efectivo",
+            "VES",
+            "88700.00",
+            "d1",
+        )
+        .unwrap();
+        ejecutar_crear_cuenta(
+            &mut repo,
+            "Banco en dólares",
+            "banco",
+            "USD",
+            "200.00",
+            "d1",
+        )
+        .unwrap();
+        ejecutar_crear_cuenta(
+            &mut repo,
+            "Billetera USDT",
+            "billetera digital",
+            "USDT",
+            "50.00",
+            "d1",
+        )
+        .unwrap();
+
+        // Registra tasas de USD->VES y USDT->VES con sus fechas y fuentes
+        let t_usd = TasaCambio {
+            id: "t-usd-ves".into(),
+            origen: "USD".into(),
+            destino: "VES".into(),
+            valor: Decimal::from_str("887.00").unwrap(),
+            fecha: "2026-10-20".into(),
+            fuente: "BCV".into(),
+        };
+        repo.guardar_evento(&EventoLibro {
+            id: "t-usd-ves".into(),
+            tipo: "TasaRegistrada".into(),
+            momento_registro: Utc::now(),
+            dispositivo_origen: "d1".into(),
+            datos_json: serde_json::to_string(&t_usd).unwrap(),
+        })
+        .unwrap();
+
+        let t_usdt = TasaCambio {
+            id: "t-usdt-ves".into(),
+            origen: "USDT".into(),
+            destino: "VES".into(),
+            valor: Decimal::from_str("1000.00").unwrap(),
+            fecha: "2026-10-21".into(),
+            fuente: "casa de cambio".into(),
+        };
+        repo.guardar_evento(&EventoLibro {
+            id: "t-usdt-ves".into(),
+            tipo: "TasaRegistrada".into(),
+            momento_registro: Utc::now(),
+            dispositivo_origen: "d1".into(),
+            datos_json: serde_json::to_string(&t_usdt).unwrap(),
+        })
+        .unwrap();
+
+        // Cambia la moneda base a VES y verifica el total de 316100.00 VES
+        repo.guardar_evento(&EventoLibro {
+            id: "base-ves".into(),
+            tipo: "MonedaBaseCambiada".into(),
+            momento_registro: Utc::now(),
+            dispositivo_origen: "d1".into(),
+            datos_json: serde_json::to_string(&DatosMonedaBaseCambiada {
+                codigo: "VES".into(),
+            })
+            .unwrap(),
+        })
+        .unwrap();
+
+        let pat_ves = consultar_fixture_en_fecha(&repo, fecha).unwrap();
+        assert_eq!(pat_ves.total.as_deref(), Some("316100.00"));
+        assert!(pat_ves.faltantes.is_empty());
+
+        // Cambia la base a USD; falta USDT->USD, omite total y muestra aviso
+        repo.guardar_evento(&EventoLibro {
+            id: "base-usd".into(),
+            tipo: "MonedaBaseCambiada".into(),
+            momento_registro: Utc::now(),
+            dispositivo_origen: "d1".into(),
+            datos_json: serde_json::to_string(&DatosMonedaBaseCambiada {
+                codigo: "USD".into(),
+            })
+            .unwrap(),
+        })
+        .unwrap();
+
+        let pat_usd_incompleto = consultar_fixture_en_fecha(&repo, fecha).unwrap();
+        assert!(pat_usd_incompleto.total.is_none());
+        assert_eq!(
+            aviso_faltante(&pat_usd_incompleto).as_deref(),
+            Some("Falta una tasa de USDT a USD con fecha igual o anterior al 23/10/2026")
+        );
+        assert_eq!(pat_usd_incompleto.subtotales.len(), 3);
+
+        // Registra 1 USDT = 1.00 USD y verifica que el total pase a 350.00 USD
+        let t_usdt_usd = TasaCambio {
+            id: "t-usdt-usd".into(),
+            origen: "USDT".into(),
+            destino: "USD".into(),
+            valor: Decimal::from_str("1.00").unwrap(),
+            fecha: "2026-10-23".into(),
+            fuente: "casa de cambio".into(),
+        };
+        repo.guardar_evento(&EventoLibro {
+            id: "t-usdt-usd".into(),
+            tipo: "TasaRegistrada".into(),
+            momento_registro: Utc::now(),
+            dispositivo_origen: "d1".into(),
+            datos_json: serde_json::to_string(&t_usdt_usd).unwrap(),
+        })
+        .unwrap();
+
+        let pat_usd_completo = consultar_fixture_en_fecha(&repo, fecha).unwrap();
+        assert_eq!(pat_usd_completo.total.as_deref(), Some("350.00"));
+        assert!(pat_usd_completo.faltantes.is_empty());
+    }
 }
+
 #[test]
 fn probar_crear_cuentas() {
     let mut repo = RepositorioEnMemoria::default();
@@ -2027,91 +2430,37 @@ pub fn ejecutar_consultar_patrimonio<R: RepositorioEventos>(
     fecha: Option<&str>,
     hoy: NaiveDate,
 ) -> Result<Patrimonio, ErrorDominio> {
-    let fecha = match fecha {
+    let dia = match fecha {
         Some(f) => validar_fecha_movimiento(f, hoy)?,
         None => hoy,
-    }
-    .to_string();
+    };
+    let fecha = dia.to_string();
     let eventos = repo.obtener_eventos().map_err(|_| error_libro())?;
-    // Valida el libro completo antes de derivar una vista histórica.
     let libro = proyectar_libro(&eventos)?;
     let base = buscar_moneda_en(&libro.moneda_base, &libro.monedas)?;
-    let tasas = ejecutar_listar_tasas(repo)?; // fecha descendente, último registro primero
+    let resumen = calcular_saldos_en_fecha(&libro, dia)?;
     let convertir = |cantidad: Decimal,
                      moneda: &str|
      -> Result<(Option<Decimal>, Option<TasaCambio>, bool), ErrorDominio> {
-        if moneda == base.codigo {
-            return Ok((Some(cantidad), None, false));
-        }
-        let vigente = |t: &&TasaCambio| t.fecha <= fecha;
-        // Una directa vigente tiene prioridad; la inversa se usa solo si no hay directa.
-        let directa = tasas
-            .iter()
-            .filter(vigente)
-            .find(|t| t.origen == moneda && t.destino == base.codigo);
-        let inversa = directa.is_none();
-        let tasa = directa.or_else(|| {
-            tasas
-                .iter()
-                .filter(vigente)
-                .find(|t| t.origen == base.codigo && t.destino == moneda)
-        });
-        match tasa {
-            Some(t) => {
-                // Dividir el saldo directamente evita redondear antes la inversa 1/valor.
-                let valor = if inversa {
-                    cantidad.checked_div(t.valor)
-                } else {
-                    cantidad.checked_mul(t.valor)
-                }
-                .ok_or_else(|| {
-                    ErrorDominio::nuevo("valor", "La conversión excede el rango decimal permitido.")
-                })?;
-                Ok((Some(valor), Some(t.clone()), inversa))
-            }
-            None => Ok((None, None, false)),
+        match convertir_monto_a_base(cantidad, moneda, &base.codigo, dia, &libro.tasas) {
+            Ok((valor, tasa, inversa)) => Ok((Some(valor), tasa, inversa)),
+            Err(e) if e.campo == "tasa" => Ok((None, None, false)),
+            Err(e) => Err(e),
         }
     };
     let mut filas = Vec::new();
-    let mut por_moneda = BTreeMap::new();
-    for id in &libro.cuentas_orden {
-        let creada = eventos
-            .iter()
-            .find(|e| {
-                e.tipo == "CuentaCreada"
-                    && serde_json::from_str::<DatosCuentaCreada>(&e.datos_json)
-                        .is_ok_and(|d| d.cuenta_id == *id)
-            })
-            .ok_or_else(error_libro)?;
-        if creada
-            .momento_registro
-            .with_timezone(&Local)
-            .date_naive()
-            .to_string()
-            > fecha
-        {
-            continue;
-        }
-        let cuenta = &libro.cuentas[id];
-        let saldo = cuenta
-            .movimientos
-            .iter()
-            .filter(|m| m.fecha <= fecha)
-            .try_fold(cuenta.inicial, |saldo, m| {
-                let monto = Decimal::from_str(&m.monto).map_err(|_| error_libro())?;
-                sumar_exacto(saldo, if m.tipo == "gasto" { -monto } else { monto })
-            })?;
-        let subtotal = por_moneda
-            .entry(cuenta.moneda.clone())
-            .or_insert(Decimal::ZERO);
-        *subtotal = sumar_exacto(*subtotal, saldo)?;
-        let moneda = buscar_moneda_en(&cuenta.moneda, &libro.monedas)?;
-        let (en_base, tasa, inversa) = convertir(saldo, &cuenta.moneda)?;
+    for cuenta in resumen.cuentas {
+        let moneda = buscar_moneda_en(cuenta.moneda(), &libro.monedas)?;
+        let (en_base, tasa, inversa) = convertir(cuenta.saldo().cantidad(), cuenta.moneda())?;
         filas.push(FilaPatrimonio {
-            cuenta_id: id.clone(),
-            nombre: cuenta.nombre.clone(),
-            moneda: cuenta.moneda.clone(),
-            saldo: format!("{:.*}", moneda.decimales as usize, saldo),
+            cuenta_id: cuenta.id().to_string(),
+            nombre: cuenta.nombre().to_string(),
+            moneda: cuenta.moneda().to_string(),
+            saldo: format!(
+                "{:.*}",
+                moneda.decimales as usize,
+                cuenta.saldo().cantidad()
+            ),
             tasa,
             inversa,
             en_base: en_base.map(|v| v.to_string()),
@@ -2120,21 +2469,21 @@ pub fn ejecutar_consultar_patrimonio<R: RepositorioEventos>(
     let mut subtotales = Vec::new();
     let mut faltantes = Vec::new();
     let mut total = Decimal::ZERO;
-    for (codigo, subtotal) in por_moneda {
-        let moneda = buscar_moneda_en(&codigo, &libro.monedas)?;
-        let (en_base, tasa, inversa) = convertir(subtotal, &codigo)?;
+    for subtotal in resumen.subtotales {
+        let cantidad = Decimal::from_str_exact(&subtotal.subtotal).map_err(|_| error_libro())?;
+        let (en_base, tasa, inversa) = convertir(cantidad, &subtotal.codigo)?;
         if let Some(valor) = en_base {
             total = sumar_exacto(total, valor)?;
         } else {
             faltantes.push(ParFaltante {
-                origen: codigo.clone(),
+                origen: subtotal.codigo.clone(),
                 destino: base.codigo.clone(),
             });
         }
         subtotales.push(SubtotalPatrimonio {
-            codigo,
-            simbolo: moneda.simbolo,
-            subtotal: format!("{:.*}", moneda.decimales as usize, subtotal),
+            codigo: subtotal.codigo,
+            simbolo: subtotal.simbolo,
+            subtotal: subtotal.subtotal,
             tasa,
             inversa,
             en_base: en_base.map(|v| v.to_string()),

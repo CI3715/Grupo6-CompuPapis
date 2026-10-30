@@ -10,16 +10,22 @@ mod pruebas_movimientos;
 mod pruebas_integracion;
 
 #[cfg(test)]
+mod pruebas_patrimonio;
+
+// Registra el módulo de pruebas de tasas y monedas para cargo test
+#[cfg(test)]
 mod pruebas_tasas_cambio;
 #[cfg(test)]
 mod pruebas_tasas_monedas;
 
+// Importa los tipos y casos de uso del dominio, incluyendo consulta de patrimonio
 use domain::{
     Categoria, Cuenta, DetalleCuenta, ErrorDominio, Moneda, ResumenCuentas, TasaCambio,
     ejecutar_corregir_movimiento, ejecutar_crear_categoria, ejecutar_crear_cuenta,
     ejecutar_listar_categorias, ejecutar_listar_cuentas, ejecutar_listar_monedas,
     ejecutar_obtener_detalle_cuenta, ejecutar_obtener_moneda_base, ejecutar_registrar_movimiento,
 };
+
 use sqlite_repo::RepositorioSqlite;
 use std::sync::Mutex;
 use tauri::{Manager, State};
@@ -32,17 +38,21 @@ pub struct AppState {
     pub repo: Mutex<RepositorioSqlite>,
 }
 
+// Obtiene la fecha y hora UTC del sistema
 struct RelojSistema;
 
 impl tasas_monedas::Reloj for RelojSistema {
+    // Retorna el instante actual en UTC consultando el reloj del sistema
     fn ahora(&self) -> chrono::DateTime<chrono::Utc> {
         chrono::Utc::now()
     }
 }
 
+// Adaptador real que genera identificadores únicos
 struct GeneradorUuid;
 
 impl tasas_monedas::GeneradorId for GeneradorUuid {
+    // Genera un identificador único
     fn nuevo_id(&self) -> String {
         let id = uuid::Uuid::new_v4();
         id.to_string()

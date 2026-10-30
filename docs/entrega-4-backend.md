@@ -104,6 +104,10 @@ un runtime IPC ni una ventana.
 
 ## Verificación
 
+La [integración posterior del backend](entrega-4-integracion-backend.md) registra
+la consolidación del motor, la corrección del signo de gastos y la suite actual
+de 51 pruebas Rust. Los resultados del 28/10 que siguen son históricos.
+
 La guía permanente contiene los comandos y el flujo manual:
 [pruebas/README.md](pruebas/README.md#entrega-4-monedas-y-tasas).
 Las pruebas automatizadas no sustituyen la demostración de escritorio sin

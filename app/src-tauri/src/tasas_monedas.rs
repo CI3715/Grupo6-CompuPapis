@@ -1,20 +1,25 @@
+// Importa tipos y consultas del dominio necesarios para gestionar monedas
 use crate::domain::{
     DatosMonedaBaseCambiada, DatosTasaEliminada, ErrorDominio, EventoLibro, Moneda,
     RepositorioEventos, TasaCambio, ejecutar_listar_monedas, ejecutar_listar_tasas, validar_tasa,
 };
 
+// Reexporta la validación de monedas para exponer una API accesible
 pub use crate::domain::validar_moneda;
 
 use chrono::{Local, Utc};
 
+// Puerto que abstrae la obtención de la fecha y hora actual
 pub trait Reloj {
     fn ahora(&self) -> chrono::DateTime<Utc>;
 }
 
+// Puerto que abstrae la generación de identificadores únicos de eventos
 pub trait GeneradorId {
     fn nuevo_id(&self) -> String;
 }
 
+// Valida una moneda propia
 #[allow(clippy::too_many_arguments)] // Preserva el contrato e inyección de reloj e identificadores.
 pub fn ejecutar_crear_moneda<R: RepositorioEventos>(
     repo: &mut R,
@@ -26,9 +31,11 @@ pub fn ejecutar_crear_moneda<R: RepositorioEventos>(
     reloj: &impl Reloj,
     ids: &impl GeneradorId,
 ) -> Result<Moneda, ErrorDominio> {
+    // Obtiene el catálogo actual y valida las reglas de la nueva moneda
     let lista = ejecutar_listar_monedas(repo)?;
     let nueva = validar_moneda(codigo, nombre, simbolo, decimales, &lista)?;
 
+    // Serializa los datos de la moneda a formato JSON para el evento
     let datos = match serde_json::to_string(&nueva) {
         Ok(d) => d,
         Err(_) => {
@@ -38,7 +45,8 @@ pub fn ejecutar_crear_moneda<R: RepositorioEventos>(
             ));
         }
     };
-    // Creamos el evento para asi guardar la moneda
+
+    // Construye el evento inmutable usando los puertos de ID y reloj
     let evento = EventoLibro {
         id: ids.nuevo_id(),
         tipo: "MonedaCreada".to_string(),
@@ -47,6 +55,7 @@ pub fn ejecutar_crear_moneda<R: RepositorioEventos>(
         datos_json: datos,
     };
 
+    // Verifica el evento en el repositorio local y maneja posibles errores
     if repo.guardar_evento(&evento).is_err() {
         return Err(ErrorDominio::nuevo(
             "general",
@@ -190,6 +199,7 @@ pub fn ejecutar_eliminar_tasa<R: RepositorioEventos>(
     Ok(())
 }
 
+// Verifica que la moneda exista y aplica el evento MonedaBaseCambiada
 pub fn ejecutar_cambiar_moneda_base<R: RepositorioEventos>(
     repo: &mut R,
     codigo: &str,
@@ -200,7 +210,7 @@ pub fn ejecutar_cambiar_moneda_base<R: RepositorioEventos>(
     let lista = ejecutar_listar_monedas(repo)?;
     let mut existe = false;
 
-    // Vemos si tenemos esa moneda
+    // Comprueba si el código solicitado pertenece al catálogo dinámico actual
     for m in lista {
         if m.codigo == codigo {
             existe = true;
@@ -208,6 +218,7 @@ pub fn ejecutar_cambiar_moneda_base<R: RepositorioEventos>(
         }
     }
 
+    // Rechaza el cambio indicando el campo exacto si la moneda no existe
     if !existe {
         return Err(ErrorDominio::nuevo("codigo", "Esa moneda no existe."));
     }
@@ -219,7 +230,7 @@ pub fn ejecutar_cambiar_moneda_base<R: RepositorioEventos>(
     let datos = serde_json::to_string(&dato)
         .map_err(|_| ErrorDominio::nuevo("general", "No se pudo guardar el cambio."))?;
 
-    // Guardamos el cambio de moneda
+    // Registra el evento MonedaBaseCambiada con su tiempo e ID
     let evento = EventoLibro {
         id: ids.nuevo_id(),
         tipo: "MonedaBaseCambiada".to_string(),
@@ -230,6 +241,7 @@ pub fn ejecutar_cambiar_moneda_base<R: RepositorioEventos>(
 
     let resp = repo.guardar_evento(&evento);
 
+    // Retorna error general si falla la escritura en almacenamiento
     if resp.is_err() {
         return Err(ErrorDominio::nuevo(
             "general",
