@@ -1656,6 +1656,8 @@ pub fn ejecutar_listar_cuentas_en_fecha<R: RepositorioEventos>(
     repo: &R,
     fecha_consulta: NaiveDate,
 ) -> Result<ResumenCuentas, ErrorDominio> {
+    let fecha_consulta =
+        validar_fecha_movimiento(&fecha_consulta.to_string(), Local::now().date_naive())?;
     // Lee los eventos del repositorio local para reconstruir el libro
     let eventos = match repo.obtener_eventos() {
         Ok(e) => e,

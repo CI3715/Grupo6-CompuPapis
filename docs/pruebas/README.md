@@ -65,7 +65,7 @@ Ejecutar los comandos uno por uno. Si alguno falla, guardar su salida completa y
 | Comando                           | Qué comprueba                                                                                                   | Resultado esperado                                    |
 | --------------------------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | `cargo check`                     | Que el paquete Rust y sus dependencias compilan para comprobación de tipos. No ejecuta pruebas.                 | Termina con `Finished` sin errores.                   |
-| `cargo test` de Tauri             | Validaciones, invariantes, saldos, compatibilidad, persistencia, migración y protección de moneda.              | 38 pruebas unitarias y 1 doctest aprobados.           |
+| `cargo test` de Tauri             | Validaciones, invariantes, saldos, compatibilidad, persistencia, migración y protección de moneda.              | 51 pruebas unitarias y 1 doctest aprobados.           |
 | `cargo test` del servidor         | El contrato del manejador de ping: estado, mensaje, versión y timestamp válido. No hace una petición HTTP real. | 1 prueba aprobada.                                    |
 | `cargo fmt ... -- --check`        | Formato Rust sin modificar archivos.                                                                            | Termina sin diferencias; normalmente no imprime nada. |
 | `cargo clippy ... -- -D warnings` | Análisis estático Rust; las advertencias se consideran errores.                                                 | Sin errores ni advertencias.                          |
@@ -74,7 +74,7 @@ Ejecutar los comandos uno por uno. Si alguno falla, guardar su salida completa y
 | `npm run format:check`            | Prettier del frontend y formato de ambos paquetes Rust. No modifica archivos.                                   | Todos los pasos aprobados.                            |
 | `npm run build`                   | Compilación de Next.js, comprobación de TypeScript y exportación estática.                                      | Build exitoso; archivos generados en `app/out/`.      |
 
-Los recuentos corresponden a los casos documentados; pueden aumentar cuando se agreguen pruebas. El doctest de moneda usa `compile_fail`: **pasa cuando el compilador rechaza modificar el campo privado**, que es el comportamiento esperado de INV-18. Los bloques que dicen `running 0 tests` para otros targets no significan que se omitieran las 38 pruebas de la biblioteca.
+Los recuentos corresponden a los casos documentados; pueden aumentar cuando se agreguen pruebas. El doctest de moneda usa `compile_fail`: **pasa cuando el compilador rechaza modificar el campo privado**, que es el comportamiento esperado de INV-18. Los bloques que dicen `running 0 tests` para otros targets no significan que se omitieran las 51 pruebas de la biblioteca.
 
 Node puede mostrar un aviso `MODULE_TYPELESS_PACKAGE_JSON` al inferir ESM en `money.ts`; no representa un fallo de las pruebas. Un error de descarga o una dependencia nativa de Tauri ausente bloquea la ejecución: no cuenta como prueba aprobada.
 
@@ -296,6 +296,7 @@ sin depender del nombre de una rama ni de directorios personales.
 ```bash
 cargo test --manifest-path app/src-tauri/Cargo.toml
 cargo test --manifest-path app/src-tauri/Cargo.toml pruebas_tasas_cambio
+cargo test --manifest-path app/src-tauri/Cargo.toml pruebas_patrimonio
 cargo clippy --manifest-path app/src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo fmt --manifest-path app/src-tauri/Cargo.toml -- --check
 cargo test --manifest-path server/Cargo.toml
@@ -309,7 +310,7 @@ npm run build
 npm run tauri -- build --debug --no-bundle
 ```
 
-Resultado esperado del backend de Entrega 4: 38 pruebas unitarias Rust y 1
+Resultado esperado del backend de Entrega 4: 51 pruebas unitarias Rust y 1
 doctest; el filtro `pruebas_tasas_cambio` ejecuta 8 de ellas. Servidor: 1 prueba
 del ping. Frontend: 4 pruebas de representación exacta. Todos deben pasar,
 sin tests ignorados. Las suites anteriores de E2/E3 siguen incluidas y
@@ -329,6 +330,31 @@ comprueban el saldo 1750, formatos históricos, inmutabilidad e idempotencia.
 Las pruebas SQLite crean archivos temporales únicos; nunca abren ni borran
 el libro personal de la aplicación. El repositorio existente sigue usando
 solo INSERT para operaciones financieras y triggers contra UPDATE/DELETE.
+
+### Regresiones de patrimonio y persistencia
+
+`app/src-tauri/src/pruebas_patrimonio.rs` añade seis pruebas al motor integrado:
+
+| Prueba                                                                           | Resultado esperado                                                                                                                                                                         |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `gastos_actuales_e_historicos_se_restan_una_vez_y_los_ajustes_respetan_su_fecha` | Inicial 100 − gasto 20 = 80; corregir a 5 deja 95 y a 0 deja 100. Consultas anteriores al ajuste conservan 80. Se comprueban payloads actuales e históricos y eventos originales intactos. |
+| `cuentas_no_existen_antes_de_su_creacion_y_consultas_futuras_se_rechazan`        | Sin cuentas antes de su creación; consulta y listado histórico coinciden. Entradas vacías, inválidas y futuras fallan sin escrituras.                                                      |
+| `inversa_divide_sin_aproximacion_previa_y_conversion_fuera_de_rango_es_error`    | 88700 ÷ 887 = 100 exactos, sin redondear para ocultar una aproximación. Una conversión fuera de rango o una tasa inválida produce error.                                                   |
+| `sqlite_conserva_gastos_corregidos_catalogo_y_base_no_predeterminada_al_reabrir` | Base VES, catálogo propio, gastos corregidos y consultas actuales/históricas se conservan al reabrir SQLite. Rechazos sin nuevos eventos.                                                  |
+| `esc01_sqlite_reapertura_anulacion_y_contrato_json_del_frontend`                 | 316100 VES → falta USDT/USD → 350 USD; al anular vuelve a faltar la tasa después de reabrir. Se comprueban nombres y tipos del DTO que consume el frontend.                                |
+| `cuentas_movimientos_y_patrimonio_admiten_todas_las_escalas_de_cero_a_ocho`      | El dominio admite cuentas, ingresos y patrimonio en cada escala 0–8 sin cambiar cantidades ni recurrir a flotantes.                                                                        |
+
+Las siete pruebas adicionales de selección de tasas, monedas y patrimonio
+integradas desde la rama de backend también siguen activas en `domain.rs` y
+`pruebas_tasas_monedas.rs`. El escenario ESC-01 de esa suite tiene `#[test]`:
+se ejecuta realmente. Sus fixtures fijan las fechas de creación de las cuentas
+para poder consultar octubre de forma independiente del día de ejecución.
+
+Antes de defender, comprobar además en la UI una cuenta USD con inicial 100,
+gasto 20 y base USD: tanto Mis cuentas como Patrimonio deben mostrar 80.
+Corregir el gasto a 5 debe mostrar 95; una consulta de fecha anterior al ajuste
+debe mantener 80 si la cuenta ya existía entonces. La prueba automatizada
+controla esas fechas mediante fixtures; no hace falta cambiar el reloj del sistema.
 
 ### Demostración manual pendiente
 

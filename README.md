@@ -106,13 +106,17 @@ Desde la raíz del repositorio, ejecutar toda la suite Rust o filtrar los casos 
 ```bash
 cargo test --manifest-path app/src-tauri/Cargo.toml
 cargo test --manifest-path app/src-tauri/Cargo.toml pruebas_tasas_cambio
+cargo test --manifest-path app/src-tauri/Cargo.toml pruebas_patrimonio
 ```
 
-Resultado esperado: **38 pruebas unitarias y 1 doctest** en la suite completa;
-el filtro ejecuta **8 pruebas** de validaciones, historial, anulación,
+Resultado esperado: **51 pruebas unitarias y 1 doctest** en la suite completa;
+el filtro `pruebas_tasas_cambio` ejecuta **8 pruebas** de validaciones, historial, anulación,
 precisión, consolidación y reapertura de SQLite. La suite completa también
 incluye cuentas y movimientos con monedas propias y las regresiones de las
-Entregas 2 y 3.
+Entregas 2 y 3. El filtro `pruebas_patrimonio` ejecuta **6 regresiones** de
+gastos, ajustes históricos, precisión, contrato JSON y persistencia SQLite.
+La [verificación de integración del backend](docs/entrega-4-integracion-backend.md)
+detalla la resolución de conflictos y las comprobaciones actuales.
 
 ## Formato
 
