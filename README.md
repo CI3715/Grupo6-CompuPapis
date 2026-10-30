@@ -4,7 +4,7 @@
 
 Proyecto del laboratorio de Ingeniería de Software I (CI-3715) de la Universidad Simón Bolívar, desarrollado por **CompuPapis**.
 
-Cuentas Claras permite crear cuentas personales multimoneda y registrar ingresos, gastos y correcciones en el dispositivo, sin registro de usuario ni conexión a internet. Las funcionalidades sociales y de gastos compartidos corresponden a etapas futuras.
+Cuentas Claras permite crear cuentas personales multimoneda, registrar ingresos, gastos y correcciones, gestionar tasas de cambio y consultar el patrimonio consolidado en el dispositivo, sin registro de usuario ni conexión a internet. Las funcionalidades sociales y de gastos compartidos corresponden a etapas futuras.
 
 ## Arquitectura y entregas
 
@@ -12,7 +12,7 @@ Cuentas Claras permite crear cuentas personales multimoneda y registrar ingresos
 - **Entrega 1:** servidor Rust + Axum con `GET /ping`, consultado mediante `Next.js → invoke('ping_servidor') → Tauri/Rust → Axum` desde el botón de conexión.
 - **Entrega 2:** inicio en Mis cuentas sin login; creación y validación de efectivo, banco y billetera digital, catálogo VES/USD/EUR/USDT, subtotales por moneda y persistencia local.
 - **Entrega 3:** ingresos/gastos, categorías, correcciones mediante ajustes inmutables, composición del saldo e historial. El ejemplo obligatorio produce **1750 USD** conservando el gasto original.
-- **Entrega 4 (tasas y monedas):** agregamos monedas propias, el registro de tasas de cambio, ña opcion de ver las tasas anteriores y eliminarls sin perderlas del historial. Tambien podemos cambiar la moneda base, que al principio es USD, y guardar todo en SQLite.
+- **Entrega 4 (monedas, tasas y patrimonio):** monedas propias, registro, anulación e historial activo de tasas por par, validaciones de fecha/fuente/valor y moneda base predeterminada USD. La consulta de patrimonio usa saldos y tasas a la fecha elegida, aplica tasas directas o inversas sin cruces y redondea el total una sola vez. Si falta una tasa, muestra los subtotales y el par pendiente sin devolver un total consolidado. Los eventos se conservan en SQLite local.
 - **Servidor futuro:** PostgreSQL + Neon para funcionalidades sociales. Las cuentas, movimientos y saldos personales permanecen en SQLite local y no se envían al servidor.
 
 El flujo financiero es `Next.js → invoke() → Tauri/Rust → dominio → SQLite`. Axum no participa en él. Las decisiones arquitectónicas están en [docs/adr](docs/adr/README.md).
@@ -91,23 +91,32 @@ En la aplicación, abrir **Conexión con el servidor · Entrega 1 → Probar con
 
 ## Pruebas y demostración
 
-La [guía de pruebas](docs/pruebas/README.md) reúne los comandos, qué comprueba cada caso, resultados esperados, ubicación de SQLite y procedimientos manuales de ambas entregas. Incluye el ejemplo de **1750 USD**, persistencia, categorías, advertencia de saldo negativo y prueba offline con el ejecutable.
+La [guía de pruebas](docs/pruebas/README.md) reúne los comandos, qué comprueba cada caso, resultados esperados, ubicación de SQLite y procedimientos manuales de las Entregas 2, 3 y 4. Incluye los ejemplos de **1750 USD** y **316.100 VES → tasa faltante → 350 USD**, persistencia, categorías, advertencia de saldo negativo y prueba offline con el ejecutable.
 
 Las pruebas de dominio usan un repositorio en memoria. Las de persistencia y migración usan bases SQLite temporales; no reemplazan la base personal. Pasar las pruebas automáticas o compilar el ejecutable no certifica las interacciones de la ventana: **la demostración manual sigue pendiente hasta ejecutarse y registrarse**.
 
 El archivo personal `cuentas_claras.sqlite` reside en `app_data_dir` de Tauri. La actualización desde el identificador antiguo conserva la base anterior y no sobrescribe un destino existente; ver la [guía de SQLite](docs/pruebas/README.md#6-sqlite-y-actualización-de-datos-existentes) y el [ADR 007](docs/adr/007-libro-local-compatible.md). No se deben borrar ni editar eventos para preparar las pruebas.
 
-El [informe de verificación](docs/entregas-2-3-verificacion.md) conserva el historial de la integración y los resultados registrados en ese momento.
+El [informe de verificación de las Entregas 2 y 3](docs/entregas-2-3-verificacion.md) conserva el historial de la integración y los resultados registrados en ese momento. El [informe del backend de Entrega 4](docs/entrega-4-backend.md) documenta requisitos, contratos Tauri, persistencia, consolidación, precisión decimal y verificaciones de tasas y patrimonio.
 
 ### Pruebas del backend
 
-Para corroborar el código ejecutamos `cargo test` desde la carpeta `app/src-tauri`:
+Desde la raíz del repositorio, ejecutar toda la suite Rust o filtrar los casos de tasas de cambio y patrimonio:
 
 ```bash
-cd app/src-tauri
-cargo test
+cargo test --manifest-path app/src-tauri/Cargo.toml
+cargo test --manifest-path app/src-tauri/Cargo.toml pruebas_tasas_cambio
+cargo test --manifest-path app/src-tauri/Cargo.toml pruebas_patrimonio
 ```
-Ejecutamos cargo test y las 30 pruebas salieron bien, ademas de la documentacion. Ahi tambien estan los 2 que hicimos para probar las monedas propias en cuentas y movimientos.
+
+Resultado esperado: **51 pruebas unitarias y 1 doctest** en la suite completa;
+el filtro `pruebas_tasas_cambio` ejecuta **8 pruebas** de validaciones, historial, anulación,
+precisión, consolidación y reapertura de SQLite. La suite completa también
+incluye cuentas y movimientos con monedas propias y las regresiones de las
+Entregas 2 y 3. El filtro `pruebas_patrimonio` ejecuta **6 regresiones** de
+gastos, ajustes históricos, precisión, contrato JSON y persistencia SQLite.
+La [verificación de integración del backend](docs/entrega-4-integracion-backend.md)
+detalla la resolución de conflictos y las comprobaciones actuales.
 
 ## Formato
 
