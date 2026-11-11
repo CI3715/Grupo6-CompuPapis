@@ -1,3 +1,4 @@
+mod autenticacion;
 use crate::domain::RegistrarMovimiento;
 pub mod domain;
 pub mod sqlite_repo;
@@ -427,6 +428,7 @@ fn corregir_movimiento(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(autenticacion::AuthState::default())
         .manage(PingState {
             http_client: reqwest::Client::new(),
         })
@@ -455,6 +457,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ping_servidor,
+            autenticacion::registrar_usuario,
+            autenticacion::iniciar_sesion,
+            autenticacion::obtener_perfil,
+            autenticacion::cerrar_sesion,
             fecha_local_actual,
             evaluar_movimiento,
             listar_monedas,

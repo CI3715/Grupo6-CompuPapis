@@ -69,23 +69,43 @@ Para generar un build release e instaladores, ejecutar `npm run tauri build` des
 
 ### Servidor opcional: conexión y autenticación
 
-El servidor de autenticación usa PostgreSQL (ver [ADR 003](docs/adr/003-base-datos-postgresql-neon.md)). Crear una base de datos y configurar las variables en la terminal, **desde la raíz**:
+El servidor usa PostgreSQL. Para desarrollo local, inicia Docker y ejecuta desde la raíz:
 
 ```bash
-export DATABASE_URL='postgres://usuario:clave@localhost/cuentas_claras'
-export JWT_SECRET='un-secreto-aleatorio-de-al-menos-32-bytes'
+docker compose -f server/compose.yaml up -d
+test -f server/.env || cp server/.env.example server/.env
+```
+
+Genera un secreto privado de al menos 32 bytes con `python3 -c 'import secrets; print(secrets.token_hex(32))'` y colócalo en `JWT_SECRET` dentro de `server/.env`. Las credenciales incluidas son exclusivamente para el contenedor local. Carga el archivo en la terminal e inicia el servidor:
+
+```bash
+set -a
+source server/.env
+set +a
 cargo run --manifest-path server/Cargo.toml
 ```
+
+En **Fish**, desde la raíz, carga el mismo archivo y ejecuta el servidor así:
+
+```fish
+bash -c 'set -a; source server/.env; set +a; exec cargo run --manifest-path server/Cargo.toml'
+```
+
+
+La base de pruebas `cuentas_claras_pruebas` se crea junto con la base principal. Los datos persisten en un volumen Docker. El archivo `.env` no se sube a Git. Para un despliegue futuro se puede configurar PostgreSQL administrado (ver [ADR 003](docs/adr/003-base-datos-postgresql-neon.md)).
 
 El servidor crea la tabla de usuarios y su índice único al iniciar; la conexión debe tener permisos para ello. Usar un secreto aleatorio real, no el ejemplo. Para Neon, usar la URL de conexión segura proporcionada por el proveedor. En un despliegue se requiere HTTPS mediante un proxy TLS; el servidor escucha solo en `127.0.0.1:8000`.
 
 La API de Entrega 5 está documentada en [openapi.yaml](openapi.yaml). Ejecutar sus pruebas con `cargo test --manifest-path server/Cargo.toml`. La prueba de integración requiere una base PostgreSQL dedicada (crea la tabla si falta e inserta y elimina un usuario de prueba):
 
 ```bash
-E5_TEST_DATABASE_URL='postgres://usuario:clave@localhost/cuentas_claras_pruebas' cargo test --manifest-path server/Cargo.toml -- --ignored
+cargo test --manifest-path server/Cargo.toml -- --ignored
 ```
 
-La integración de sesión en Tauri y las pantallas aún están pendientes; el libro personal sigue siendo local.
+Tauri expone `registrar_usuario`, `iniciar_sesion`, `obtener_perfil` y `cerrar_sesion`; el equipo de interfaz puede usar los adaptadores tipados de `app/lib/autenticacion.ts`. La sesión se conserva solo en memoria hasta cerrar la aplicación o sesión; las pantallas de autenticación siguen pendientes. El libro personal sigue siendo local.
+
+Desde el front de Tauri, importa las funciones desde `app/lib/autenticacion.ts`. `registrarUsuario({ nombre_usuario, nombre_visible, correo, contrasena })` devuelve el usuario; `iniciarSesion({ correo, contrasena })` devuelve usuario y vencimiento; `obtenerPerfil()` consulta la sesión activa y `cerrarSesion()` la descarta. Los errores del servidor se rechazan con `{ campo, mensaje }`. El token queda en memoria de Tauri y se pierde al cerrar la aplicación, por lo que hay que iniciar sesión nuevamente al abrirla. Estas funciones requieren la aplicación Tauri y el servidor iniciado en `127.0.0.1:8000`.
+
 
 Comprobar desde cualquier terminal:
 
