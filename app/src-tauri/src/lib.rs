@@ -1,5 +1,6 @@
 mod autenticacion;
 use crate::domain::RegistrarMovimiento;
+pub mod auth_client;
 pub mod domain;
 pub mod sqlite_repo;
 pub mod tasas_monedas;
@@ -27,7 +28,12 @@ use domain::{
     ejecutar_obtener_detalle_cuenta, ejecutar_obtener_moneda_base, ejecutar_registrar_movimiento,
 };
 
+use auth_client::{
+    borrar_token_seguro, iniciar_sesion_en_servidor, obtener_perfil_actual, registrar_en_servidor,
+    EstadoSesionApp, UsuarioPublico,
+};
 use sqlite_repo::RepositorioSqlite;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{Manager, State};
 
@@ -37,6 +43,8 @@ struct PingState {
 
 pub struct AppState {
     pub repo: Mutex<RepositorioSqlite>,
+    pub server_url: String,
+    pub ruta_token_fallback: PathBuf,
 }
 
 // Obtiene la fecha y hora UTC del sistema
@@ -243,7 +251,6 @@ fn historial_tasas(
         }
     };
 
-    // Buscamos las tasas de esas 2 monedas
     let resp = tasas_monedas::ejecutar_historial_tasas(&*repo, &origen, &destino)?;
 
     Ok(resp)
@@ -261,7 +268,6 @@ fn eliminar_tasa(state: State<'_, AppState>, tasa_id: String) -> Result<(), Erro
         }
     };
 
-    // Eliminamos la tasa
     tasas_monedas::ejecutar_eliminar_tasa(
         &mut *repo,
         &tasa_id,
@@ -278,7 +284,6 @@ fn obtener_moneda_base(state: State<'_, AppState>) -> Result<String, ErrorDomini
         .lock()
         .map_err(|_| ErrorDominio::nuevo("general", "No se pudieron cargar los datos."))?;
 
-    // Vemos cuál es la moneda base
     let resp = ejecutar_obtener_moneda_base(&*repo)?;
 
     Ok(resp)
@@ -300,7 +305,6 @@ fn cambiar_moneda_base(state: State<'_, AppState>, codigo: String) -> Result<Str
         }
     }
 
-    // Cambiamos la moneda base
     let resp = tasas_monedas::ejecutar_cambiar_moneda_base(
         &mut *repo,
         &codigo,
@@ -425,6 +429,49 @@ fn corregir_movimiento(
     )
 }
 
+// --- COMANDOS DE AUTENTICACIÓN (ENTREGA 5) ---
+#[tauri::command]
+fn registrar_usuario(
+    state: State<'_, AppState>,
+    nombre_usuario: String,
+    nombre_visible: String,
+    correo: String,
+    contrasena: String,
+) -> Result<UsuarioPublico, ErrorDominio> {
+    registrar_en_servidor(
+        &state.server_url,
+        &nombre_usuario,
+        &nombre_visible,
+        &correo,
+        &contrasena,
+    )
+}
+
+#[tauri::command]
+fn iniciar_sesion(
+    state: State<'_, AppState>,
+    correo: String,
+    contrasena: String,
+) -> Result<UsuarioPublico, ErrorDominio> {
+    iniciar_sesion_en_servidor(
+        &state.server_url,
+        &state.ruta_token_fallback,
+        &correo,
+        &contrasena,
+    )
+}
+
+#[tauri::command]
+fn obtener_usuario_actual(state: State<'_, AppState>) -> Result<EstadoSesionApp, ErrorDominio> {
+    obtener_perfil_actual(&state.server_url, &state.ruta_token_fallback)
+}
+
+#[tauri::command]
+fn cerrar_sesion(state: State<'_, AppState>) -> Result<(), ErrorDominio> {
+    borrar_token_seguro(&state.ruta_token_fallback);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -438,6 +485,9 @@ pub fn run() {
                 .app_data_dir()
                 .expect("No se pudo obtener app_data_dir");
             let db_path = app_dir.join("cuentas_claras.sqlite");
+            let ruta_token_fallback = app_dir.join(".sesion_token");
+            let server_url = std::env::var("CUENTAS_CLARAS_API_URL")
+                .unwrap_or_else(|_| "http://localhost:8080".to_string());
             println!("===> RUTA DE SQLITE: {:?}", db_path);
 
             if let Ok(directorio_datos) = app.path().data_dir() {
@@ -452,6 +502,8 @@ pub fn run() {
 
             app.manage(AppState {
                 repo: Mutex::new(repo),
+                server_url,
+                ruta_token_fallback,
             });
             Ok(())
         })
@@ -478,7 +530,11 @@ pub fn run() {
             listar_categorias,
             crear_categoria,
             registrar_movimiento,
-            corregir_movimiento
+            corregir_movimiento,
+            registrar_usuario,
+            iniciar_sesion,
+            obtener_usuario_actual,
+            cerrar_sesion
         ])
         .run(tauri::generate_context!())
         .expect("Error al ejecutar la aplicación Tauri");
