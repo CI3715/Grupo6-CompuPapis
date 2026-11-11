@@ -13,7 +13,7 @@ Cuentas Claras permite crear cuentas personales multimoneda, registrar ingresos,
 - **Entrega 2:** inicio en Mis cuentas sin login; creación y validación de efectivo, banco y billetera digital, catálogo VES/USD/EUR/USDT, subtotales por moneda y persistencia local.
 - **Entrega 3:** ingresos/gastos, categorías, correcciones mediante ajustes inmutables, composición del saldo e historial. El ejemplo obligatorio produce **1750 USD** conservando el gasto original.
 - **Entrega 4 (monedas, tasas y patrimonio):** monedas propias, registro, anulación e historial activo de tasas por par, validaciones de fecha/fuente/valor y moneda base predeterminada USD. La consulta de patrimonio usa saldos y tasas a la fecha elegida, aplica tasas directas o inversas sin cruces y redondea el total una sola vez. Si falta una tasa, muestra los subtotales y el par pendiente sin devolver un total consolidado. Los eventos se conservan en SQLite local.
-- **Servidor futuro:** PostgreSQL + Neon para funcionalidades sociales. Las cuentas, movimientos y saldos personales permanecen en SQLite local y no se envían al servidor.
+- **Servidor:** PostgreSQL + Neon para funcionalidades sociales. Las cuentas, movimientos y saldos personales permanecen en SQLite local y no se envían al servidor.
 
 El flujo financiero es `Next.js → invoke() → Tauri/Rust → dominio → SQLite`. Axum no participa en él. Las decisiones arquitectónicas están en [docs/adr](docs/adr/README.md).
 
@@ -67,13 +67,25 @@ En otros sistemas, utilizar la ruta que imprime Tauri al terminar. El ejecutable
 
 Para generar un build release e instaladores, ejecutar `npm run tauri build` desde `app/`. La generación de instaladores se verifica por separado del ejecutable debug.
 
-### Servidor opcional de Entrega 1
+### Servidor opcional: conexión y autenticación
 
-En otra terminal, **desde la raíz**:
+El servidor de autenticación usa PostgreSQL (ver [ADR 003](docs/adr/003-base-datos-postgresql-neon.md)). Crear una base de datos y configurar las variables en la terminal, **desde la raíz**:
 
 ```bash
+export DATABASE_URL='postgres://usuario:clave@localhost/cuentas_claras'
+export JWT_SECRET='un-secreto-aleatorio-de-al-menos-32-bytes'
 cargo run --manifest-path server/Cargo.toml
 ```
+
+El servidor crea la tabla de usuarios y su índice único al iniciar; la conexión debe tener permisos para ello. Usar un secreto aleatorio real, no el ejemplo. Para Neon, usar la URL de conexión segura proporcionada por el proveedor. En un despliegue se requiere HTTPS mediante un proxy TLS; el servidor escucha solo en `127.0.0.1:8000`.
+
+La API de Entrega 5 está documentada en [openapi.yaml](openapi.yaml). Ejecutar sus pruebas con `cargo test --manifest-path server/Cargo.toml`. La prueba de integración requiere una base PostgreSQL dedicada (crea la tabla si falta e inserta y elimina un usuario de prueba):
+
+```bash
+E5_TEST_DATABASE_URL='postgres://usuario:clave@localhost/cuentas_claras_pruebas' cargo test --manifest-path server/Cargo.toml -- --ignored
+```
+
+La integración de sesión en Tauri y las pantallas aún están pendientes; el libro personal sigue siendo local.
 
 Comprobar desde cualquier terminal:
 
