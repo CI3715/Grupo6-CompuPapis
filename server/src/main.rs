@@ -1,5 +1,8 @@
+mod auth;
+
 use axum::{Json, Router, routing::get};
 use serde::Serialize;
+use sqlx::postgres::PgPoolOptions;
 
 #[derive(Serialize)]
 struct PingResponse {
@@ -19,16 +22,23 @@ async fn ping() -> Json<PingResponse> {
 }
 
 #[tokio::main]
-async fn main() {
-    let app = Router::new().route("/ping", get(ping));
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:8000")
-        .await
-        .unwrap();
-
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let database_url = std::env::var("DATABASE_URL").map_err(|_| "Falta DATABASE_URL")?;
+    let secret = std::env::var("JWT_SECRET").map_err(|_| "Falta JWT_SECRET")?;
+    if secret.len() < 32 {
+        return Err("JWT_SECRET debe tener al menos 32 bytes".into());
+    }
+    let pool = PgPoolOptions::new().connect(&database_url).await?;
+    sqlx::raw_sql(include_str!("../migrations/001_usuarios.sql"))
+        .execute(&pool)
+        .await?;
+    let app = Router::new()
+        .route("/ping", get(ping))
+        .merge(auth::routes(auth::State::new(pool, secret)));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:8000").await?;
     println!("Servidor activo en http://127.0.0.1:8000");
-
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app).await?;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -1,0 +1,83 @@
+openapi: 3.0.3
+info:
+  title: Cuentas Claras API
+  version: 0.2.0
+servers:
+  - url: http://127.0.0.1:8000
+paths:
+  /ping:
+    get:
+      responses:
+        '200':
+          description: Estado del servidor
+  /usuarios:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nombre_usuario, nombre_visible, correo, contrasena]
+              properties:
+                nombre_usuario: { type: string, minLength: 3, maxLength: 30, pattern: '^[a-z0-9._]+$' }
+                nombre_visible: { type: string }
+                correo: { type: string, format: email }
+                contrasena: { type: string, minLength: 10, format: password }
+      responses:
+        '201':
+          description: Usuario creado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Usuario' }
+        '400': { description: Datos inválidos }
+        '409': { description: Nombre de usuario o correo duplicado }
+  /sesiones:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [correo, contrasena]
+              properties:
+                correo: { type: string, format: email }
+                contrasena: { type: string, format: password }
+      responses:
+        '200':
+          description: Sesión válida por 60 minutos
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, vencimiento, usuario]
+                properties:
+                  token: { type: string }
+                  vencimiento: { type: string, format: date-time }
+                  usuario: { $ref: '#/components/schemas/Usuario' }
+        '401': { description: Credenciales incorrectas }
+  /usuarios/yo:
+    get:
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Perfil propio
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Usuario' }
+        '401': { description: Token ausente, inválido o vencido }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Usuario:
+      type: object
+      required: [id, nombre_usuario, nombre_visible, correo, fecha_alta]
+      properties:
+        id: { type: string, format: uuid }
+        nombre_usuario: { type: string }
+        nombre_visible: { type: string }
+        correo: { type: string, format: email }
+        fecha_alta: { type: string, format: date-time }
