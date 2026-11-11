@@ -13,6 +13,7 @@ argon2 = "0.5"
 jsonwebtoken = "9"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+dotenvy = "0.15.7"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
