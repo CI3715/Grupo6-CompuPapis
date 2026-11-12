@@ -1,4 +1,5 @@
 mod auth;
+pub mod usuarios_db;
 
 use axum::{Json, Router, routing::get};
 use serde::Serialize;
