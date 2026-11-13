@@ -8,7 +8,7 @@ paths:
   /ping:
     get:
       responses:
-        '200':
+        "200":
           description: Estado del servidor
   /usuarios:
     get:
@@ -16,9 +16,12 @@ paths:
       parameters:
         - { name: usuario, in: query, required: true, schema: { type: string } }
       responses:
-        '200': { description: Coincidencia exacta con nombre de usuario y nombre visible }
-        '401': { description: Sesión inválida }
-        '404': { description: Usuario no encontrado }
+        "200":
+          {
+            description: Coincidencia exacta con nombre de usuario y nombre visible,
+          }
+        "401": { description: Sesión inválida }
+        "404": { description: Usuario no encontrado }
     post:
       requestBody:
         required: true
@@ -26,20 +29,26 @@ paths:
           application/json:
             schema:
               type: object
-              required: [nombre_usuario, nombre_visible, correo, contrasena]
+              required: [nombre_usuario, nombre_visible, correo, password]
               properties:
-                nombre_usuario: { type: string, minLength: 3, maxLength: 30, pattern: '^[a-z0-9._]+$' }
+                nombre_usuario:
+                  {
+                    type: string,
+                    minLength: 3,
+                    maxLength: 30,
+                    pattern: "^[a-z0-9._]+$",
+                  }
                 nombre_visible: { type: string }
                 correo: { type: string, format: email }
-                contrasena: { type: string, minLength: 10, format: password }
+                password: { type: string, minLength: 10, format: password }
       responses:
-        '201':
+        "201":
           description: Usuario creado
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Usuario' }
-        '400': { description: Datos inválidos }
-        '409': { description: Nombre de usuario o correo duplicado }
+              schema: { $ref: "#/components/schemas/Usuario" }
+        "400": { description: Datos inválidos }
+        "409": { description: Nombre de usuario o correo duplicado }
   /sesiones:
     post:
       requestBody:
@@ -48,12 +57,12 @@ paths:
           application/json:
             schema:
               type: object
-              required: [correo, contrasena]
+              required: [correo, password]
               properties:
                 correo: { type: string, format: email }
-                contrasena: { type: string, format: password }
+                password: { type: string, format: password }
       responses:
-        '200':
+        "200":
           description: Sesión válida por 60 minutos
           content:
             application/json:
@@ -63,25 +72,26 @@ paths:
                 properties:
                   token: { type: string }
                   vencimiento: { type: string, format: date-time }
-                  usuario: { $ref: '#/components/schemas/Usuario' }
-        '401': { description: Credenciales incorrectas }
+                  usuario: { $ref: "#/components/schemas/Usuario" }
+        "401": { description: Credenciales incorrectas }
   /usuarios/yo:
     get:
       security:
         - bearerAuth: []
       responses:
-        '200':
+        "200":
           description: Perfil propio
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Usuario' }
-        '401': { description: Token ausente, inválido o vencido }
+              schema: { $ref: "#/components/schemas/Usuario" }
+        "401": { description: Token ausente, inválido o vencido }
   /amistades:
     get:
       security: [{ bearerAuth: [] }]
       responses:
-        '200': { description: Amigos y solicitudes pendientes enviadas y recibidas }
-        '401': { description: Sesión inválida }
+        "200":
+          { description: Amigos y solicitudes pendientes enviadas y recibidas }
+        "401": { description: Sesión inválida }
     post:
       security: [{ bearerAuth: [] }]
       requestBody:
@@ -94,38 +104,48 @@ paths:
               properties:
                 nombre_usuario: { type: string }
       responses:
-        '201': { description: Solicitud creada }
-        '400': { description: No puede invitarse a sí mismo }
-        '401': { description: Sesión inválida }
-        '404': { description: Usuario no encontrado }
-        '409': { description: Solicitud o amistad existente }
+        "201": { description: Solicitud creada }
+        "400": { description: No puede invitarse a sí mismo }
+        "401": { description: Sesión inválida }
+        "404": { description: Usuario no encontrado }
+        "409": { description: Solicitud o amistad existente }
   /amistades/{id}:
     parameters:
-      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - {
+          name: id,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
     delete:
       security: [{ bearerAuth: [] }]
       responses:
-        '204': { description: Amistad eliminada }
-        '401': { description: Sesión inválida }
-        '404': { description: Amistad no encontrada }
+        "204": { description: Amistad eliminada }
+        "401": { description: Sesión inválida }
+        "404": { description: Amistad no encontrada }
   /amistades/{id}/respuesta:
     parameters:
-      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - {
+          name: id,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
     post:
       security: [{ bearerAuth: [] }]
-      requestBody: { $ref: '#/components/requestBodies/RespuestaInvitacion' }
+      requestBody: { $ref: "#/components/requestBodies/RespuestaInvitacion" }
       responses:
-        '200': { description: Solicitud respondida }
-        '401': { description: Sesión inválida }
-        '403': { description: No es el destinatario }
-        '404': { description: Solicitud no encontrada }
-        '409': { description: Solicitud ya respondida }
+        "200": { description: Solicitud respondida }
+        "401": { description: Sesión inválida }
+        "403": { description: No es el destinatario }
+        "404": { description: Solicitud no encontrada }
+        "409": { description: Solicitud ya respondida }
   /grupos:
     get:
       security: [{ bearerAuth: [] }]
       responses:
-        '200': { description: Grupos e invitaciones pendientes }
-        '401': { description: Sesión inválida }
+        "200": { description: Grupos e invitaciones pendientes }
+        "401": { description: Sesión inválida }
     post:
       security: [{ bearerAuth: [] }]
       requestBody:
@@ -138,23 +158,87 @@ paths:
               properties:
                 nombre: { type: string }
                 descripcion: { type: string, nullable: true }
-                moneda: { type: string, pattern: '^[A-Z]{3}$' }
+                actividad: { type: string, nullable: true }
+                moneda: { type: string, pattern: "^[A-Z]{3}$" }
       responses:
-        '201': { description: Grupo creado }
-        '400': { description: Datos inválidos }
-        '401': { description: Sesión inválida }
+        "201": { description: Grupo creado }
+        "400": { description: Datos inválidos }
+        "401": { description: Sesión inválida }
   /grupos/{id}:
     parameters:
-      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - {
+          name: id,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
     get:
       security: [{ bearerAuth: [] }]
       responses:
-        '200': { description: Datos básicos y miembros; gastos y balances pendientes }
-        '401': { description: Sesión inválida }
-        '404': { description: Grupo inexistente o sin acceso }
+        "200":
+          {
+            description: Datos del grupo,
+            miembros,
+            gastos con partes y balances,
+          }
+        "401": { description: Sesión inválida }
+        "404": { description: Grupo inexistente o sin acceso }
+  /grupos/{id}/gastos:
+    parameters:
+      - {
+          name: id,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
+    post:
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                [concepto, monto, fecha, pagado_por, regla, participantes]
+              properties:
+                concepto: { type: string }
+                monto:
+                  {
+                    type: string,
+                    description: Decimal exacto con hasta dos decimales,
+                  }
+                fecha: { type: string, format: date }
+                pagado_por: { type: string, format: uuid }
+                regla:
+                  { type: string, enum: [iguales, porcentajes, montos_fijos] }
+                participantes:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [usuario_id]
+                    properties:
+                      usuario_id: { type: string, format: uuid }
+                      valor:
+                        {
+                          type: string,
+                          nullable: true,
+                          description: Porcentaje o monto fijo exacto,
+                        }
+      responses:
+        "201": { description: Gasto y partes calculadas por el servidor }
+        "400": { description: Datos o división inválidos }
+        "401": { description: Sesión inválida }
+        "404": { description: Grupo inexistente o sin acceso }
   /grupos/{id}/miembros:
     parameters:
-      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - {
+          name: id,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
     post:
       security: [{ bearerAuth: [] }]
       requestBody:
@@ -167,21 +251,26 @@ paths:
               properties:
                 usuario_id: { type: string, format: uuid }
       responses:
-        '201': { description: Invitación creada }
-        '401': { description: Sesión inválida }
-        '403': { description: No es administrador o no es amistad }
-        '404': { description: Grupo inexistente o sin acceso }
-        '409': { description: Invitación o membresía existente }
+        "201": { description: Invitación creada }
+        "401": { description: Sesión inválida }
+        "403": { description: No es administrador o no es amistad }
+        "404": { description: Grupo inexistente o sin acceso }
+        "409": { description: Invitación o membresía existente }
   /grupos/{id}/miembros/yo/respuesta:
     parameters:
-      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - {
+          name: id,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
     post:
       security: [{ bearerAuth: [] }]
-      requestBody: { $ref: '#/components/requestBodies/RespuestaInvitacion' }
+      requestBody: { $ref: "#/components/requestBodies/RespuestaInvitacion" }
       responses:
-        '200': { description: Invitación respondida }
-        '401': { description: Sesión inválida }
-        '409': { description: No hay invitación pendiente }
+        "200": { description: Invitación respondida }
+        "401": { description: Sesión inválida }
+        "409": { description: No hay invitación pendiente }
 components:
   requestBodies:
     RespuestaInvitacion:

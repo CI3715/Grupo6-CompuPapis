@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useState } from "react";
 
 export interface UsuarioSesion {
   id: string;
@@ -121,6 +121,7 @@ interface AuthScreensProps {
   onCambiarVista: (vista: "ninguna" | "login" | "registro" | "perfil") => void;
   onAutenticado: (usuario: UsuarioSesion) => void;
   onCerrarSesion: () => void;
+  onSesionVencida: () => void;
 }
 
 export function AuthScreens({
@@ -129,49 +130,59 @@ export function AuthScreens({
   onCambiarVista,
   onAutenticado,
   onCerrarSesion,
+  onSesionVencida,
 }: AuthScreensProps) {
   // Estados Login
   const [correoLogin, setCorreoLogin] = useState("");
-  const [contrasenaLogin, setContrasenaLogin] = useState("");
+  const [passwordLogin, setPasswordLogin] = useState("");
 
   // Estados Registro
   const [nombreUsuario, setNombreUsuario] = useState("");
   const [nombreVisible, setNombreVisible] = useState("");
   const [correoRegistro, setCorreoRegistro] = useState("");
-  const [contrasenaRegistro, setContrasenaRegistro] = useState("");
+  const [passwordRegistro, setPasswordRegistro] = useState("");
 
   // Estados Feedback y Perfil Detallado
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<ErrorDominio | null>(null);
   const [mensajeExito, setMensajeExito] = useState<string | null>(null);
-  const [perfilDetallado, setPerfilDetallado] = useState<UsuarioSesion | null>(
-    usuario,
-  );
+  const [perfilConsultado, setPerfilConsultado] =
+    useState<UsuarioSesion | null>(null);
+  const perfilDetallado =
+    usuario && perfilConsultado?.id === usuario.id
+      ? { ...usuario, ...perfilConsultado }
+      : usuario;
 
+  // La consulta se descarta si se abandona el perfil antes de recibir respuesta.
   useEffect(() => {
+    if (vista !== "perfil") return;
+    let activo = true;
+    invoke<UsuarioSesion>("obtener_perfil")
+      .then((datos) => {
+        if (activo) setPerfilConsultado(datos);
+      })
+      .catch((error: unknown) => {
+        if (
+          activo &&
+          typeof error === "object" &&
+          error !== null &&
+          "campo" in error &&
+          error.campo === "sesion"
+        )
+          onSesionVencida();
+      });
+    return () => {
+      activo = false;
+    };
+  }, [vista, onSesionVencida]);
+
+  const cambiarVista = (
+    siguiente: "ninguna" | "login" | "registro" | "perfil",
+  ) => {
     setError(null);
     setMensajeExito(null);
-  }, [vista]);
-
-  useEffect(() => {
-    setPerfilDetallado(usuario);
-  }, [usuario]);
-
-  // Consulta GET /usuarios/yo (obtener_perfil) al abrir la vista de perfil 16]
-  useEffect(() => {
-    if (vista === "perfil") {
-      invoke<UsuarioSesion>("obtener_perfil")
-        .then((datos) => {
-          setPerfilDetallado((prev) => ({
-            ...prev,
-            ...datos,
-          }));
-        })
-        .catch(() => {
-          // Si ocurre algún problema de red, mantiene los datos existentes en memoria
-        });
-    }
-  }, [vista]);
+    onCambiarVista(siguiente);
+  };
 
   // Formatea errores sin exponer trazas técnicas (RNF-17 y RNF-18) 14]
   const normalizarError = (err: unknown): ErrorDominio => {
@@ -218,11 +229,11 @@ export function AuthScreens({
         nombreUsuario,
         nombreVisible,
         correo: correoRegistro,
-        contrasena: contrasenaRegistro,
+        password: passwordRegistro,
       });
 
       // Limpiamos contraseña de memoria inmediatamente (RNF-05) 14]
-      setContrasenaRegistro("");
+      setPasswordRegistro("");
       setMensajeExito(
         "Cuenta creada correctamente. Ahora puedes iniciar sesión con tu correo.",
       );
@@ -243,27 +254,25 @@ export function AuthScreens({
     setCargando(true);
 
     try {
-      const respuesta = await invoke<any>("iniciar_sesion", {
+      const respuesta = await invoke<{
+        usuario: UsuarioSesion;
+        vencimiento: string;
+      }>("iniciar_sesion", {
         correo: correoLogin,
-        contrasena: contrasenaLogin,
+        password: passwordLogin,
       });
 
-      // Desempaqueta la respuesta del servidor (SesionAuth / SesionServidor)
-      const sesionNormalizada: UsuarioSesion = respuesta.usuario
-        ? {
-            ...respuesta.usuario,
-            vencimiento: respuesta.vencimiento ?? respuesta.expira_en,
-            expira_en: respuesta.expira_en ?? respuesta.vencimiento,
-          }
-        : respuesta;
+      const sesionNormalizada: UsuarioSesion = {
+        ...respuesta.usuario,
+        vencimiento: respuesta.vencimiento,
+      };
 
       // Limpiamos contraseña de memoria inmediatamente (RNF-05) 14]
-      setContrasenaLogin("");
-      setPerfilDetallado(sesionNormalizada);
+      setPasswordLogin("");
       onAutenticado(sesionNormalizada);
-      onCambiarVista("ninguna");
+      cambiarVista("ninguna");
     } catch (err) {
-      setContrasenaLogin("");
+      setPasswordLogin("");
       setError(normalizarError(err));
     } finally {
       setCargando(false);
@@ -289,7 +298,7 @@ export function AuthScreens({
               type="button"
               className="btn btn-ghost"
               style={{ padding: "4px 10px" }}
-              onClick={() => onCambiarVista("ninguna")}
+              onClick={() => cambiarVista("ninguna")}
             >
               ✕
             </button>
@@ -330,7 +339,7 @@ export function AuthScreens({
             <button
               type="button"
               className="btn btn-ghost"
-              onClick={() => onCambiarVista("ninguna")}
+              onClick={() => cambiarVista("ninguna")}
             >
               Volver a mis cuentas
             </button>
@@ -365,7 +374,7 @@ export function AuthScreens({
             type="button"
             className="btn btn-ghost"
             style={{ padding: "4px 10px" }}
-            onClick={() => onCambiarVista("ninguna")}
+            onClick={() => cambiarVista("ninguna")}
           >
             ✕
           </button>
@@ -376,14 +385,14 @@ export function AuthScreens({
           <button
             type="button"
             className={`auth-tab ${vista === "login" ? "active" : ""}`}
-            onClick={() => onCambiarVista("login")}
+            onClick={() => cambiarVista("login")}
           >
             Iniciar sesión
           </button>
           <button
             type="button"
             className={`auth-tab ${vista === "registro" ? "active" : ""}`}
-            onClick={() => onCambiarVista("registro")}
+            onClick={() => cambiarVista("registro")}
           >
             Crear cuenta
           </button>
@@ -441,11 +450,11 @@ export function AuthScreens({
               <label className="form-label">Contraseña</label>
               <input
                 type="password"
-                value={contrasenaLogin}
-                onChange={(e) => setContrasenaLogin(e.target.value)}
+                value={passwordLogin}
+                onChange={(e) => setPasswordLogin(e.target.value)}
                 placeholder="••••••••••"
                 autoComplete="current-password"
-                className={`form-control ${error?.campo === "contrasena" ? "input-error" : ""}`}
+                className={`form-control ${error?.campo === "password" ? "input-error" : ""}`}
               />
             </div>
 
@@ -453,7 +462,7 @@ export function AuthScreens({
               <button
                 type="button"
                 className="btn btn-ghost"
-                onClick={() => onCambiarVista("ninguna")}
+                onClick={() => cambiarVista("ninguna")}
               >
                 Continuar sin cuenta
               </button>
@@ -509,10 +518,10 @@ export function AuthScreens({
               <label className="form-label">Contraseña</label>
               <input
                 type="password"
-                value={contrasenaRegistro}
-                onChange={(e) => setContrasenaRegistro(e.target.value)}
+                value={passwordRegistro}
+                onChange={(e) => setPasswordRegistro(e.target.value)}
                 placeholder="Mínimo 10 caracteres"
-                className={`form-control ${error?.campo === "contrasena" ? "input-error" : ""}`}
+                className={`form-control ${error?.campo === "password" ? "input-error" : ""}`}
               />
               <span className="field-hint">
                 Debe tener al menos 10 caracteres.
@@ -523,7 +532,7 @@ export function AuthScreens({
               <button
                 type="button"
                 className="btn btn-ghost"
-                onClick={() => onCambiarVista("login")}
+                onClick={() => cambiarVista("login")}
               >
                 Ya tengo cuenta
               </button>

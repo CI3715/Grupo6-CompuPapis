@@ -12,14 +12,22 @@ export type RegistroAuth = {
   nombre_usuario: string;
   nombre_visible: string;
   correo: string;
-  contrasena: string;
+  password: string;
 };
-export type CredencialesAuth = { correo: string; contrasena: string };
+export type CredencialesAuth = { correo: string; password: string };
 export type SesionAuth = { usuario: UsuarioAuth; vencimiento: string };
 
 export const registrarUsuario = (datos: RegistroAuth) =>
-  invoke<UsuarioAuth>("registrar_usuario", { datos });
+  invoke<UsuarioAuth>("registrar_usuario", {
+    nombreUsuario: datos.nombre_usuario,
+    nombreVisible: datos.nombre_visible,
+    correo: datos.correo,
+    password: datos.password,
+  });
 export const iniciarSesion = (datos: CredencialesAuth) =>
-  invoke<SesionAuth>("iniciar_sesion", { datos });
+  invoke<SesionAuth>("iniciar_sesion", {
+    correo: datos.correo,
+    password: datos.password,
+  });
 export const obtenerPerfil = () => invoke<UsuarioAuth>("obtener_perfil");
 export const cerrarSesion = () => invoke<void>("cerrar_sesion");

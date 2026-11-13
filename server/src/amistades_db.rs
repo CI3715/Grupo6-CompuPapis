@@ -7,6 +7,8 @@ pub struct SolicitudPendiente {
     pub emisor_id: Uuid,
     pub destinatario_id: Uuid,
     pub creada_en: DateTime<Utc>,
+    pub nombre_usuario: String,
+    pub nombre_visible: String,
 }
 
 pub struct Amigo {
@@ -26,6 +28,8 @@ fn leer_solicitudes(filas: Vec<sqlx::postgres::PgRow>) -> Vec<SolicitudPendiente
             emisor_id: fila.get("emisor_id"),
             destinatario_id: fila.get("destinatario_id"),
             creada_en: fila.get("creada_en"),
+            nombre_usuario: fila.get("nombre_usuario"),
+            nombre_visible: fila.get("nombre_visible"),
         });
     }
 
@@ -54,6 +58,16 @@ pub async fn son_amigos(
     Ok(datos.is_some())
 }
 
+async fn bloquear_par(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    a: Uuid,
+    b: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(LEAST($1::uuid,$2::uuid)::text || ':' || GREATEST($1::uuid,$2::uuid)::text, 0))")
+        .bind(a).bind(b).execute(&mut **tx).await?;
+    Ok(())
+}
+
 pub async fn guardar_solicitud(
     pool: &PgPool,
     id: Uuid,
@@ -65,7 +79,9 @@ pub async fn guardar_solicitud(
         return Ok(false);
     }
 
-    // Solo guardamos la solicitud si no son amigos
+    let mut tx = pool.begin().await?;
+    bloquear_par(&mut tx, emisor, destinatario).await?;
+    // Serializa este par con la aceptación para evitar amistad y solicitud pendiente simultáneas.
     let resultado = sqlx::query(
         "INSERT INTO solicitudes_amistad
          (id, emisor_id, destinatario_id, estado, creada_en)
@@ -81,9 +97,10 @@ pub async fn guardar_solicitud(
     .bind(emisor)
     .bind(destinatario)
     .bind(fecha)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
 
+    tx.commit().await?;
     Ok(resultado.rows_affected() == 1)
 }
 
@@ -92,10 +109,10 @@ pub async fn solicitudes_enviadas(
     usuario: Uuid,
 ) -> Result<Vec<SolicitudPendiente>, sqlx::Error> {
     let filas = sqlx::query(
-        "SELECT id, emisor_id, destinatario_id, creada_en
-         FROM solicitudes_amistad
-         WHERE emisor_id = $1 AND estado = 'pendiente'
-         ORDER BY creada_en, id",
+        "SELECT s.id, s.emisor_id, s.destinatario_id, s.creada_en, u.nombre_usuario, u.nombre_visible
+         FROM solicitudes_amistad s JOIN usuarios u ON u.id=s.destinatario_id
+         WHERE s.emisor_id = $1 AND s.estado = 'pendiente'
+         ORDER BY s.creada_en, s.id",
     )
     .bind(usuario)
     .fetch_all(pool)
@@ -109,10 +126,10 @@ pub async fn solicitudes_recibidas(
     usuario: Uuid,
 ) -> Result<Vec<SolicitudPendiente>, sqlx::Error> {
     let filas = sqlx::query(
-        "SELECT id, emisor_id, destinatario_id, creada_en
-         FROM solicitudes_amistad
-         WHERE destinatario_id = $1 AND estado = 'pendiente'
-         ORDER BY creada_en, id",
+        "SELECT s.id, s.emisor_id, s.destinatario_id, s.creada_en, u.nombre_usuario, u.nombre_visible
+         FROM solicitudes_amistad s JOIN usuarios u ON u.id=s.emisor_id
+         WHERE s.destinatario_id = $1 AND s.estado = 'pendiente'
+         ORDER BY s.creada_en, s.id",
     )
     .bind(usuario)
     .fetch_all(pool)
@@ -129,6 +146,17 @@ pub async fn aceptar_solicitud(
     fecha: DateTime<Utc>,
 ) -> Result<bool, sqlx::Error> {
     let mut tx = pool.begin().await?;
+    let emisor: Option<Uuid> = sqlx::query_scalar(
+        "SELECT emisor_id FROM solicitudes_amistad WHERE id=$1 AND destinatario_id=$2",
+    )
+    .bind(solicitud)
+    .bind(destinatario)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(emisor) = emisor else {
+        return Ok(false);
+    };
+    bloquear_par(&mut tx, emisor, destinatario).await?;
 
     let fila = sqlx::query(
         "UPDATE solicitudes_amistad
@@ -138,7 +166,7 @@ pub async fn aceptar_solicitud(
     )
     .bind(solicitud)
     .bind(destinatario)
-    .bind(&fecha)
+    .bind(fecha)
     .fetch_optional(&mut *tx)
     .await?;
 
@@ -155,9 +183,7 @@ pub async fn aceptar_solicitud(
     let mut usuario2 = destinatario;
 
     if usuario1 > usuario2 {
-        let aux = usuario1;
-        usuario1 = usuario2;
-        usuario2 = aux;
+        std::mem::swap(&mut usuario1, &mut usuario2);
     }
 
     sqlx::query(
@@ -168,7 +194,7 @@ pub async fn aceptar_solicitud(
     .bind(amistad_id)
     .bind(usuario1)
     .bind(usuario2)
-    .bind(&fecha)
+    .bind(fecha)
     .execute(&mut *tx)
     .await?;
 
@@ -309,7 +335,12 @@ mod tests {
         let amistad = Uuid::new_v4();
 
         assert!(!aceptar_solicitud(&pool, solicitud1, ana, amistad, fecha).await?);
-        assert!(aceptar_solicitud(&pool, solicitud1, beto, amistad, fecha).await?);
+        let (aceptada, duplicada) = tokio::join!(
+            aceptar_solicitud(&pool, solicitud1, beto, amistad, fecha),
+            guardar_solicitud(&pool, Uuid::new_v4(), beto, ana, fecha)
+        );
+        assert!(aceptada?);
+        assert!(!duplicada?);
         assert!(!aceptar_solicitud(&pool, solicitud1, beto, Uuid::new_v4(), fecha).await?);
 
         assert!(son_amigos(&pool, ana, beto).await?);

@@ -103,15 +103,16 @@ La base de pruebas `cuentas_claras_pruebas` se crea junto con la base principal.
 
 El servidor crea la tabla de usuarios y su índice único al iniciar; la conexión debe tener permisos para ello. Usar un secreto aleatorio real, no el ejemplo. Para Neon, usar la URL de conexión segura proporcionada por el proveedor. En un despliegue se requiere HTTPS mediante un proxy TLS; el servidor escucha solo en `127.0.0.1:8000`.
 
-La API de Entrega 5 está documentada en [openapi.yaml](openapi.yaml). Ejecutar sus pruebas con `cargo test --manifest-path server/Cargo.toml`. La prueba de integración requiere una base PostgreSQL dedicada (crea la tabla si falta e inserta y elimina un usuario de prueba):
+Las rutas de autenticación y funciones compartidas están documentadas en [openapi.yaml](openapi.yaml). Para ejecutar las pruebas del servidor y las de PostgreSQL, desde la raíz y después de cargar `server/.env`:
 
 ```bash
-cargo test --manifest-path server/Cargo.toml -- --ignored
+cargo test --manifest-path server/Cargo.toml
+cargo test --manifest-path server/Cargo.toml -- --ignored --test-threads=1
 ```
 
-Tauri expone `registrar_usuario`, `iniciar_sesion`, `obtener_perfil` y `cerrar_sesion`; el equipo de interfaz puede usar los adaptadores tipados de `app/lib/autenticacion.ts`. La sesión se conserva solo en memoria hasta cerrar la aplicación o sesión; las pantallas de autenticación siguen pendientes. El libro personal sigue siendo local.
+Las pruebas ignoradas requieren que `E5_TEST_DATABASE_URL` apunte a una base PostgreSQL dedicada de pruebas; crean y eliminan datos de prueba. No usar una base con datos personales. El servidor aplica las migraciones al iniciar.
 
-Desde el front de Tauri, importa las funciones desde `app/lib/autenticacion.ts`. `registrarUsuario({ nombre_usuario, nombre_visible, correo, contrasena })` devuelve el usuario; `iniciarSesion({ correo, contrasena })` devuelve usuario y vencimiento; `obtenerPerfil()` consulta la sesión activa y `cerrarSesion()` la descarta. Los errores del servidor se rechazan con `{ campo, mensaje }`. El token queda en memoria de Tauri y se pierde al cerrar la aplicación, por lo que hay que iniciar sesión nuevamente al abrirla. Estas funciones requieren la aplicación Tauri y el servidor iniciado en `127.0.0.1:8000`.
+En la aplicación Tauri, **Amigos y grupos** permite gestionar amistades, invitaciones y gastos compartidos. El servidor verifica la sesión, la membresía y la división; el libro personal permanece en el dispositivo. La sesión actual se conserva en memoria hasta cerrar la aplicación o sesión.
 
 Comprobar desde cualquier terminal:
 

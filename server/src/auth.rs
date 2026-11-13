@@ -43,12 +43,12 @@ struct Registro {
     nombre_usuario: String,
     nombre_visible: String,
     correo: String,
-    contrasena: String,
+    password: String,
 }
 #[derive(Deserialize)]
 struct Credenciales {
     correo: String,
-    contrasena: String,
+    password: String,
 }
 #[derive(Serialize)]
 struct Usuario {
@@ -122,10 +122,10 @@ fn validar_registro(r: &Registro) -> Result<(), ApiError> {
             "Introduce un correo válido.",
         ));
     }
-    if r.contrasena.chars().count() < 10 {
+    if r.password.chars().count() < 10 {
         return Err(error(
             StatusCode::BAD_REQUEST,
-            "contrasena",
+            "password",
             "La contraseña debe tener al menos 10 caracteres.",
         ));
     }
@@ -174,7 +174,7 @@ async fn registrar(
     validar_registro(&r)?;
     let hash = tokio::task::spawn_blocking(move || {
         Argon2::default()
-            .hash_password(r.contrasena.as_bytes(), &SaltString::generate(&mut OsRng))
+            .hash_password(r.password.as_bytes(), &SaltString::generate(&mut OsRng))
             .map(|h| h.to_string())
             .map(|h| (r.nombre_usuario, r.nombre_visible, r.correo, h))
             .map_err(|_| ())
@@ -223,7 +223,7 @@ async fn iniciar(
     let valid = tokio::task::spawn_blocking(move || {
         PasswordHash::new(&hash).ok().is_some_and(|h| {
             Argon2::default()
-                .verify_password(c.contrasena.as_bytes(), &h)
+                .verify_password(c.password.as_bytes(), &h)
                 .is_ok()
         })
     })
@@ -326,7 +326,7 @@ mod tests {
             nombre_usuario: "ana_1".into(),
             nombre_visible: "Ana".into(),
             correo: "ana@example.com".into(),
-            contrasena: "1234567890".into(),
+            password: "1234567890".into(),
         }
     }
     #[tokio::test]
@@ -351,7 +351,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        let response = app.oneshot(Request::builder().method("POST").uri("/usuarios").header("content-type", "application/json").body(Body::from(r#"{"nombre_usuario":"ana","nombre_visible":"Ana","correo":"invalido","contrasena":"1234567890"}"#)).unwrap()).await.unwrap();
+        let response = app.oneshot(Request::builder().method("POST").uri("/usuarios").header("content-type", "application/json").body(Body::from(r#"{"nombre_usuario":"ana","nombre_visible":"Ana","correo":"invalido","password":"1234567890"}"#)).unwrap()).await.unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -377,7 +377,7 @@ mod tests {
         ));
         let nombre = format!("u{}", &Uuid::new_v4().simple().to_string()[..20]);
         let correo = format!("{}@example.com", nombre);
-        let registro = serde_json::json!({"nombre_usuario": nombre, "nombre_visible": "Ana", "correo": correo, "contrasena": "clave-super-segura"});
+        let registro = serde_json::json!({"nombre_usuario": nombre, "nombre_visible": "Ana", "correo": correo, "password": "clave-super-segura"});
         let request = |ruta: &str, body: serde_json::Value| {
             Request::builder()
                 .method("POST")
@@ -395,7 +395,7 @@ mod tests {
         let body = to_bytes(response.into_body(), 65536).await.unwrap();
         let user: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert!(user.get("password_hash").is_none());
-        assert!(user.get("contrasena").is_none());
+        assert!(user.get("password").is_none());
         let row = sqlx::query("SELECT password_hash FROM usuarios WHERE nombre_usuario=$1")
             .bind(&nombre)
             .fetch_one(&pool)
@@ -438,7 +438,7 @@ mod tests {
             .clone()
             .oneshot(request(
                 "/sesiones",
-                serde_json::json!({"correo": correo, "contrasena": "clave-super-segura"}),
+                serde_json::json!({"correo": correo, "password": "clave-super-segura"}),
             ))
             .await
             .unwrap();
@@ -468,7 +468,7 @@ mod tests {
         let respuesta_demo = demo
             .oneshot(request(
                 "/sesiones",
-                serde_json::json!({"correo": correo, "contrasena": "clave-super-segura"}),
+                serde_json::json!({"correo": correo, "password": "clave-super-segura"}),
             ))
             .await
             .unwrap();
@@ -505,7 +505,7 @@ mod tests {
                 .clone()
                 .oneshot(request(
                     "/sesiones",
-                    serde_json::json!({"correo": mail, "contrasena": "incorrecta"}),
+                    serde_json::json!({"correo": mail, "password": "incorrecta"}),
                 ))
                 .await
                 .unwrap();
@@ -532,6 +532,16 @@ mod tests {
     }
 
     #[test]
+    fn acepta_password_en_registro_y_sesion() {
+        let registro = serde_json::json!({"nombre_usuario":"ana", "nombre_visible":"Ana", "correo":"ana@example.com", "password":"1234567890"});
+        let datos: Registro = serde_json::from_value(registro).unwrap();
+        assert!(validar_registro(&datos).is_ok());
+        let credenciales = serde_json::json!({"correo":"ana@example.com", "password":"1234567890"});
+        let datos: Credenciales = serde_json::from_value(credenciales).unwrap();
+        assert_eq!(datos.password, "1234567890");
+    }
+
+    #[test]
     fn validaciones_de_registro() {
         assert!(validar_registro(&registro()).is_ok());
         for nombre in ["ab", "ANA", "abc-", "abcdefghijklmnopqrstuvwxyz12345"] {
@@ -554,8 +564,8 @@ mod tests {
             assert_eq!(validar_registro(&r).unwrap_err().1.0.campo, "correo");
         }
         let mut r = registro();
-        r.contrasena = "123456789".into();
-        assert_eq!(validar_registro(&r).unwrap_err().1.0.campo, "contrasena");
+        r.password = "123456789".into();
+        assert_eq!(validar_registro(&r).unwrap_err().1.0.campo, "password");
     }
     #[test]
     fn hash_es_salado_y_verificable() {

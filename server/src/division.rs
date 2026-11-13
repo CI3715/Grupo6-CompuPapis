@@ -191,6 +191,29 @@ mod tests {
         }
     }
     #[test]
+    fn porcentajes_y_balances_conservan_total_en_multiples_casos() {
+        for monto in [1_i64, 10, 99, 100, 10001, 999_999_999_999] {
+            for a in (0_i64..=10000).step_by(137) {
+                let b = (10000 - a) / 3;
+                let c = 10000 - a - b;
+                let datos = [
+                    p("ana", Some(&formato(a))),
+                    p("beto", Some(&formato(b))),
+                    p("carla", Some(&formato(c))),
+                ];
+                let partes = dividir(&formato(monto), &Regla::Porcentajes, &datos).unwrap();
+                let suma = partes
+                    .iter()
+                    .map(|parte| centesimas(&parte.monto).unwrap())
+                    .sum::<i64>();
+                assert_eq!(suma, monto);
+                let balance_total = monto - suma;
+                assert_eq!(balance_total, 0);
+            }
+        }
+    }
+
+    #[test]
     fn montos_grandes_y_fijos() {
         let x = dividir(
             "9999999999.99",

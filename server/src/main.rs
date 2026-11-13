@@ -1,7 +1,8 @@
 pub mod amistades_db;
 mod auth;
 mod db;
-mod division;
+pub mod division;
+pub mod gastos_db;
 mod grupos;
 mod social;
 pub mod usuarios_db;
