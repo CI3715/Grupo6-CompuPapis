@@ -483,7 +483,6 @@ pub fn run() {
             crear_categoria,
             registrar_movimiento,
             corregir_movimiento,
-
         ])
         .run(tauri::generate_context!())
         .expect("Error al ejecutar la aplicación Tauri");
