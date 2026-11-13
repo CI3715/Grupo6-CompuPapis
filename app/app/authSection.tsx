@@ -426,7 +426,7 @@ export function AuthScreens({
                 type="text"
                 value={nombreUsuario}
                 onChange={(e) => setNombreUsuario(e.target.value)}
-                placeholder="ej: elias.jaovich_1"
+                placeholder="ej: test._1"
                 className={`form-control ${error?.campo === "nombre_usuario" ? "input-error" : ""}`}
               />
               <span className="field-hint">
@@ -440,7 +440,7 @@ export function AuthScreens({
                 type="text"
                 value={nombreVisible}
                 onChange={(e) => setNombreVisible(e.target.value)}
-                placeholder="El nombre que verán tus amigos"
+                placeholder="El nombre que veran tus amigos"
                 className={`form-control ${error?.campo === "nombre_visible" ? "input-error" : ""}`}
               />
             </div>
