@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useState } from "react";
 
 export interface UsuarioSesion {
   id: string;
@@ -22,7 +22,9 @@ interface AuthBarProps {
   usuario: UsuarioSesion | null;
   sesionVencida: boolean;
   vistaAuth: "ninguna" | "login" | "registro" | "perfil";
-  onCambiarVistaAuth: (vista: "ninguna" | "login" | "registro" | "perfil") => void;
+  onCambiarVistaAuth: (
+    vista: "ninguna" | "login" | "registro" | "perfil",
+  ) => void;
   onCerrarSesion: () => void;
 }
 
@@ -53,7 +55,9 @@ export function TopAuthBar({
                 type="button"
                 className="user-pill"
                 onClick={() =>
-                  onCambiarVistaAuth(vistaAuth === "perfil" ? "ninguna" : "perfil")
+                  onCambiarVistaAuth(
+                    vistaAuth === "perfil" ? "ninguna" : "perfil",
+                  )
                 }
                 title="Ver perfil de usuario"
               >
@@ -75,10 +79,14 @@ export function TopAuthBar({
               className="btn btn-primary"
               style={{ padding: "7px 14px", fontSize: "13px" }}
               onClick={() =>
-                onCambiarVistaAuth(vistaAuth === "ninguna" ? "login" : "ninguna")
+                onCambiarVistaAuth(
+                  vistaAuth === "ninguna" ? "login" : "ninguna",
+                )
               }
             >
-              {vistaAuth === "ninguna" ? "Iniciar sesión" : "Volver a mis finanzas"}
+              {vistaAuth === "ninguna"
+                ? "Iniciar sesión"
+                : "Volver a mis finanzas"}
             </button>
           )}
         </div>
@@ -88,7 +96,9 @@ export function TopAuthBar({
       {sesionVencida && !usuario && (
         <div className="session-banner-expired">
           <span>
-            <strong>Tu sesión venció, inicia sesión de nuevo.</strong> Tus cuentas, movimientos y patrimonio siguen funcionando normalmente 14].
+            <strong>Tu sesión venció, inicia sesión de nuevo.</strong> Tus
+            cuentas, movimientos y patrimonio siguen funcionando normalmente
+            14].
           </span>
           <button
             type="button"
@@ -111,6 +121,7 @@ interface AuthScreensProps {
   onCambiarVista: (vista: "ninguna" | "login" | "registro" | "perfil") => void;
   onAutenticado: (usuario: UsuarioSesion) => void;
   onCerrarSesion: () => void;
+  onSesionVencida: () => void;
 }
 
 export function AuthScreens({
@@ -119,51 +130,68 @@ export function AuthScreens({
   onCambiarVista,
   onAutenticado,
   onCerrarSesion,
+  onSesionVencida,
 }: AuthScreensProps) {
   // Estados Login
   const [correoLogin, setCorreoLogin] = useState("");
-  const [contrasenaLogin, setContrasenaLogin] = useState("");
+  const [passwordLogin, setPasswordLogin] = useState("");
 
   // Estados Registro
   const [nombreUsuario, setNombreUsuario] = useState("");
   const [nombreVisible, setNombreVisible] = useState("");
   const [correoRegistro, setCorreoRegistro] = useState("");
-  const [contrasenaRegistro, setContrasenaRegistro] = useState("");
+  const [passwordRegistro, setPasswordRegistro] = useState("");
 
   // Estados Feedback y Perfil Detallado
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<ErrorDominio | null>(null);
   const [mensajeExito, setMensajeExito] = useState<string | null>(null);
-  const [perfilDetallado, setPerfilDetallado] = useState<UsuarioSesion | null>(usuario);
+  const [perfilConsultado, setPerfilConsultado] =
+    useState<UsuarioSesion | null>(null);
+  const perfilDetallado =
+    usuario && perfilConsultado?.id === usuario.id
+      ? { ...usuario, ...perfilConsultado }
+      : usuario;
 
+  // La consulta se descarta si se abandona el perfil antes de recibir respuesta.
   useEffect(() => {
+    if (vista !== "perfil") return;
+    let activo = true;
+    invoke<UsuarioSesion>("obtener_perfil")
+      .then((datos) => {
+        if (activo) setPerfilConsultado(datos);
+      })
+      .catch((error: unknown) => {
+        if (
+          activo &&
+          typeof error === "object" &&
+          error !== null &&
+          "campo" in error &&
+          error.campo === "sesion"
+        )
+          onSesionVencida();
+      });
+    return () => {
+      activo = false;
+    };
+  }, [vista, onSesionVencida]);
+
+  const cambiarVista = (
+    siguiente: "ninguna" | "login" | "registro" | "perfil",
+  ) => {
     setError(null);
     setMensajeExito(null);
-  }, [vista]);
-
-  useEffect(() => {
-    setPerfilDetallado(usuario);
-  }, [usuario]);
-
-  // Consulta GET /usuarios/yo (obtener_perfil) al abrir la vista de perfil 16]
-  useEffect(() => {
-    if (vista === "perfil") {
-      invoke<UsuarioSesion>("obtener_perfil")
-        .then((datos) => {
-          setPerfilDetallado((prev) => ({
-            ...prev,
-            ...datos,
-          }));
-        })
-        .catch(() => {
-          // Si ocurre algún problema de red, mantiene los datos existentes en memoria
-        });
-    }
-  }, [vista]);
+    onCambiarVista(siguiente);
+  };
 
   // Formatea errores sin exponer trazas técnicas (RNF-17 y RNF-18) 14]
   const normalizarError = (err: unknown): ErrorDominio => {
-    if (typeof err === "object" && err !== null && "campo" in err && "mensaje" in err) {
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      "campo" in err &&
+      "mensaje" in err
+    ) {
       return err as ErrorDominio;
     }
     const texto = String(err ?? "").toLowerCase();
@@ -182,7 +210,10 @@ export function AuthScreens({
     }
     return {
       campo: "general",
-      mensaje: typeof err === "string" && err.trim() ? err : "No se pudo completar la operación.",
+      mensaje:
+        typeof err === "string" && err.trim()
+          ? err
+          : "No se pudo completar la operación.",
     };
   };
 
@@ -198,12 +229,14 @@ export function AuthScreens({
         nombreUsuario,
         nombreVisible,
         correo: correoRegistro,
-        contrasena: contrasenaRegistro,
+        password: passwordRegistro,
       });
 
       // Limpiamos contraseña de memoria inmediatamente (RNF-05) 14]
-      setContrasenaRegistro("");
-      setMensajeExito("Cuenta creada correctamente. Ahora puedes iniciar sesión con tu correo.");
+      setPasswordRegistro("");
+      setMensajeExito(
+        "Cuenta creada correctamente. Ahora puedes iniciar sesión con tu correo.",
+      );
       setCorreoLogin(correoRegistro);
       onCambiarVista("login");
     } catch (err) {
@@ -221,27 +254,25 @@ export function AuthScreens({
     setCargando(true);
 
     try {
-      const respuesta = await invoke<any>("iniciar_sesion", {
+      const respuesta = await invoke<{
+        usuario: UsuarioSesion;
+        vencimiento: string;
+      }>("iniciar_sesion", {
         correo: correoLogin,
-        contrasena: contrasenaLogin,
+        password: passwordLogin,
       });
 
-      // Desempaqueta la respuesta del servidor (SesionAuth / SesionServidor)
-      const sesionNormalizada: UsuarioSesion = respuesta.usuario
-        ? {
-            ...respuesta.usuario,
-            vencimiento: respuesta.vencimiento ?? respuesta.expira_en,
-            expira_en: respuesta.expira_en ?? respuesta.vencimiento,
-          }
-        : respuesta;
+      const sesionNormalizada: UsuarioSesion = {
+        ...respuesta.usuario,
+        vencimiento: respuesta.vencimiento,
+      };
 
       // Limpiamos contraseña de memoria inmediatamente (RNF-05) 14]
-      setContrasenaLogin("");
-      setPerfilDetallado(sesionNormalizada);
+      setPasswordLogin("");
       onAutenticado(sesionNormalizada);
-      onCambiarVista("ninguna");
+      cambiarVista("ninguna");
     } catch (err) {
-      setContrasenaLogin("");
+      setPasswordLogin("");
       setError(normalizarError(err));
     } finally {
       setCargando(false);
@@ -255,33 +286,46 @@ export function AuthScreens({
     return (
       <section className="auth-screen-container">
         <div className="form-card">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
             <h2 className="form-title">Perfil de usuario</h2>
             <button
               type="button"
               className="btn btn-ghost"
               style={{ padding: "4px 10px" }}
-              onClick={() => onCambiarVista("ninguna")}
+              onClick={() => cambiarVista("ninguna")}
             >
               ✕
             </button>
           </div>
           <p className="form-subtitle">
-            Identidad verificada en el servidor. Ningún dato financiero sale de tu dispositivo.
+            Identidad verificada en el servidor. Ningún dato financiero sale de
+            tu dispositivo.
           </p>
 
           <div className="profile-card-grid">
             <div>
               <span className="profile-item-label">Nombre visible</span>
-              <span className="profile-item-value">{perfilDetallado.nombre_visible}</span>
+              <span className="profile-item-value">
+                {perfilDetallado.nombre_visible}
+              </span>
             </div>
             <div>
               <span className="profile-item-label">Nombre de usuario</span>
-              <span className="profile-item-value">@{perfilDetallado.nombre_usuario}</span>
+              <span className="profile-item-value">
+                @{perfilDetallado.nombre_usuario}
+              </span>
             </div>
             <div>
               <span className="profile-item-label">Correo electrónico</span>
-              <span className="profile-item-value">{perfilDetallado.correo}</span>
+              <span className="profile-item-value">
+                {perfilDetallado.correo}
+              </span>
             </div>
             {vigencia && (
               <div>
@@ -295,7 +339,7 @@ export function AuthScreens({
             <button
               type="button"
               className="btn btn-ghost"
-              onClick={() => onCambiarVista("ninguna")}
+              onClick={() => cambiarVista("ninguna")}
             >
               Volver a mis cuentas
             </button>
@@ -317,13 +361,20 @@ export function AuthScreens({
   return (
     <section className="auth-screen-container">
       <div className="form-card">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: "12px",
+          }}
+        >
           <span className="header-tag">Cuenta en el servidor (Opcional)</span>
           <button
             type="button"
             className="btn btn-ghost"
             style={{ padding: "4px 10px" }}
-            onClick={() => onCambiarVista("ninguna")}
+            onClick={() => cambiarVista("ninguna")}
           >
             ✕
           </button>
@@ -334,21 +385,23 @@ export function AuthScreens({
           <button
             type="button"
             className={`auth-tab ${vista === "login" ? "active" : ""}`}
-            onClick={() => onCambiarVista("login")}
+            onClick={() => cambiarVista("login")}
           >
             Iniciar sesión
           </button>
           <button
             type="button"
             className={`auth-tab ${vista === "registro" ? "active" : ""}`}
-            onClick={() => onCambiarVista("registro")}
+            onClick={() => cambiarVista("registro")}
           >
             Crear cuenta
           </button>
         </div>
 
         <div className="offline-notice">
-          Registrarse es opcional. Tus cuentas, movimientos, tasas y patrimonio funcionan sin cuenta y sin conexión; ningún dato financiero se envía al servidor.
+          Registrarse es opcional. Tus cuentas, movimientos, tasas y patrimonio
+          funcionan sin cuenta y sin conexión; ningún dato financiero se envía
+          al servidor.
         </div>
 
         {mensajeExito && (
@@ -397,11 +450,11 @@ export function AuthScreens({
               <label className="form-label">Contraseña</label>
               <input
                 type="password"
-                value={contrasenaLogin}
-                onChange={(e) => setContrasenaLogin(e.target.value)}
+                value={passwordLogin}
+                onChange={(e) => setPasswordLogin(e.target.value)}
                 placeholder="••••••••••"
                 autoComplete="current-password"
-                className={`form-control ${error?.campo === "contrasena" ? "input-error" : ""}`}
+                className={`form-control ${error?.campo === "password" ? "input-error" : ""}`}
               />
             </div>
 
@@ -409,11 +462,15 @@ export function AuthScreens({
               <button
                 type="button"
                 className="btn btn-ghost"
-                onClick={() => onCambiarVista("ninguna")}
+                onClick={() => cambiarVista("ninguna")}
               >
                 Continuar sin cuenta
               </button>
-              <button type="submit" className="btn btn-primary" disabled={cargando}>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={cargando}
+              >
                 {cargando ? "Ingresando..." : "Iniciar sesión"}
               </button>
             </div>
@@ -430,7 +487,8 @@ export function AuthScreens({
                 className={`form-control ${error?.campo === "nombre_usuario" ? "input-error" : ""}`}
               />
               <span className="field-hint">
-                De 3 a 30 caracteres: solo minúsculas, dígitos, punto (.) y guion bajo (_).
+                De 3 a 30 caracteres: solo minúsculas, dígitos, punto (.) y
+                guion bajo (_).
               </span>
             </div>
 
@@ -460,23 +518,29 @@ export function AuthScreens({
               <label className="form-label">Contraseña</label>
               <input
                 type="password"
-                value={contrasenaRegistro}
-                onChange={(e) => setContrasenaRegistro(e.target.value)}
+                value={passwordRegistro}
+                onChange={(e) => setPasswordRegistro(e.target.value)}
                 placeholder="Mínimo 10 caracteres"
-                className={`form-control ${error?.campo === "contrasena" ? "input-error" : ""}`}
+                className={`form-control ${error?.campo === "password" ? "input-error" : ""}`}
               />
-              <span className="field-hint">Debe tener al menos 10 caracteres.</span>
+              <span className="field-hint">
+                Debe tener al menos 10 caracteres.
+              </span>
             </div>
 
             <div className="form-actions">
               <button
                 type="button"
                 className="btn btn-ghost"
-                onClick={() => onCambiarVista("login")}
+                onClick={() => cambiarVista("login")}
               >
                 Ya tengo cuenta
               </button>
-              <button type="submit" className="btn btn-primary" disabled={cargando}>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={cargando}
+              >
                 {cargando ? "Creando cuenta..." : "Registrarse"}
               </button>
             </div>

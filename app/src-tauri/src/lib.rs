@@ -1,4 +1,5 @@
 mod autenticacion;
+mod social;
 use crate::domain::RegistrarMovimiento;
 pub mod domain;
 pub mod sqlite_repo;
@@ -465,6 +466,7 @@ pub fn run() {
             autenticacion::iniciar_sesion,
             autenticacion::obtener_perfil,
             autenticacion::cerrar_sesion,
+            social::operacion_social,
             fecha_local_actual,
             evaluar_movimiento,
             listar_monedas,
@@ -483,7 +485,6 @@ pub fn run() {
             crear_categoria,
             registrar_movimiento,
             corregir_movimiento,
-
         ])
         .run(tauri::generate_context!())
         .expect("Error al ejecutar la aplicación Tauri");

@@ -16,12 +16,24 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct State {
-    pool: PgPool,
+    pub(crate) pool: PgPool,
     secret: String,
+    duracion_sesion: Duration,
 }
 impl State {
     pub fn new(pool: PgPool, secret: String) -> Self {
-        Self { pool, secret }
+        Self {
+            pool,
+            secret,
+            duracion_sesion: Duration::minutes(60),
+        }
+    }
+
+    pub fn con_modo_demostracion(mut self, habilitado: bool) -> Self {
+        if habilitado {
+            self.duracion_sesion = Duration::minutes(1);
+        }
+        self
     }
 }
 
@@ -31,12 +43,12 @@ struct Registro {
     nombre_usuario: String,
     nombre_visible: String,
     correo: String,
-    contrasena: String,
+    password: String,
 }
 #[derive(Deserialize)]
 struct Credenciales {
     correo: String,
-    contrasena: String,
+    password: String,
 }
 #[derive(Serialize)]
 struct Usuario {
@@ -110,10 +122,10 @@ fn validar_registro(r: &Registro) -> Result<(), ApiError> {
             "Introduce un correo válido.",
         ));
     }
-    if r.contrasena.chars().count() < 10 {
+    if r.password.chars().count() < 10 {
         return Err(error(
             StatusCode::BAD_REQUEST,
-            "contrasena",
+            "password",
             "La contraseña debe tener al menos 10 caracteres.",
         ));
     }
@@ -162,7 +174,7 @@ async fn registrar(
     validar_registro(&r)?;
     let hash = tokio::task::spawn_blocking(move || {
         Argon2::default()
-            .hash_password(r.contrasena.as_bytes(), &SaltString::generate(&mut OsRng))
+            .hash_password(r.password.as_bytes(), &SaltString::generate(&mut OsRng))
             .map(|h| h.to_string())
             .map(|h| (r.nombre_usuario, r.nombre_visible, r.correo, h))
             .map_err(|_| ())
@@ -211,7 +223,7 @@ async fn iniciar(
     let valid = tokio::task::spawn_blocking(move || {
         PasswordHash::new(&hash).ok().is_some_and(|h| {
             Argon2::default()
-                .verify_password(c.contrasena.as_bytes(), &h)
+                .verify_password(c.password.as_bytes(), &h)
                 .is_ok()
         })
     })
@@ -219,7 +231,7 @@ async fn iniciar(
     .map_err(|_| interno())?;
     let row = row.filter(|_| valid).ok_or_else(credenciales_invalidas)?;
     let user = usuario(&row);
-    let vencimiento = Utc::now() + Duration::minutes(1);
+    let vencimiento = Utc::now() + s.duracion_sesion;
     let token = encode(
         &Header::default(),
         &Claims {
@@ -235,6 +247,27 @@ async fn iniciar(
         usuario: user,
     }))
 }
+pub(crate) fn autenticar(headers: &HeaderMap, state: &State) -> Result<Uuid, StatusCode> {
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    let mut validation = Validation::default();
+    validation.leeway = 0;
+    let claims = decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(state.secret.as_bytes()),
+        &validation,
+    )
+    .map_err(|_| StatusCode::UNAUTHORIZED)?
+    .claims;
+    if claims.exp <= Utc::now().timestamp() as usize {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(claims.sub)
+}
+
 async fn perfil(
     AxumState(s): AxumState<State>,
     headers: HeaderMap,
@@ -293,7 +326,7 @@ mod tests {
             nombre_usuario: "ana_1".into(),
             nombre_visible: "Ana".into(),
             correo: "ana@example.com".into(),
-            contrasena: "1234567890".into(),
+            password: "1234567890".into(),
         }
     }
     #[tokio::test]
@@ -318,7 +351,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        let response = app.oneshot(Request::builder().method("POST").uri("/usuarios").header("content-type", "application/json").body(Body::from(r#"{"nombre_usuario":"ana","nombre_visible":"Ana","correo":"invalido","contrasena":"1234567890"}"#)).unwrap()).await.unwrap();
+        let response = app.oneshot(Request::builder().method("POST").uri("/usuarios").header("content-type", "application/json").body(Body::from(r#"{"nombre_usuario":"ana","nombre_visible":"Ana","correo":"invalido","password":"1234567890"}"#)).unwrap()).await.unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -344,7 +377,7 @@ mod tests {
         ));
         let nombre = format!("u{}", &Uuid::new_v4().simple().to_string()[..20]);
         let correo = format!("{}@example.com", nombre);
-        let registro = serde_json::json!({"nombre_usuario": nombre, "nombre_visible": "Ana", "correo": correo, "contrasena": "clave-super-segura"});
+        let registro = serde_json::json!({"nombre_usuario": nombre, "nombre_visible": "Ana", "correo": correo, "password": "clave-super-segura"});
         let request = |ruta: &str, body: serde_json::Value| {
             Request::builder()
                 .method("POST")
@@ -362,7 +395,7 @@ mod tests {
         let body = to_bytes(response.into_body(), 65536).await.unwrap();
         let user: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert!(user.get("password_hash").is_none());
-        assert!(user.get("contrasena").is_none());
+        assert!(user.get("password").is_none());
         let row = sqlx::query("SELECT password_hash FROM usuarios WHERE nombre_usuario=$1")
             .bind(&nombre)
             .fetch_one(&pool)
@@ -405,7 +438,7 @@ mod tests {
             .clone()
             .oneshot(request(
                 "/sesiones",
-                serde_json::json!({"correo": correo, "contrasena": "clave-super-segura"}),
+                serde_json::json!({"correo": correo, "password": "clave-super-segura"}),
             ))
             .await
             .unwrap();
@@ -413,6 +446,47 @@ mod tests {
         let body = to_bytes(response.into_body(), 65536).await.unwrap();
         let session: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let token = session["token"].as_str().unwrap();
+        let decodificado = decode::<Claims>(
+            token,
+            &DecodingKey::from_secret(b"secreto de prueba con al menos 32 bytes"),
+            &Validation::default(),
+        )
+        .unwrap()
+        .claims;
+        let restante = decodificado.exp as i64 - Utc::now().timestamp();
+        assert!(
+            (3580..=3600).contains(&restante),
+            "Vigencia normal inesperada: {restante}"
+        );
+        let demo = routes(
+            State::new(
+                pool.clone(),
+                "secreto de prueba con al menos 32 bytes".into(),
+            )
+            .con_modo_demostracion(true),
+        );
+        let respuesta_demo = demo
+            .oneshot(request(
+                "/sesiones",
+                serde_json::json!({"correo": correo, "password": "clave-super-segura"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(respuesta_demo.status(), StatusCode::OK);
+        let datos_demo = to_bytes(respuesta_demo.into_body(), 65536).await.unwrap();
+        let sesion_demo: serde_json::Value = serde_json::from_slice(&datos_demo).unwrap();
+        let claims_demo = decode::<Claims>(
+            sesion_demo["token"].as_str().unwrap(),
+            &DecodingKey::from_secret(b"secreto de prueba con al menos 32 bytes"),
+            &Validation::default(),
+        )
+        .unwrap()
+        .claims;
+        let restante_demo = claims_demo.exp as i64 - Utc::now().timestamp();
+        assert!(
+            (40..=60).contains(&restante_demo),
+            "Vigencia de demostración inesperada: {restante_demo}"
+        );
         let response = app
             .clone()
             .oneshot(
@@ -431,7 +505,7 @@ mod tests {
                 .clone()
                 .oneshot(request(
                     "/sesiones",
-                    serde_json::json!({"correo": mail, "contrasena": "incorrecta"}),
+                    serde_json::json!({"correo": mail, "password": "incorrecta"}),
                 ))
                 .await
                 .unwrap();
@@ -444,6 +518,27 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn vigencia_normal_y_modo_demostracion() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://test:test@127.0.0.1/test")
+            .unwrap();
+        let normal = State::new(pool.clone(), "secreto de prueba".into());
+        let demostracion = State::new(pool, "secreto de prueba".into()).con_modo_demostracion(true);
+        assert_eq!(normal.duracion_sesion, Duration::minutes(60));
+        assert_eq!(demostracion.duracion_sesion, Duration::minutes(1));
+    }
+
+    #[test]
+    fn acepta_password_en_registro_y_sesion() {
+        let registro = serde_json::json!({"nombre_usuario":"ana", "nombre_visible":"Ana", "correo":"ana@example.com", "password":"1234567890"});
+        let datos: Registro = serde_json::from_value(registro).unwrap();
+        assert!(validar_registro(&datos).is_ok());
+        let credenciales = serde_json::json!({"correo":"ana@example.com", "password":"1234567890"});
+        let datos: Credenciales = serde_json::from_value(credenciales).unwrap();
+        assert_eq!(datos.password, "1234567890");
     }
 
     #[test]
@@ -469,8 +564,8 @@ mod tests {
             assert_eq!(validar_registro(&r).unwrap_err().1.0.campo, "correo");
         }
         let mut r = registro();
-        r.contrasena = "123456789".into();
-        assert_eq!(validar_registro(&r).unwrap_err().1.0.campo, "contrasena");
+        r.password = "123456789".into();
+        assert_eq!(validar_registro(&r).unwrap_err().1.0.campo, "password");
     }
     #[test]
     fn hash_es_salado_y_verificable() {
