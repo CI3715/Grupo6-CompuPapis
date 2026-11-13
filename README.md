@@ -112,7 +112,7 @@ cargo test --manifest-path server/Cargo.toml
 cargo test --manifest-path server/Cargo.toml -- --ignored --test-threads=1
 ```
 
-Las pruebas ignoradas requieren que `E5_TEST_DATABASE_URL` apunte a una base PostgreSQL dedicada de pruebas; crean y eliminan datos de prueba. No usar una base con datos personales. El servidor aplica las migraciones al iniciar.
+La prueba de registro y sesión se ejecuta en la suite normal y requiere PostgreSQL. Ella y las pruebas ignoradas requieren que `E5_TEST_DATABASE_URL` apunte a una base PostgreSQL dedicada de pruebas; crean y eliminan datos de prueba. No usar una base con datos personales. El servidor aplica las migraciones al iniciar.
 
 En la aplicación Tauri, **Amigos y grupos** permite gestionar amistades, invitaciones y gastos compartidos. El servidor verifica la sesión, la membresía y la división; el libro personal permanece en el dispositivo. La sesión actual se conserva en memoria hasta cerrar la aplicación o sesión.
 
