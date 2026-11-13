@@ -1,4 +1,5 @@
 mod auth;
+pub mod amistades_db;
 mod db;
 pub mod usuarios_db;
 
