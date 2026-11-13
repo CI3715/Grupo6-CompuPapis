@@ -11,7 +11,6 @@ import type {
   Moneda,
   Patrimonio,
   PropsPantalla,
-  ResumenCuentas,
   SubtotalPatrimonio,
   TasaUsada,
 } from "@/lib/tipos";
@@ -23,10 +22,20 @@ import {
 
 export default function PantallaPatrimonio({ onVolver, onIr }: PropsPantalla) {
   const [monedas, setMonedas] = useState<Moneda[]>([]);
-  const [resumen, setResumen] = useState<ResumenCuentas | null>(null);
   const [fecha, setFecha] = useState("");
   const [version, setVersion] = useState(0);
-  const [patrimonio, setPatrimonio] = useState<Patrimonio | null>(null);
+  const [resultado, setResultado] = useState<{
+    fecha: string;
+    version: number;
+    valor: Patrimonio;
+  } | null>(null);
+  const [cambiandoBase, setCambiandoBase] = useState(false);
+  const patrimonio =
+    !cambiandoBase &&
+    resultado?.fecha === fecha &&
+    resultado.version === version
+      ? resultado.valor
+      : null;
   const [monedaBase, setMonedaBase] = useState("USD"); // USD por defecto
   const baseElegida = useRef(false); // true cuando el usuario ya eligió una base
   const [error, setError] = useState<ErrorDominio | null>(null);
@@ -44,13 +53,6 @@ export default function PantallaPatrimonio({ onVolver, onIr }: PropsPantalla) {
     invoke<Moneda[]>("listar_monedas")
       .then((lista) => {
         if (activo) setMonedas(lista);
-      })
-      .catch((err: unknown) => {
-        if (activo) setError(normalizarError(err));
-      });
-    invoke<ResumenCuentas>("listar_cuentas")
-      .then((r) => {
-        if (activo) setResumen(r);
       })
       .catch((err: unknown) => {
         if (activo) setError(normalizarError(err));
@@ -73,7 +75,7 @@ export default function PantallaPatrimonio({ onVolver, onIr }: PropsPantalla) {
     invoke<Patrimonio>("consultar_patrimonio", { fecha })
       .then((p) => {
         if (!activo) return;
-        setPatrimonio(p);
+        setResultado({ fecha, version, valor: p });
         if (!baseElegida.current) setMonedaBase(p.monedaBase);
         setError(null);
       })
@@ -86,14 +88,18 @@ export default function PantallaPatrimonio({ onVolver, onIr }: PropsPantalla) {
   }, [fecha, version]);
 
   const cambiarBase = async (nueva: string) => {
-    baseElegida.current = true;
-    setMonedaBase(nueva);
+    if (nueva === monedaBase || cambiandoBase) return;
+    setCambiandoBase(true);
     try {
       await invoke("cambiar_moneda_base", { codigo: nueva });
+      baseElegida.current = true;
+      setMonedaBase(nueva);
       setError(null);
       setVersion((v) => v + 1);
     } catch (err: unknown) {
       setError(normalizarError(err));
+    } finally {
+      setCambiandoBase(false);
     }
   };
 
@@ -130,20 +136,8 @@ export default function PantallaPatrimonio({ onVolver, onIr }: PropsPantalla) {
   const obtenerSimbolo = (cod: string) =>
     monedas.find((m) => m.codigo === cod)?.simbolo ?? cod;
 
-  const filas: FilaPatrimonio[] =
-    patrimonio?.filas ??
-    (resumen?.cuentas ?? []).map((c) => ({
-      cuentaId: c.id,
-      nombre: c.nombre,
-      moneda: c.moneda,
-      saldo: c.saldo.cantidad,
-      tasa: null,
-      inversa: false,
-      enBase: null,
-    }));
-
-  const subtotales: SubtotalPatrimonio[] =
-    patrimonio?.subtotales ?? resumen?.subtotales ?? [];
+  const filas: FilaPatrimonio[] = patrimonio?.filas ?? [];
+  const subtotales: SubtotalPatrimonio[] = patrimonio?.subtotales ?? [];
 
   const consolidado =
     patrimonio !== null &&
@@ -195,6 +189,7 @@ export default function PantallaPatrimonio({ onVolver, onIr }: PropsPantalla) {
               <label className="form-label">Moneda base</label>
               <select
                 value={monedaBase}
+                disabled={cambiandoBase}
                 onChange={(e) => cambiarBase(e.target.value)}
                 className="form-control"
               >
@@ -349,9 +344,9 @@ export default function PantallaPatrimonio({ onVolver, onIr }: PropsPantalla) {
 
         {!patrimonio && (
           <div className="warning-alert" role="status">
-            El cálculo de conversión todavía no está disponible. Se muestran los
-            saldos; las tasas y los montos en {base} aparecerán cuando responda{" "}
-            <strong>consultar_patrimonio</strong>.
+            {error
+              ? "No se pudo consultar el patrimonio para esta fecha."
+              : "Consultando patrimonio…"}
           </div>
         )}
 

@@ -62,6 +62,7 @@ pub struct SesionAuth {
 
 async fn respuesta<T: serde::de::DeserializeOwned>(
     request: reqwest::RequestBuilder,
+    sesion_protegida: bool,
 ) -> Result<T, ErrorAuth> {
     let response = request
         .timeout(std::time::Duration::from_secs(10))
@@ -69,6 +70,12 @@ async fn respuesta<T: serde::de::DeserializeOwned>(
         .await
         .map_err(|_| ErrorAuth::general("No se pudo conectar con el servidor."))?;
     if !response.status().is_success() {
+        if sesion_protegida && response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(ErrorAuth {
+                campo: "sesion".into(),
+                mensaje: "Tu sesión venció, inicia sesión de nuevo.".into(),
+            });
+        }
         return Err(response
             .json::<ErrorAuth>()
             .await
@@ -99,6 +106,7 @@ pub async fn registrar_usuario(
             .http_client
             .post(format!("{SERVER_URL}/usuarios"))
             .json(&datos),
+        false,
     )
     .await
 }
@@ -116,6 +124,7 @@ pub async fn iniciar_sesion(
             .http_client
             .post(format!("{SERVER_URL}/sesiones"))
             .json(&datos),
+        false,
     )
     .await?;
     *auth
@@ -144,6 +153,7 @@ pub async fn obtener_perfil(
             .http_client
             .get(format!("{SERVER_URL}/usuarios/yo"))
             .bearer_auth(token),
+        true,
     )
     .await
 }

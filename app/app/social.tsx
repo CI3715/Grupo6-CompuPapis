@@ -1,6 +1,6 @@
 "use client";
 
-import { dividirGasto, type ReglaDivision } from "@/lib/division";
+import VistaGasto from "@/app/VistaGasto";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
 
@@ -40,187 +40,18 @@ const errorTexto = (error: unknown) =>
     ? String(error.mensaje)
     : "No se pudo completar la operación.";
 
-function VistaGasto({
-  miembros,
-  moneda,
-}: {
-  miembros: Miembro[];
-  moneda: string;
-}) {
-  const [monto, setMonto] = useState("");
-  const [concepto, setConcepto] = useState("");
-  const [fecha, setFecha] = useState("");
-  const [pagador, setPagador] = useState("");
-  const [regla, setRegla] = useState<ReglaDivision>("iguales");
-  const [participantes, setParticipantes] = useState<string[]>([]);
-  const [valores, setValores] = useState<Record<string, string>>({});
-  let partes: ReturnType<typeof dividirGasto> = [];
-  let mensaje = "";
-  if (monto || participantes.length) {
-    try {
-      partes = dividirGasto(
-        monto,
-        regla,
-        miembros
-          .filter((m) => participantes.includes(m.id))
-          .map((m) => ({
-            id: m.id,
-            nombre_usuario: m.nombre_usuario,
-            valor: valores[m.id] ?? "",
-          })),
-      );
-    } catch (error: unknown) {
-      mensaje = error instanceof Error ? error.message : "Revisa la división.";
-    }
-  }
-  return (
-    <section className="form-card social-wide">
-      <h2 className="form-title">Vista previa de gasto</h2>
-      <p className="social-muted">
-        Calcula las partes antes de registrar el gasto.
-      </p>
-      <div className="form-row">
-        <div>
-          <label className="form-label" htmlFor="concepto-gasto">
-            Concepto
-          </label>
-          <input
-            id="concepto-gasto"
-            className="form-control"
-            value={concepto}
-            onChange={(e) => setConcepto(e.target.value)}
-          />
-        </div>
-        <div>
-          <label className="form-label" htmlFor="fecha-gasto">
-            Fecha
-          </label>
-          <input
-            id="fecha-gasto"
-            className="form-control"
-            type="date"
-            value={fecha}
-            onChange={(e) => setFecha(e.target.value)}
-          />
-        </div>
-        <div>
-          <label className="form-label" htmlFor="pagador-gasto">
-            Quién pagó
-          </label>
-          <select
-            id="pagador-gasto"
-            className="form-control"
-            value={pagador}
-            onChange={(e) => setPagador(e.target.value)}
-          >
-            <option value="">Selecciona un miembro</option>
-            {miembros.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.nombre_visible}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="form-label" htmlFor="monto-gasto">
-            Monto ({moneda})
-          </label>
-          <input
-            className="form-control"
-            id="monto-gasto"
-            inputMode="decimal"
-            placeholder="0.00"
-            value={monto}
-            onChange={(e) => setMonto(e.target.value)}
-          />
-        </div>
-        <div>
-          <label className="form-label" htmlFor="regla-gasto">
-            División
-          </label>
-          <select
-            className="form-control"
-            id="regla-gasto"
-            value={regla}
-            onChange={(e) => setRegla(e.target.value as ReglaDivision)}
-          >
-            <option value="iguales">Partes iguales</option>
-            <option value="porcentajes">Porcentajes</option>
-            <option value="montos_fijos">Montos fijos</option>
-          </select>
-        </div>
-      </div>
-      <h3>Participantes</h3>
-      {miembros.map((m) => (
-        <div key={m.id} className="social-row">
-          <label>
-            <input
-              type="checkbox"
-              checked={participantes.includes(m.id)}
-              onChange={(e) =>
-                setParticipantes((prev) =>
-                  e.target.checked
-                    ? [...prev, m.id]
-                    : prev.filter((id) => id !== m.id),
-                )
-              }
-            />{" "}
-            {m.nombre_visible}{" "}
-            <span className="social-muted">@{m.nombre_usuario}</span>
-          </label>
-          {regla !== "iguales" && participantes.includes(m.id) && (
-            <input
-              className="form-control social-value"
-              inputMode="decimal"
-              aria-label={`${regla === "porcentajes" ? "Porcentaje" : "Monto"} de ${m.nombre_visible}`}
-              placeholder="0.00"
-              value={valores[m.id] ?? ""}
-              onChange={(e) =>
-                setValores((prev) => ({ ...prev, [m.id]: e.target.value }))
-              }
-            />
-          )}
-        </div>
-      ))}
-      {mensaje && (
-        <p className="social-muted" role="status">
-          {mensaje}
-        </p>
-      )}
-      {partes.length > 0 && (
-        <div>
-          <h3>Partes</h3>
-          {partes.map((p) => (
-            <div className="social-row" key={p.id}>
-              <span>
-                @{p.nombre_usuario}{" "}
-                {p.residuo && <small>(incluye 0,01 de redondeo)</small>}
-              </span>
-              <strong>
-                {p.monto} {moneda}
-              </strong>
-            </div>
-          ))}
-        </div>
-      )}
-      <p className="social-muted">
-        La vista previa aún no guarda gastos. El registro y los balances
-        requieren completar el servidor.
-      </p>
-    </section>
-  );
-}
-
 export default function PantallaSocial({
   volver,
   sesion,
   iniciarSesion,
   sesionVencida,
+  onSesionVencida,
 }: {
   volver: () => void;
   sesion: boolean;
   iniciarSesion: () => void;
   sesionVencida: boolean;
+  onSesionVencida: () => void;
 }) {
   const [seccion, setSeccion] = useState<Seccion>("amigos");
   const [amistades, setAmistades] = useState<Amistades | null>(null);
@@ -235,6 +66,7 @@ export default function PantallaSocial({
   const [error, setError] = useState("");
   const [aviso, setAviso] = useState("");
   const [ocupado, setOcupado] = useState(false);
+  const [cargandoInicial, setCargandoInicial] = useState(true);
 
   const cargar = useCallback(async () => {
     const [a, g] = await Promise.all([
@@ -258,12 +90,24 @@ export default function PantallaSocial({
         }
       })
       .catch((e: unknown) => {
-        if (activo) setError(errorTexto(e));
+        if (activo) {
+          if (
+            typeof e === "object" &&
+            e !== null &&
+            "campo" in e &&
+            e.campo === "sesion"
+          )
+            onSesionVencida();
+          else setError(errorTexto(e));
+        }
+      })
+      .finally(() => {
+        if (activo) setCargandoInicial(false);
       });
     return () => {
       activo = false;
     };
-  }, [sesion]);
+  }, [sesion, onSesionVencida]);
   async function ejecutar(accion: () => Promise<void>, mensaje = "") {
     setOcupado(true);
     setError("");
@@ -272,7 +116,14 @@ export default function PantallaSocial({
       await accion();
       setAviso(mensaje);
     } catch (e: unknown) {
-      setError(errorTexto(e));
+      if (
+        typeof e === "object" &&
+        e !== null &&
+        "campo" in e &&
+        e.campo === "sesion"
+      )
+        onSesionVencida();
+      else setError(errorTexto(e));
     } finally {
       setOcupado(false);
     }
@@ -333,9 +184,19 @@ export default function PantallaSocial({
             </button>
           </nav>
           {error && (
-            <p role="alert" className="error-alert">
-              {error}
-            </p>
+            <div className="error-alert" role="alert">
+              <p>{error}</p>
+              {!amistades && !grupos && !cargandoInicial && (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={ocupado}
+                  onClick={() => void ejecutar(cargar)}
+                >
+                  Reintentar
+                </button>
+              )}
+            </div>
           )}
           {aviso && (
             <p role="status" className="social-notice">
@@ -368,6 +229,7 @@ export default function PantallaSocial({
                     <input
                       id="buscar-amigo"
                       className="form-control"
+                      disabled={ocupado}
                       value={busqueda}
                       onChange={(e) => {
                         setBusqueda(e.target.value);
@@ -409,7 +271,11 @@ export default function PantallaSocial({
               <section className="form-card">
                 <h2 className="form-title">Mis amigos</h2>
                 {!amistades ? (
-                  <p className="social-muted">Cargando amistades…</p>
+                  <p className="social-muted">
+                    {cargandoInicial
+                      ? "Cargando amistades…"
+                      : "No se pudieron cargar las amistades."}
+                  </p>
                 ) : amistades.amigos.length === 0 ? (
                   <p className="social-muted">
                     Aún no tienes amigos agregados.
@@ -439,7 +305,13 @@ export default function PantallaSocial({
               </section>
               <section className="form-card">
                 <h2 className="form-title">Solicitudes recibidas</h2>
-                {amistades?.recibidas.length ? (
+                {cargandoInicial ? (
+                  <p className="social-muted">Cargando solicitudes…</p>
+                ) : !amistades ? (
+                  <p className="social-muted">
+                    No se pudieron cargar las solicitudes.
+                  </p>
+                ) : amistades.recibidas.length ? (
                   amistades.recibidas.map((s) => (
                     <div className="social-row" key={s.id}>
                       <span>Usuario {s.emisor_id.slice(0, 8)}</span>
@@ -485,7 +357,13 @@ export default function PantallaSocial({
               </section>
               <section className="form-card">
                 <h2 className="form-title">Solicitudes enviadas</h2>
-                {amistades?.enviadas.length ? (
+                {cargandoInicial ? (
+                  <p className="social-muted">Cargando solicitudes…</p>
+                ) : !amistades ? (
+                  <p className="social-muted">
+                    No se pudieron cargar las solicitudes.
+                  </p>
+                ) : amistades.enviadas.length ? (
                   amistades.enviadas.map((s) => (
                     <div className="social-row" key={s.id}>
                       <span>Usuario {s.destinatario_id.slice(0, 8)}</span>
@@ -650,7 +528,11 @@ export default function PantallaSocial({
               <section className="form-card">
                 <h2 className="form-title">Mis grupos</h2>
                 {!grupos ? (
-                  <p className="social-muted">Cargando grupos…</p>
+                  <p className="social-muted">
+                    {cargandoInicial
+                      ? "Cargando grupos…"
+                      : "No se pudieron cargar los grupos."}
+                  </p>
                 ) : grupos.grupos.length ? (
                   grupos.grupos.map((g) => (
                     <div className="social-row" key={g.id}>
@@ -678,7 +560,13 @@ export default function PantallaSocial({
               </section>
               <section className="form-card social-wide">
                 <h2 className="form-title">Invitaciones a grupos</h2>
-                {grupos?.invitaciones.length ? (
+                {cargandoInicial ? (
+                  <p className="social-muted">Cargando invitaciones…</p>
+                ) : !grupos ? (
+                  <p className="social-muted">
+                    No se pudieron cargar las invitaciones.
+                  </p>
+                ) : grupos.invitaciones.length ? (
                   grupos.invitaciones.map((g) => (
                     <div className="social-row" key={g.id}>
                       <div>

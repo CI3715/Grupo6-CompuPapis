@@ -2,7 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import PantallaPatrimonio from "@/app/patrimonio";
 import PantallaSocial from "@/app/social";
@@ -61,6 +61,13 @@ export default function MisCuentasPage() {
     );
     return () => window.clearTimeout(timer);
   }, [usuarioSesion]);
+
+  const marcarSesionVencida = useCallback(() => {
+    void invoke("cerrar_sesion").catch(() => undefined);
+    setUsuarioSesion(null);
+    setSesionVencida(true);
+    setVistaAuth("ninguna");
+  }, []);
 
   // --- NAVEGACIÓN Y MODO PANTALLA COMPLETA (ENTREGA 4) ---
   const [pantalla, setPantalla] = useState<Pantalla>("cuentas");
@@ -415,6 +422,7 @@ export default function MisCuentasPage() {
         volver={() => irAPantalla("cuentas")}
         sesion={Boolean(usuarioSesion)}
         sesionVencida={sesionVencida}
+        onSesionVencida={marcarSesionVencida}
         iniciarSesion={() => {
           irAPantalla("cuentas");
           setVistaAuth("login");
@@ -461,6 +469,7 @@ export default function MisCuentasPage() {
             setSesionVencida(false);
           }}
           onCerrarSesion={manejarCerrarSesion}
+          onSesionVencida={marcarSesionVencida}
         />
       ) : null}
 

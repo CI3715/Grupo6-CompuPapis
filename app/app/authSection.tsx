@@ -121,6 +121,7 @@ interface AuthScreensProps {
   onCambiarVista: (vista: "ninguna" | "login" | "registro" | "perfil") => void;
   onAutenticado: (usuario: UsuarioSesion) => void;
   onCerrarSesion: () => void;
+  onSesionVencida: () => void;
 }
 
 export function AuthScreens({
@@ -129,6 +130,7 @@ export function AuthScreens({
   onCambiarVista,
   onAutenticado,
   onCerrarSesion,
+  onSesionVencida,
 }: AuthScreensProps) {
   // Estados Login
   const [correoLogin, setCorreoLogin] = useState("");
@@ -159,13 +161,20 @@ export function AuthScreens({
       .then((datos) => {
         if (activo) setPerfilConsultado(datos);
       })
-      .catch(() => {
-        // Una falla de red no borra la información de la sesión actual.
+      .catch((error: unknown) => {
+        if (
+          activo &&
+          typeof error === "object" &&
+          error !== null &&
+          "campo" in error &&
+          error.campo === "sesion"
+        )
+          onSesionVencida();
       });
     return () => {
       activo = false;
     };
-  }, [vista]);
+  }, [vista, onSesionVencida]);
 
   const cambiarVista = (
     siguiente: "ninguna" | "login" | "registro" | "perfil",

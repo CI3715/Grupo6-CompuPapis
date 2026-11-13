@@ -53,9 +53,10 @@ pub async fn operacion_social(
         })?;
     if !response.status().is_success() {
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(ErrorAuth::general(
-                "Tu sesión venció, inicia sesión de nuevo.",
-            ));
+            return Err(ErrorAuth {
+                campo: "sesion".into(),
+                mensaje: "Tu sesión venció, inicia sesión de nuevo.".into(),
+            });
         }
         let body = response.json::<Value>().await.unwrap_or_default();
         return Err(ErrorAuth::general(
