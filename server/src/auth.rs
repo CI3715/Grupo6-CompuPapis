@@ -355,9 +355,8 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
-    // Requiere una base dedicada: E5_TEST_DATABASE_URL=... cargo test -- --ignored
+    // Requiere una base PostgreSQL dedicada configurada en E5_TEST_DATABASE_URL.
     #[tokio::test]
-    #[ignore = "requiere PostgreSQL de pruebas"]
     async fn registro_y_sesion_con_postgres() {
         use axum::{
             body::{Body, to_bytes},
