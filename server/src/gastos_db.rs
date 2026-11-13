@@ -165,29 +165,35 @@ pub async fn consultar(
         ));
     }
     let filas = sqlx::query("SELECT id,pagado_por,concepto,monto::text AS monto,(fecha_gasto AT TIME ZONE 'UTC')::date::text AS fecha,regla_division FROM gastos WHERE grupo_id=$1 ORDER BY fecha_gasto,id").bind(grupo).fetch_all(&mut *tx).await?;
-    let mut gastos = Vec::with_capacity(filas.len());
-    for fila in filas {
-        let id: Uuid = fila.get("id");
-        let rows=sqlx::query("SELECT p.usuario_id,u.nombre_usuario,p.monto_parte::text AS monto,p.recibio_residuo FROM gasto_participantes p JOIN usuarios u ON u.id=p.usuario_id WHERE p.gasto_id=$1 ORDER BY u.nombre_usuario,p.usuario_id").bind(id).fetch_all(&mut *tx).await?;
-        let partes = rows
-            .into_iter()
-            .map(|r| ParteGuardada {
+    let partes_rows = sqlx::query("SELECT p.gasto_id,p.usuario_id,u.nombre_usuario,p.monto_parte::text AS monto,p.recibio_residuo FROM gasto_participantes p JOIN gastos g ON g.id=p.gasto_id JOIN usuarios u ON u.id=p.usuario_id WHERE g.grupo_id=$1 ORDER BY u.nombre_usuario,p.usuario_id").bind(grupo).fetch_all(&mut *tx).await?;
+    let mut partes_por_gasto: std::collections::HashMap<Uuid, Vec<ParteGuardada>> =
+        std::collections::HashMap::new();
+    for r in partes_rows {
+        partes_por_gasto
+            .entry(r.get("gasto_id"))
+            .or_default()
+            .push(ParteGuardada {
                 usuario_id: r.get("usuario_id"),
                 nombre_usuario: r.get("nombre_usuario"),
                 monto: r.get("monto"),
                 recibio_residuo: r.get("recibio_residuo"),
-            })
-            .collect();
-        gastos.push(GastoGuardado {
-            id,
-            pagado_por: fila.get("pagado_por"),
-            concepto: fila.get("concepto"),
-            monto: fila.get("monto"),
-            fecha: fila.get("fecha"),
-            regla: fila.get("regla_division"),
-            partes,
-        });
+            });
     }
+    let gastos = filas
+        .into_iter()
+        .map(|fila| {
+            let id: Uuid = fila.get("id");
+            GastoGuardado {
+                id,
+                pagado_por: fila.get("pagado_por"),
+                concepto: fila.get("concepto"),
+                monto: fila.get("monto"),
+                fecha: fila.get("fecha"),
+                regla: fila.get("regla_division"),
+                partes: partes_por_gasto.remove(&id).unwrap_or_default(),
+            }
+        })
+        .collect();
     let filas=sqlx::query("SELECT u.id,u.nombre_usuario,u.nombre_visible, COALESCE(p.pagado,0)::numeric(30,2)::text AS pagado, COALESCE(d.corresponde,0)::numeric(30,2)::text AS corresponde, (COALESCE(p.pagado,0)-COALESCE(d.corresponde,0))::numeric(30,2)::text AS balance FROM grupo_miembros m JOIN usuarios u ON u.id=m.usuario_id LEFT JOIN (SELECT pagado_por,SUM(monto) pagado FROM gastos WHERE grupo_id=$1 GROUP BY pagado_por) p ON p.pagado_por=u.id LEFT JOIN (SELECT gp.usuario_id,SUM(gp.monto_parte) corresponde FROM gasto_participantes gp JOIN gastos g ON g.id=gp.gasto_id WHERE g.grupo_id=$1 GROUP BY gp.usuario_id) d ON d.usuario_id=u.id WHERE m.grupo_id=$1 AND m.estado_invitacion='aceptada' ORDER BY u.nombre_usuario,u.id").bind(grupo).fetch_all(&mut *tx).await?;
     let balances = filas
         .into_iter()

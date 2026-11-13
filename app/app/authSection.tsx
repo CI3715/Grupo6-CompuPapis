@@ -134,13 +134,13 @@ export function AuthScreens({
 }: AuthScreensProps) {
   // Estados Login
   const [correoLogin, setCorreoLogin] = useState("");
-  const [contrasenaLogin, setContrasenaLogin] = useState("");
+  const [passwordLogin, setPasswordLogin] = useState("");
 
   // Estados Registro
   const [nombreUsuario, setNombreUsuario] = useState("");
   const [nombreVisible, setNombreVisible] = useState("");
   const [correoRegistro, setCorreoRegistro] = useState("");
-  const [contrasenaRegistro, setContrasenaRegistro] = useState("");
+  const [passwordRegistro, setPasswordRegistro] = useState("");
 
   // Estados Feedback y Perfil Detallado
   const [cargando, setCargando] = useState(false);
@@ -229,11 +229,11 @@ export function AuthScreens({
         nombreUsuario,
         nombreVisible,
         correo: correoRegistro,
-        contrasena: contrasenaRegistro,
+        password: passwordRegistro,
       });
 
       // Limpiamos contraseña de memoria inmediatamente (RNF-05) 14]
-      setContrasenaRegistro("");
+      setPasswordRegistro("");
       setMensajeExito(
         "Cuenta creada correctamente. Ahora puedes iniciar sesión con tu correo.",
       );
@@ -259,7 +259,7 @@ export function AuthScreens({
         vencimiento: string;
       }>("iniciar_sesion", {
         correo: correoLogin,
-        contrasena: contrasenaLogin,
+        password: passwordLogin,
       });
 
       const sesionNormalizada: UsuarioSesion = {
@@ -268,11 +268,11 @@ export function AuthScreens({
       };
 
       // Limpiamos contraseña de memoria inmediatamente (RNF-05) 14]
-      setContrasenaLogin("");
+      setPasswordLogin("");
       onAutenticado(sesionNormalizada);
       cambiarVista("ninguna");
     } catch (err) {
-      setContrasenaLogin("");
+      setPasswordLogin("");
       setError(normalizarError(err));
     } finally {
       setCargando(false);
@@ -450,11 +450,11 @@ export function AuthScreens({
               <label className="form-label">Contraseña</label>
               <input
                 type="password"
-                value={contrasenaLogin}
-                onChange={(e) => setContrasenaLogin(e.target.value)}
+                value={passwordLogin}
+                onChange={(e) => setPasswordLogin(e.target.value)}
                 placeholder="••••••••••"
                 autoComplete="current-password"
-                className={`form-control ${error?.campo === "contrasena" ? "input-error" : ""}`}
+                className={`form-control ${error?.campo === "password" ? "input-error" : ""}`}
               />
             </div>
 
@@ -518,10 +518,10 @@ export function AuthScreens({
               <label className="form-label">Contraseña</label>
               <input
                 type="password"
-                value={contrasenaRegistro}
-                onChange={(e) => setContrasenaRegistro(e.target.value)}
+                value={passwordRegistro}
+                onChange={(e) => setPasswordRegistro(e.target.value)}
                 placeholder="Mínimo 10 caracteres"
-                className={`form-control ${error?.campo === "contrasena" ? "input-error" : ""}`}
+                className={`form-control ${error?.campo === "password" ? "input-error" : ""}`}
               />
               <span className="field-hint">
                 Debe tener al menos 10 caracteres.

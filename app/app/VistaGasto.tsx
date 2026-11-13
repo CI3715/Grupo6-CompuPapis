@@ -1,7 +1,7 @@
 "use client";
 
 import { dividirGasto, type ReglaDivision } from "@/lib/division";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 type Miembro = {
   id: string;
@@ -13,11 +13,24 @@ type Miembro = {
 export default function VistaGasto({
   miembros,
   moneda,
+  registrar,
 }: {
   miembros: Miembro[];
   moneda: string;
+  registrar: (datos: {
+    concepto: string;
+    monto: string;
+    fecha: string;
+    pagado_por: string;
+    regla: ReglaDivision;
+    participantes: { usuario_id: string; valor: string | null }[];
+  }) => Promise<void>;
 }) {
   const [monto, setMonto] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const envioEnCurso = useRef(false);
+  const [errorServidor, setErrorServidor] = useState("");
+  const [exito, setExito] = useState(false);
   const [concepto, setConcepto] = useState("");
   const [fecha, setFecha] = useState("");
   const [pagador, setPagador] = useState("");
@@ -173,10 +186,65 @@ export default function VistaGasto({
           ))}
         </div>
       )}
-      <p className="social-muted">
-        La vista previa aún no guarda gastos. El registro y los balances
-        requieren completar el servidor.
-      </p>
+      {errorServidor && (
+        <p className="error-alert" role="alert">
+          {errorServidor}
+        </p>
+      )}
+      {exito && (
+        <p className="social-notice" role="status">
+          Gasto registrado.
+        </p>
+      )}
+      <button
+        type="button"
+        className="btn btn-primary social-submit"
+        disabled={
+          guardando ||
+          !concepto.trim() ||
+          !fecha ||
+          !pagador ||
+          partes.length === 0
+        }
+        onClick={() => {
+          if (envioEnCurso.current) return;
+          envioEnCurso.current = true;
+          setGuardando(true);
+          setErrorServidor("");
+          setExito(false);
+          void registrar({
+            concepto: concepto.trim(),
+            monto,
+            fecha,
+            pagado_por: pagador,
+            regla,
+            participantes: participantes.map((usuario_id) => ({
+              usuario_id,
+              valor: regla === "iguales" ? null : (valores[usuario_id] ?? ""),
+            })),
+          })
+            .then(() => {
+              setMonto("");
+              setConcepto("");
+              setParticipantes([]);
+              setValores({});
+              setExito(true);
+            })
+            .catch((e: unknown) =>
+              setErrorServidor(
+                typeof e === "object" && e !== null && "mensaje" in e
+                  ? String(e.mensaje)
+                  : "No se pudo registrar el gasto.",
+              ),
+            )
+            .finally(() => {
+              envioEnCurso.current = false;
+              setGuardando(false);
+            });
+        }}
+      >
+        {guardando ? "Guardando…" : "Registrar gasto"}
+      </button>
     </section>
   );
 }

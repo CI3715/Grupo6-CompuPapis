@@ -38,13 +38,13 @@ pub struct RegistroAuth {
     pub nombre_usuario: String,
     pub nombre_visible: String,
     pub correo: String,
-    pub contrasena: String,
+    pub password: String,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct CredencialesAuth {
     pub correo: String,
-    pub contrasena: String,
+    pub password: String,
 }
 
 #[derive(Deserialize)]
@@ -92,14 +92,14 @@ pub async fn registrar_usuario(
     nombre_usuario: String,
     nombre_visible: String,
     correo: String,
-    contrasena: String,
+    password: String,
     state: State<'_, super::PingState>,
 ) -> Result<UsuarioAuth, ErrorAuth> {
     let datos = RegistroAuth {
         nombre_usuario,
         nombre_visible,
         correo,
-        contrasena,
+        password,
     };
     respuesta(
         state
@@ -114,11 +114,11 @@ pub async fn registrar_usuario(
 #[tauri::command]
 pub async fn iniciar_sesion(
     correo: String,
-    contrasena: String,
+    password: String,
     state: State<'_, super::PingState>,
     auth: State<'_, AuthState>,
 ) -> Result<SesionAuth, ErrorAuth> {
-    let datos = CredencialesAuth { correo, contrasena };
+    let datos = CredencialesAuth { correo, password };
     let sesion: SesionServidor = respuesta(
         state
             .http_client

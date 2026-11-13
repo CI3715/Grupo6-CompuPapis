@@ -1,10 +1,12 @@
 use crate::{
     amistades_db,
     auth::{self, State},
+    division::Regla,
+    gastos_db::{self, ErrorGasto, GastoNuevo, ParticipanteNuevo},
 };
 use axum::{
     Json, Router,
-    extract::{Path, State as AxumState},
+    extract::{Path, State as AxumState, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
@@ -37,6 +39,7 @@ async fn miembro(s: &State, g: Uuid, u: Uuid) -> Api<bool> {
 struct Crear {
     nombre: String,
     descripcion: Option<String>,
+    actividad: Option<String>,
     moneda: String,
 }
 async fn crear(
@@ -54,13 +57,14 @@ async fn crear(
     let id = Uuid::new_v4();
     let mut tx = s.pool.begin().await.map_err(db)?;
     sqlx::query(
-        "INSERT INTO grupos(id,nombre,descripcion,moneda,creador_id) VALUES($1,$2,$3,$4,$5)",
+        "INSERT INTO grupos(id,nombre,descripcion,moneda,creador_id,actividad) VALUES($1,$2,$3,$4,$5,$6)",
     )
     .bind(id)
     .bind(q.nombre.trim())
     .bind(&q.descripcion)
     .bind(&q.moneda)
     .bind(u)
+    .bind(q.actividad.as_deref().map(str::trim).filter(|x| !x.is_empty()))
     .execute(&mut *tx)
     .await
     .map_err(db)?;
@@ -69,18 +73,18 @@ async fn crear(
     Ok((
         StatusCode::CREATED,
         Json(
-            json!({"id":id,"nombre":q.nombre.trim(),"descripcion":q.descripcion,"moneda":q.moneda}),
+            json!({"id":id,"nombre":q.nombre.trim(),"descripcion":q.descripcion,"moneda":q.moneda,"actividad":q.actividad}),
         ),
     ))
 }
 async fn listar(AxumState(s): AxumState<State>, h: HeaderMap) -> Api<Json<Value>> {
     let u = user(&h, &s)?;
-    let rows=sqlx::query("SELECT g.id,g.nombre,g.descripcion,g.moneda,m.estado_invitacion,m.es_admin FROM grupos g JOIN grupo_miembros m ON m.grupo_id=g.id WHERE m.usuario_id=$1 AND m.estado_invitacion IN ('aceptada','pendiente') ORDER BY g.fecha_creacion,g.id").bind(u).fetch_all(&s.pool).await.map_err(db)?;
+    let rows=sqlx::query("SELECT g.id,g.nombre,g.descripcion,g.moneda,g.actividad,m.estado_invitacion,m.es_admin FROM grupos g JOIN grupo_miembros m ON m.grupo_id=g.id WHERE m.usuario_id=$1 AND m.estado_invitacion IN ('aceptada','pendiente') ORDER BY g.fecha_creacion,g.id").bind(u).fetch_all(&s.pool).await.map_err(db)?;
     let mut grupos = Vec::new();
     let mut invitaciones = Vec::new();
     for r in rows {
         let estado: String = r.get("estado_invitacion");
-        let v = json!({"id":r.get::<Uuid,_>("id"),"nombre":r.get::<String,_>("nombre"),"descripcion":r.get::<Option<String>,_>("descripcion"),"moneda":r.get::<String,_>("moneda"),"es_admin":r.get::<bool,_>("es_admin")});
+        let v = json!({"id":r.get::<Uuid,_>("id"),"nombre":r.get::<String,_>("nombre"),"descripcion":r.get::<Option<String>,_>("descripcion"),"moneda":r.get::<String,_>("moneda"),"actividad":r.get::<Option<String>,_>("actividad"),"es_admin":r.get::<bool,_>("es_admin")});
         if estado == "aceptada" {
             grupos.push(v)
         } else {
@@ -148,6 +152,63 @@ async fn responder(
     }
     Ok(Json(json!({"grupo_id":g,"estado":estado})))
 }
+#[derive(Deserialize)]
+struct ParticipanteGasto {
+    usuario_id: Uuid,
+    valor: Option<String>,
+}
+#[derive(Deserialize)]
+struct RegistrarGasto {
+    concepto: String,
+    monto: String,
+    fecha: chrono::NaiveDate,
+    pagado_por: Uuid,
+    regla: Regla,
+    participantes: Vec<ParticipanteGasto>,
+}
+fn error_gasto(e: ErrorGasto) -> (StatusCode, Json<Value>) {
+    match e {
+        ErrorGasto::SinAcceso => oculto(),
+        ErrorGasto::Invalido(m) => error(StatusCode::BAD_REQUEST, &m),
+        ErrorGasto::Base(_) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "No se pudo completar la operación.",
+        ),
+    }
+}
+async fn registrar_gasto(
+    AxumState(s): AxumState<State>,
+    h: HeaderMap,
+    Path(g): Path<Uuid>,
+    body: Result<Json<RegistrarGasto>, JsonRejection>,
+) -> Api<(StatusCode, Json<Value>)> {
+    let u = user(&h, &s)?;
+    miembro(&s, g, u).await?;
+    let Json(q) = body.map_err(|_| error(StatusCode::BAD_REQUEST, "Datos de gasto inválidos."))?;
+    let gasto = gastos_db::registrar(
+        &s.pool,
+        u,
+        GastoNuevo {
+            grupo_id: g,
+            pagado_por: q.pagado_por,
+            concepto: q.concepto,
+            monto: q.monto,
+            fecha: q.fecha,
+            regla: q.regla,
+            participantes: q
+                .participantes
+                .into_iter()
+                .map(|p| ParticipanteNuevo {
+                    usuario_id: p.usuario_id,
+                    valor: p.valor,
+                })
+                .collect(),
+        },
+    )
+    .await
+    .map_err(error_gasto)?;
+    Ok((StatusCode::CREATED, Json(json!(gasto))))
+}
 async fn detalle(
     AxumState(s): AxumState<State>,
     h: HeaderMap,
@@ -155,22 +216,31 @@ async fn detalle(
 ) -> Api<Json<Value>> {
     let u = user(&h, &s)?;
     miembro(&s, g, u).await?;
-    let r = sqlx::query("SELECT nombre,descripcion,moneda FROM grupos WHERE id=$1")
+    let r = sqlx::query("SELECT nombre,descripcion,moneda,actividad FROM grupos WHERE id=$1")
         .bind(g)
         .fetch_optional(&s.pool)
         .await
         .map_err(db)?
         .ok_or_else(oculto)?;
     let miembros=sqlx::query("SELECT u.id,u.nombre_usuario,u.nombre_visible,m.es_admin FROM grupo_miembros m JOIN usuarios u ON u.id=m.usuario_id WHERE m.grupo_id=$1 AND m.estado_invitacion='aceptada' ORDER BY u.nombre_usuario").bind(g).fetch_all(&s.pool).await.map_err(db)?.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"nombre_usuario":r.get::<String,_>("nombre_usuario"),"nombre_visible":r.get::<String,_>("nombre_visible"),"es_admin":r.get::<bool,_>("es_admin")})).collect::<Vec<_>>();
-    // Hasta disponer del contrato de gastos completo, no devolver un balance ficticio.
+    let (gastos, balances) = gastos_db::consultar(&s.pool, u, g)
+        .await
+        .map_err(|e| match e {
+            ErrorGasto::SinAcceso => oculto(),
+            _ => error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "No se pudo consultar el estado del grupo.",
+            ),
+        })?;
     Ok(Json(
-        json!({"id":g,"nombre":r.get::<String,_>("nombre"),"descripcion":r.get::<Option<String>,_>("descripcion"),"moneda":r.get::<String,_>("moneda"),"miembros":miembros}),
+        json!({"id":g,"nombre":r.get::<String,_>("nombre"),"descripcion":r.get::<Option<String>,_>("descripcion"),"moneda":r.get::<String,_>("moneda"),"actividad":r.get::<Option<String>,_>("actividad"),"miembros":miembros,"gastos":gastos,"balances":balances}),
     ))
 }
 pub fn routes(s: State) -> Router {
     Router::new()
         .route("/grupos", post(crear).get(listar))
         .route("/grupos/{id}", get(detalle))
+        .route("/grupos/{id}/gastos", post(registrar_gasto))
         .route("/grupos/{id}/miembros", post(invitar))
         .route("/grupos/{id}/miembros/yo/respuesta", post(responder))
         .with_state(s)
@@ -259,7 +329,7 @@ mod tests {
                 "POST",
                 "/grupos",
                 ana,
-                json!({"nombre":"Viaje","moneda":"USD"}),
+                json!({"nombre":"Viaje","moneda":"USD","actividad":"Marzo"}),
             ))
             .await
             .unwrap();
@@ -297,12 +367,96 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
+        let gasto = json!({"concepto":"Cena", "monto":"100.00", "fecha":"2026-10-23", "pagado_por":ana, "regla":"iguales", "participantes":[{"usuario_id":ana},{"usuario_id":beto}]});
+        let ruta_gasto = format!("/grupos/{grupo}/gastos");
+        for ruta in [
+            ruta_gasto.clone(),
+            format!("/grupos/{}/gastos", Uuid::new_v4()),
+        ] {
+            let r = app
+                .clone()
+                .oneshot(request("POST", &ruta, ajeno, gasto.clone()))
+                .await
+                .unwrap();
+            assert_eq!(r.status(), StatusCode::NOT_FOUND);
+            let cuerpo = to_bytes(r.into_body(), 65536).await.unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Value>(&cuerpo).unwrap(),
+                json!({"mensaje":"Grupo no encontrado."})
+            );
+        }
+        let mut invalido = gasto.clone();
+        invalido["regla"] = "porcentajes".into();
+        invalido["participantes"][0]["valor"] = "50".into();
+        invalido["participantes"][1]["valor"] = "45".into();
+        let r = app
+            .clone()
+            .oneshot(request("POST", &ruta_gasto, ana, invalido))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+        let cuerpo = to_bytes(r.into_body(), 65536).await.unwrap();
+        assert!(
+            serde_json::from_slice::<Value>(&cuerpo).unwrap()["mensaje"]
+                .as_str()
+                .unwrap()
+                .contains("faltan 5.00")
+        );
+        let r = app
+            .clone()
+            .oneshot(request("POST", &ruta_gasto, ana, gasto))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::CREATED);
         let res = app
             .clone()
             .oneshot(request("GET", &format!("/grupos/{grupo}"), beto, json!({})))
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
+        let cuerpo = to_bytes(res.into_body(), 65536).await.unwrap();
+        let data: Value = serde_json::from_slice(&cuerpo).unwrap();
+        assert_eq!(data["actividad"], "Marzo");
+        assert_eq!(data["gastos"].as_array().unwrap().len(), 1);
+        assert_eq!(data["gastos"][0]["partes"].as_array().unwrap().len(), 2);
+        let balances = data["balances"].as_array().unwrap();
+        assert_eq!(
+            balances
+                .iter()
+                .find(|b| b["usuario_id"] == ana.to_string())
+                .unwrap()["balance"],
+            "50.00"
+        );
+        assert_eq!(
+            balances
+                .iter()
+                .find(|b| b["usuario_id"] == beto.to_string())
+                .unwrap()["balance"],
+            "-50.00"
+        );
+        let amistad_id: Uuid = sqlx::query_scalar("SELECT id FROM amistades WHERE (usuario1_id=$1 AND usuario2_id=$2) OR (usuario1_id=$2 AND usuario2_id=$1)").bind(ana).bind(beto).fetch_one(&pool).await.unwrap();
+        let borrada = app
+            .clone()
+            .oneshot(request(
+                "DELETE",
+                &format!("/amistades/{amistad_id}"),
+                ana,
+                json!({}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(borrada.status(), StatusCode::NO_CONTENT);
+        let aun_visible = app
+            .clone()
+            .oneshot(request("GET", &format!("/grupos/{grupo}"), beto, json!({})))
+            .await
+            .unwrap();
+        assert_eq!(aun_visible.status(), StatusCode::OK);
+        let datos: Value =
+            serde_json::from_slice(&to_bytes(aun_visible.into_body(), 65536).await.unwrap())
+                .unwrap();
+        assert_eq!(datos["gastos"].as_array().unwrap().len(), 1);
+
         sqlx::query("DELETE FROM grupos WHERE id=$1")
             .bind(Uuid::parse_str(grupo).unwrap())
             .execute(&pool)

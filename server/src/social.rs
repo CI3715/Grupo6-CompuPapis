@@ -132,8 +132,8 @@ async fn responder(
 async fn listar(AxumState(s): AxumState<State>, headers: HeaderMap) -> ResultApi<Json<Value>> {
     let u = sesion(&headers, &s)?;
     let amigos=amistades_db::listar_amigos(&s.pool,u).await.map_err(interno)?.into_iter().map(|a|json!({"id":a.amistad_id,"usuario_id":a.id,"nombre_usuario":a.nombre_usuario,"nombre_visible":a.nombre_visible})).collect::<Vec<_>>();
-    let enviados=amistades_db::solicitudes_enviadas(&s.pool,u).await.map_err(interno)?.into_iter().map(|a|json!({"id":a.id,"emisor_id":a.emisor_id,"destinatario_id":a.destinatario_id,"creada_en":a.creada_en})).collect::<Vec<_>>();
-    let recibidos=amistades_db::solicitudes_recibidas(&s.pool,u).await.map_err(interno)?.into_iter().map(|a|json!({"id":a.id,"emisor_id":a.emisor_id,"destinatario_id":a.destinatario_id,"creada_en":a.creada_en})).collect::<Vec<_>>();
+    let enviados=amistades_db::solicitudes_enviadas(&s.pool,u).await.map_err(interno)?.into_iter().map(|a|json!({"id":a.id,"emisor_id":a.emisor_id,"destinatario_id":a.destinatario_id,"creada_en":a.creada_en,"nombre_usuario":a.nombre_usuario,"nombre_visible":a.nombre_visible})).collect::<Vec<_>>();
+    let recibidos=amistades_db::solicitudes_recibidas(&s.pool,u).await.map_err(interno)?.into_iter().map(|a|json!({"id":a.id,"emisor_id":a.emisor_id,"destinatario_id":a.destinatario_id,"creada_en":a.creada_en,"nombre_usuario":a.nombre_usuario,"nombre_visible":a.nombre_visible})).collect::<Vec<_>>();
     Ok(Json(
         json!({"amigos":amigos,"enviadas":enviados,"recibidas":recibidos}),
     ))

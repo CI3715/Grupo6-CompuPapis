@@ -10,7 +10,13 @@ type Amigo = {
   nombre_usuario: string;
   nombre_visible: string;
 };
-type Solicitud = { id: string; emisor_id: string; destinatario_id: string };
+type Solicitud = {
+  id: string;
+  emisor_id: string;
+  destinatario_id: string;
+  nombre_usuario: string;
+  nombre_visible: string;
+};
 type Amistades = {
   amigos: Amigo[];
   enviadas: Solicitud[];
@@ -21,6 +27,7 @@ type Grupo = {
   nombre: string;
   descripcion: string | null;
   moneda: string;
+  actividad: string | null;
   es_admin: boolean;
 };
 type Miembro = {
@@ -29,7 +36,33 @@ type Miembro = {
   nombre_visible: string;
   es_admin: boolean;
 };
-type Detalle = Omit<Grupo, "es_admin"> & { miembros: Miembro[] };
+type Parte = {
+  usuario_id: string;
+  nombre_usuario: string;
+  monto: string;
+  recibio_residuo: boolean | null;
+};
+type Gasto = {
+  id: string;
+  pagado_por: string;
+  concepto: string;
+  monto: string;
+  fecha: string;
+  partes: Parte[];
+};
+type Balance = {
+  usuario_id: string;
+  nombre_visible: string;
+  nombre_usuario: string;
+  pagado: string;
+  corresponde: string;
+  balance: string;
+};
+type Detalle = Omit<Grupo, "es_admin"> & {
+  miembros: Miembro[];
+  gastos: Gasto[];
+  balances: Balance[];
+};
 type Grupos = { grupos: Grupo[]; invitaciones: Grupo[] };
 type Usuario = { nombre_usuario: string; nombre_visible: string };
 type Seccion = "amigos" | "grupos";
@@ -61,6 +94,7 @@ export default function PantallaSocial({
   const [encontrado, setEncontrado] = useState<Usuario | null>(null);
   const [nombre, setNombre] = useState("");
   const [descripcion, setDescripcion] = useState("");
+  const [actividad, setActividad] = useState("");
   const [moneda, setMoneda] = useState("USD");
   const [seleccion, setSeleccion] = useState("");
   const [error, setError] = useState("");
@@ -314,7 +348,12 @@ export default function PantallaSocial({
                 ) : amistades.recibidas.length ? (
                   amistades.recibidas.map((s) => (
                     <div className="social-row" key={s.id}>
-                      <span>Usuario {s.emisor_id.slice(0, 8)}</span>
+                      <span>
+                        {s.nombre_visible}{" "}
+                        <span className="social-muted">
+                          @{s.nombre_usuario}
+                        </span>
+                      </span>
                       <div className="social-actions">
                         <button
                           className="btn btn-primary"
@@ -366,7 +405,12 @@ export default function PantallaSocial({
                 ) : amistades.enviadas.length ? (
                   amistades.enviadas.map((s) => (
                     <div className="social-row" key={s.id}>
-                      <span>Usuario {s.destinatario_id.slice(0, 8)}</span>
+                      <span>
+                        {s.nombre_visible}{" "}
+                        <span className="social-muted">
+                          @{s.nombre_usuario}
+                        </span>
+                      </span>
                       <span className="social-muted">Pendiente</span>
                     </div>
                   ))
@@ -390,6 +434,7 @@ export default function PantallaSocial({
                 <h2 className="form-title">{detalle.nombre}</h2>
                 <p className="social-muted">
                   {detalle.descripcion || "Sin descripción"} · {detalle.moneda}
+                  {detalle.actividad ? ` · ${detalle.actividad}` : ""}
                 </p>
                 <h3>Miembros</h3>
                 {detalle.miembros.map((m) => (
@@ -452,13 +497,90 @@ export default function PantallaSocial({
                   </form>
                 </section>
               )}
-              <VistaGasto miembros={detalle.miembros} moneda={detalle.moneda} />
-              <section className="form-card">
-                <h2 className="form-title">Gastos y balances</h2>
+              <VistaGasto
+                key={detalle.id}
+                miembros={detalle.miembros}
+                moneda={detalle.moneda}
+                registrar={async (datos) => {
+                  try {
+                    await llamar("registrar_gasto", {
+                      id: detalle.id,
+                      ...datos,
+                    });
+                  } catch (e: unknown) {
+                    if (
+                      typeof e === "object" &&
+                      e !== null &&
+                      "campo" in e &&
+                      e.campo === "sesion"
+                    )
+                      onSesionVencida();
+                    throw e;
+                  }
+                  try {
+                    const actualizado = await llamar<Detalle>("detalle_grupo", {
+                      id: detalle.id,
+                    });
+                    setDetalle((actual) =>
+                      actual?.id === detalle.id ? actualizado : actual,
+                    );
+                  } catch {
+                    setError(
+                      "El gasto se guardó, pero no se pudo actualizar el grupo. Vuelve a abrirlo para consultar los datos.",
+                    );
+                  }
+                }}
+              />
+              <section className="form-card social-wide">
+                <h2 className="form-title">Gastos</h2>
+                {detalle.gastos.length === 0 ? (
+                  <p className="social-muted">
+                    Todavía no hay gastos registrados.
+                  </p>
+                ) : (
+                  detalle.gastos.map((g) => (
+                    <div className="social-row" key={g.id}>
+                      <div>
+                        <strong>{g.concepto}</strong>
+                        <p className="social-muted">
+                          {g.fecha} · Pagó{" "}
+                          {detalle.miembros.find((m) => m.id === g.pagado_por)
+                            ?.nombre_visible ?? "un miembro"}
+                        </p>
+                        {g.partes.map((p) => (
+                          <p className="social-muted" key={p.usuario_id}>
+                            @{p.nombre_usuario}: {p.monto} {detalle.moneda}
+                            {p.recibio_residuo === true
+                              ? " · incluye 0,01 de redondeo"
+                              : ""}
+                          </p>
+                        ))}
+                      </div>
+                      <strong>
+                        {g.monto} {detalle.moneda}
+                      </strong>
+                    </div>
+                  ))
+                )}
+              </section>
+              <section className="form-card social-wide">
+                <h2 className="form-title">Balances</h2>
                 <p className="social-muted">
-                  El registro de gastos y los balances estarán disponibles
-                  cuando se complete su conexión con el servidor.
+                  Positivo: le deben. Negativo: debe.
                 </p>
+                {detalle.balances.map((b) => (
+                  <div className="social-row" key={b.usuario_id}>
+                    <div>
+                      <strong>{b.nombre_visible}</strong>
+                      <p className="social-muted">
+                        Pagó {b.pagado} · Le corresponde {b.corresponde}
+                      </p>
+                    </div>
+                    <strong>
+                      {b.balance} {detalle.moneda}
+                    </strong>
+                  </div>
+                ))}
               </section>
             </div>
           ) : (
@@ -472,10 +594,12 @@ export default function PantallaSocial({
                       await llamar("crear_grupo", {
                         nombre: nombre.trim(),
                         descripcion: descripcion.trim() || null,
+                        actividad: actividad.trim() || null,
                         moneda,
                       });
                       setNombre("");
                       setDescripcion("");
+                      setActividad("");
                       await cargar();
                     }, "Grupo creado.");
                   }}
@@ -501,6 +625,19 @@ export default function PantallaSocial({
                     className="form-control"
                     value={descripcion}
                     onChange={(e) => setDescripcion(e.target.value)}
+                  />
+                  <label
+                    className="form-label social-label"
+                    htmlFor="actividad-grupo"
+                  >
+                    Fecha o actividad (opcional)
+                  </label>
+                  <input
+                    id="actividad-grupo"
+                    className="form-control"
+                    placeholder="Por ejemplo, viaje en marzo"
+                    value={actividad}
+                    onChange={(e) => setActividad(e.target.value)}
                   />
                   <label
                     className="form-label social-label"
