@@ -1,6 +1,5 @@
 mod autenticacion;
 use crate::domain::RegistrarMovimiento;
-pub mod auth_client;
 pub mod domain;
 pub mod sqlite_repo;
 pub mod tasas_monedas;

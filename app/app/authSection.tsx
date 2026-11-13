@@ -10,6 +10,7 @@ export interface UsuarioSesion {
   correo: string;
   fecha_alta?: string;
   expira_en?: string;
+  vencimiento?: string;
 }
 
 interface ErrorDominio {
@@ -87,7 +88,7 @@ export function TopAuthBar({
       {sesionVencida && !usuario && (
         <div className="session-banner-expired">
           <span>
-            <strong>Tu sesión venció, inicia sesión de nuevo.</strong> Tus cuentas, movimientos y patrimonio siguen funcionando normalmente.
+            <strong>Tu sesión venció, inicia sesión de nuevo.</strong> Tus cuentas, movimientos y patrimonio siguen funcionando normalmente 14].
           </span>
           <button
             type="button"
@@ -129,17 +130,38 @@ export function AuthScreens({
   const [correoRegistro, setCorreoRegistro] = useState("");
   const [contrasenaRegistro, setContrasenaRegistro] = useState("");
 
-  // Estados Feedback
+  // Estados Feedback y Perfil Detallado
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<ErrorDominio | null>(null);
   const [mensajeExito, setMensajeExito] = useState<string | null>(null);
+  const [perfilDetallado, setPerfilDetallado] = useState<UsuarioSesion | null>(usuario);
 
   useEffect(() => {
     setError(null);
     setMensajeExito(null);
   }, [vista]);
 
-  // Formatea errores sin exponer trazas técnicas (RNF-17 y RNF-18)
+  useEffect(() => {
+    setPerfilDetallado(usuario);
+  }, [usuario]);
+
+  // Consulta GET /usuarios/yo (obtener_perfil) al abrir la vista de perfil 16]
+  useEffect(() => {
+    if (vista === "perfil") {
+      invoke<UsuarioSesion>("obtener_perfil")
+        .then((datos) => {
+          setPerfilDetallado((prev) => ({
+            ...prev,
+            ...datos,
+          }));
+        })
+        .catch(() => {
+          // Si ocurre algún problema de red, mantiene los datos existentes en memoria
+        });
+    }
+  }, [vista]);
+
+  // Formatea errores sin exponer trazas técnicas (RNF-17 y RNF-18) 14]
   const normalizarError = (err: unknown): ErrorDominio => {
     if (typeof err === "object" && err !== null && "campo" in err && "mensaje" in err) {
       return err as ErrorDominio;
@@ -179,7 +201,7 @@ export function AuthScreens({
         contrasena: contrasenaRegistro,
       });
 
-      // Limpiamos contraseña de memoria inmediatamente (RNF-05)
+      // Limpiamos contraseña de memoria inmediatamente (RNF-05) 14]
       setContrasenaRegistro("");
       setMensajeExito("Cuenta creada correctamente. Ahora puedes iniciar sesión con tu correo.");
       setCorreoLogin(correoRegistro);
@@ -191,7 +213,7 @@ export function AuthScreens({
     }
   };
 
-  // Flujo 2 y 3: Inicio de sesión -> invoke('iniciar_sesion') y perfil
+  // Flujo 2 y 3: Inicio de sesión -> invoke('iniciar_sesion') y perfil 16]
   const manejarLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -199,14 +221,24 @@ export function AuthScreens({
     setCargando(true);
 
     try {
-      const sesion = await invoke<UsuarioSesion>("iniciar_sesion", {
+      const respuesta = await invoke<any>("iniciar_sesion", {
         correo: correoLogin,
         contrasena: contrasenaLogin,
       });
 
-      // Limpiamos contraseña de memoria inmediatamente (RNF-05)
+      // Desempaqueta la respuesta del servidor (SesionAuth / SesionServidor)
+      const sesionNormalizada: UsuarioSesion = respuesta.usuario
+        ? {
+            ...respuesta.usuario,
+            vencimiento: respuesta.vencimiento ?? respuesta.expira_en,
+            expira_en: respuesta.expira_en ?? respuesta.vencimiento,
+          }
+        : respuesta;
+
+      // Limpiamos contraseña de memoria inmediatamente (RNF-05) 14]
       setContrasenaLogin("");
-      onAutenticado(sesion);
+      setPerfilDetallado(sesionNormalizada);
+      onAutenticado(sesionNormalizada);
       onCambiarVista("ninguna");
     } catch (err) {
       setContrasenaLogin("");
@@ -216,8 +248,10 @@ export function AuthScreens({
     }
   };
 
-  // Vista de Perfil Propio (GET /usuarios/yo)
-  if (vista === "perfil" && usuario) {
+  // Vista de Perfil Propio (GET /usuarios/yo) 16]
+  if (vista === "perfil" && perfilDetallado) {
+    const vigencia = perfilDetallado.vencimiento ?? perfilDetallado.expira_en;
+
     return (
       <section className="auth-screen-container">
         <div className="form-card">
@@ -239,20 +273,20 @@ export function AuthScreens({
           <div className="profile-card-grid">
             <div>
               <span className="profile-item-label">Nombre visible</span>
-              <span className="profile-item-value">{usuario.nombre_visible}</span>
+              <span className="profile-item-value">{perfilDetallado.nombre_visible}</span>
             </div>
             <div>
               <span className="profile-item-label">Nombre de usuario</span>
-              <span className="profile-item-value">@{usuario.nombre_usuario}</span>
+              <span className="profile-item-value">@{perfilDetallado.nombre_usuario}</span>
             </div>
             <div>
               <span className="profile-item-label">Correo electrónico</span>
-              <span className="profile-item-value">{usuario.correo}</span>
+              <span className="profile-item-value">{perfilDetallado.correo}</span>
             </div>
-            {usuario.expira_en && (
+            {vigencia && (
               <div>
                 <span className="profile-item-label">Vigencia de sesión</span>
-                <span className="profile-item-value">{usuario.expira_en}</span>
+                <span className="profile-item-value">{vigencia}</span>
               </div>
             )}
           </div>

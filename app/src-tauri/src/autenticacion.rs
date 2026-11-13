@@ -82,9 +82,18 @@ async fn respuesta<T: serde::de::DeserializeOwned>(
 
 #[tauri::command]
 pub async fn registrar_usuario(
-    datos: RegistroAuth,
+    nombre_usuario: String,
+    nombre_visible: String,
+    correo: String,
+    contrasena: String,
     state: State<'_, super::PingState>,
 ) -> Result<UsuarioAuth, ErrorAuth> {
+    let datos = RegistroAuth {
+        nombre_usuario,
+        nombre_visible,
+        correo,
+        contrasena,
+    };
     respuesta(
         state
             .http_client
@@ -96,10 +105,12 @@ pub async fn registrar_usuario(
 
 #[tauri::command]
 pub async fn iniciar_sesion(
-    datos: CredencialesAuth,
+    correo: String,
+    contrasena: String,
     state: State<'_, super::PingState>,
     auth: State<'_, AuthState>,
 ) -> Result<SesionAuth, ErrorAuth> {
+    let datos = CredencialesAuth { correo, contrasena };
     let sesion: SesionServidor = respuesta(
         state
             .http_client
