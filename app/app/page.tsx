@@ -17,6 +17,7 @@ import type {
   ResumenCuentas,
 } from "@/lib/tipos";
 import { normalizarError, obtenerClaseBadgeMoneda } from "@/lib/utilidades";
+import { TopAuthBar, AuthScreens, UsuarioSesion } from "./authSection";
 
 // --- FUNCIONES UTILERÍA ---
 interface EvaluacionMovimiento {
@@ -34,6 +35,11 @@ async function leerDatos() {
 }
 
 export default function MisCuentasPage() {
+// Entrega 5: Autenticación y manejo de sesión
+const [usuarioSesion, setUsuarioSesion] = useState<UsuarioSesion | null>(null);
+const [sesionVencida, setSesionVencida] = useState(false);
+const [vistaAuth, setVistaAuth] = useState<"ninguna" | "login" | "registro" | "perfil">("ninguna");
+
   // --- NAVEGACIÓN Y MODO PANTALLA COMPLETA (ENTREGA 4) ---
   const [pantalla, setPantalla] = useState<Pantalla>("cuentas");
   const [pantallaCompleta, setPantallaCompleta] = useState(false);
@@ -92,6 +98,36 @@ export default function MisCuentasPage() {
   const [guardando, setGuardando] = useState(false);
   const [estadoServidor, setEstadoServidor] = useState("");
   const [probandoServidor, setProbandoServidor] = useState(false);
+
+  const verificarSesionGuardada = async () => {
+  try {
+    // Llama al comando Rust que lee el token del keyring y valida GET /usuarios/yo
+    const perfil = await invoke<UsuarioSesion | null>("obtener_sesion_actual");
+    if (perfil) {
+      setUsuarioSesion(perfil);
+      setSesionVencida(false);
+    }
+  } catch (err: any) {
+    // Si el backend/Rust devuelve 401 (token vencido), avisa sin bloquear la app local
+    const msg = String(err?.mensaje ?? err ?? "").toLowerCase();
+    if (msg.includes("401") || msg.includes("venci") || msg.includes("expir")) {
+      setUsuarioSesion(null);
+      setSesionVencida(true);
+    }
+  }
+};
+
+const manejarCerrarSesion = async () => {
+  try {
+    await invoke("cerrar_sesion");
+  } catch {
+    // Incluso sin red, borra la sesión en pantalla
+  } finally {
+    setUsuarioSesion(null);
+    setSesionVencida(false);
+    setVistaAuth("ninguna");
+  }
+};
 
   const probarServidor = async () => {
     setProbandoServidor(true);
@@ -388,9 +424,30 @@ export default function MisCuentasPage() {
 
   // --- RENDER ---
   return (
-    <div
-      className={`app-wrapper ${cuentaSeleccionadaId ? "layout-split" : "layout-single"}`}
-    >
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+      <TopAuthBar
+        usuario={usuarioSesion}
+        sesionVencida={sesionVencida}
+        vistaAuth={vistaAuth}
+        onCambiarVistaAuth={setVistaAuth}
+        onCerrarSesion={manejarCerrarSesion}
+      />
+      {vistaAuth !== "ninguna" ? (
+        <AuthScreens
+          vista={vistaAuth}
+          usuario={usuarioSesion}
+          onCambiarVista={setVistaAuth}
+          onAutenticado={(u) => {
+            setUsuarioSesion(u);
+            setSesionVencida(false);
+          }}
+          onCerrarSesion={manejarCerrarSesion}
+        />
+      ) : null}
+
+      <div
+        className={`app-wrapper ${cuentaSeleccionadaId ? "layout-split" : "layout-single"}`}
+      >
       {/* PANEL IZQUIERDO: LISTA DE CUENTAS Y FORMULARIO */}
       <aside className="sidebar-cuentas">
         <header className="header">
@@ -1111,6 +1168,7 @@ export default function MisCuentasPage() {
           </section>
         </main>
       )}
+    </div>
     </div>
   );
 }
