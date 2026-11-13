@@ -1,3 +1,4 @@
+mod autenticacion;
 use crate::domain::RegistrarMovimiento;
 pub mod domain;
 pub mod sqlite_repo;
@@ -27,6 +28,7 @@ use domain::{
 };
 
 use sqlite_repo::RepositorioSqlite;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{Manager, State};
 
@@ -36,6 +38,8 @@ struct PingState {
 
 pub struct AppState {
     pub repo: Mutex<RepositorioSqlite>,
+    pub server_url: String,
+    pub ruta_token_fallback: PathBuf,
 }
 
 // Obtiene la fecha y hora UTC del sistema
@@ -242,7 +246,6 @@ fn historial_tasas(
         }
     };
 
-    // Buscamos las tasas de esas 2 monedas
     let resp = tasas_monedas::ejecutar_historial_tasas(&*repo, &origen, &destino)?;
 
     Ok(resp)
@@ -260,7 +263,6 @@ fn eliminar_tasa(state: State<'_, AppState>, tasa_id: String) -> Result<(), Erro
         }
     };
 
-    // Eliminamos la tasa
     tasas_monedas::ejecutar_eliminar_tasa(
         &mut *repo,
         &tasa_id,
@@ -277,7 +279,6 @@ fn obtener_moneda_base(state: State<'_, AppState>) -> Result<String, ErrorDomini
         .lock()
         .map_err(|_| ErrorDominio::nuevo("general", "No se pudieron cargar los datos."))?;
 
-    // Vemos cuál es la moneda base
     let resp = ejecutar_obtener_moneda_base(&*repo)?;
 
     Ok(resp)
@@ -299,7 +300,6 @@ fn cambiar_moneda_base(state: State<'_, AppState>, codigo: String) -> Result<Str
         }
     }
 
-    // Cambiamos la moneda base
     let resp = tasas_monedas::ejecutar_cambiar_moneda_base(
         &mut *repo,
         &codigo,
@@ -427,6 +427,7 @@ fn corregir_movimiento(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(autenticacion::AuthState::default())
         .manage(PingState {
             http_client: reqwest::Client::new(),
         })
@@ -436,6 +437,9 @@ pub fn run() {
                 .app_data_dir()
                 .expect("No se pudo obtener app_data_dir");
             let db_path = app_dir.join("cuentas_claras.sqlite");
+            let ruta_token_fallback = app_dir.join(".sesion_token");
+            let server_url = std::env::var("CUENTAS_CLARAS_API_URL")
+                .unwrap_or_else(|_| "http://localhost:8080".to_string());
             println!("===> RUTA DE SQLITE: {:?}", db_path);
 
             if let Ok(directorio_datos) = app.path().data_dir() {
@@ -450,11 +454,17 @@ pub fn run() {
 
             app.manage(AppState {
                 repo: Mutex::new(repo),
+                server_url,
+                ruta_token_fallback,
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             ping_servidor,
+            autenticacion::registrar_usuario,
+            autenticacion::iniciar_sesion,
+            autenticacion::obtener_perfil,
+            autenticacion::cerrar_sesion,
             fecha_local_actual,
             evaluar_movimiento,
             listar_monedas,
@@ -472,7 +482,8 @@ pub fn run() {
             listar_categorias,
             crear_categoria,
             registrar_movimiento,
-            corregir_movimiento
+            corregir_movimiento,
+
         ])
         .run(tauri::generate_context!())
         .expect("Error al ejecutar la aplicación Tauri");

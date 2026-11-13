@@ -1,0 +1,1 @@
+CREATE DATABASE cuentas_claras_pruebas;
