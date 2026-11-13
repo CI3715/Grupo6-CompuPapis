@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useState } from "react";
 
 export interface UsuarioSesion {
   id: string;
@@ -144,34 +144,36 @@ export function AuthScreens({
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<ErrorDominio | null>(null);
   const [mensajeExito, setMensajeExito] = useState<string | null>(null);
-  const [perfilDetallado, setPerfilDetallado] = useState<UsuarioSesion | null>(
-    usuario,
-  );
+  const [perfilConsultado, setPerfilConsultado] =
+    useState<UsuarioSesion | null>(null);
+  const perfilDetallado =
+    usuario && perfilConsultado?.id === usuario.id
+      ? { ...usuario, ...perfilConsultado }
+      : usuario;
 
+  // La consulta se descarta si se abandona el perfil antes de recibir respuesta.
   useEffect(() => {
+    if (vista !== "perfil") return;
+    let activo = true;
+    invoke<UsuarioSesion>("obtener_perfil")
+      .then((datos) => {
+        if (activo) setPerfilConsultado(datos);
+      })
+      .catch(() => {
+        // Una falla de red no borra la información de la sesión actual.
+      });
+    return () => {
+      activo = false;
+    };
+  }, [vista]);
+
+  const cambiarVista = (
+    siguiente: "ninguna" | "login" | "registro" | "perfil",
+  ) => {
     setError(null);
     setMensajeExito(null);
-  }, [vista]);
-
-  useEffect(() => {
-    setPerfilDetallado(usuario);
-  }, [usuario]);
-
-  // Consulta GET /usuarios/yo (obtener_perfil) al abrir la vista de perfil 16]
-  useEffect(() => {
-    if (vista === "perfil") {
-      invoke<UsuarioSesion>("obtener_perfil")
-        .then((datos) => {
-          setPerfilDetallado((prev) => ({
-            ...prev,
-            ...datos,
-          }));
-        })
-        .catch(() => {
-          // Si ocurre algún problema de red, mantiene los datos existentes en memoria
-        });
-    }
-  }, [vista]);
+    onCambiarVista(siguiente);
+  };
 
   // Formatea errores sin exponer trazas técnicas (RNF-17 y RNF-18) 14]
   const normalizarError = (err: unknown): ErrorDominio => {
@@ -243,25 +245,23 @@ export function AuthScreens({
     setCargando(true);
 
     try {
-      const respuesta = await invoke<any>("iniciar_sesion", {
+      const respuesta = await invoke<{
+        usuario: UsuarioSesion;
+        vencimiento: string;
+      }>("iniciar_sesion", {
         correo: correoLogin,
         contrasena: contrasenaLogin,
       });
 
-      // Desempaqueta la respuesta del servidor (SesionAuth / SesionServidor)
-      const sesionNormalizada: UsuarioSesion = respuesta.usuario
-        ? {
-            ...respuesta.usuario,
-            vencimiento: respuesta.vencimiento ?? respuesta.expira_en,
-            expira_en: respuesta.expira_en ?? respuesta.vencimiento,
-          }
-        : respuesta;
+      const sesionNormalizada: UsuarioSesion = {
+        ...respuesta.usuario,
+        vencimiento: respuesta.vencimiento,
+      };
 
       // Limpiamos contraseña de memoria inmediatamente (RNF-05) 14]
       setContrasenaLogin("");
-      setPerfilDetallado(sesionNormalizada);
       onAutenticado(sesionNormalizada);
-      onCambiarVista("ninguna");
+      cambiarVista("ninguna");
     } catch (err) {
       setContrasenaLogin("");
       setError(normalizarError(err));
@@ -289,7 +289,7 @@ export function AuthScreens({
               type="button"
               className="btn btn-ghost"
               style={{ padding: "4px 10px" }}
-              onClick={() => onCambiarVista("ninguna")}
+              onClick={() => cambiarVista("ninguna")}
             >
               ✕
             </button>
@@ -330,7 +330,7 @@ export function AuthScreens({
             <button
               type="button"
               className="btn btn-ghost"
-              onClick={() => onCambiarVista("ninguna")}
+              onClick={() => cambiarVista("ninguna")}
             >
               Volver a mis cuentas
             </button>
@@ -365,7 +365,7 @@ export function AuthScreens({
             type="button"
             className="btn btn-ghost"
             style={{ padding: "4px 10px" }}
-            onClick={() => onCambiarVista("ninguna")}
+            onClick={() => cambiarVista("ninguna")}
           >
             ✕
           </button>
@@ -376,14 +376,14 @@ export function AuthScreens({
           <button
             type="button"
             className={`auth-tab ${vista === "login" ? "active" : ""}`}
-            onClick={() => onCambiarVista("login")}
+            onClick={() => cambiarVista("login")}
           >
             Iniciar sesión
           </button>
           <button
             type="button"
             className={`auth-tab ${vista === "registro" ? "active" : ""}`}
-            onClick={() => onCambiarVista("registro")}
+            onClick={() => cambiarVista("registro")}
           >
             Crear cuenta
           </button>
@@ -453,7 +453,7 @@ export function AuthScreens({
               <button
                 type="button"
                 className="btn btn-ghost"
-                onClick={() => onCambiarVista("ninguna")}
+                onClick={() => cambiarVista("ninguna")}
               >
                 Continuar sin cuenta
               </button>
@@ -523,7 +523,7 @@ export function AuthScreens({
               <button
                 type="button"
                 className="btn btn-ghost"
-                onClick={() => onCambiarVista("login")}
+                onClick={() => cambiarVista("login")}
               >
                 Ya tengo cuenta
               </button>

@@ -659,3 +659,70 @@ select.form-control {
   font-weight: 600;
   color: var(--text-main);
 }
+
+.social-page {
+  max-width: 1050px;
+}
+.social-tabs,
+.social-actions,
+.social-inline {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.social-tabs {
+  margin-bottom: 22px;
+}
+.social-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 18px;
+  align-items: start;
+}
+.social-wide {
+  grid-column: 1 / -1;
+}
+.social-muted {
+  color: var(--text-muted);
+  font-size: 14px;
+  margin: 6px 0 14px;
+}
+.social-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.social-row:last-child {
+  border-bottom: 0;
+}
+.social-row .social-muted {
+  margin: 0;
+}
+.social-label {
+  margin-top: 16px;
+}
+.social-submit {
+  margin-top: 18px;
+}
+.social-notice {
+  color: var(--text-secondary);
+  background: #eef2ff;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+@media (max-width: 560px) {
+  .social-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .social-inline {
+    flex-wrap: wrap;
+  }
+}
+.social-value {
+  max-width: 150px;
+}

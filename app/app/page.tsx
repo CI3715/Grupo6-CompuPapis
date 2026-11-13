@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { useEffect, useRef, useState } from "react";
 
 import PantallaPatrimonio from "@/app/patrimonio";
+import PantallaSocial from "@/app/social";
 import PantallaTasas from "@/app/tasas";
 import { formatearMontoLocal } from "@/lib/money";
 import type {
@@ -17,7 +18,7 @@ import type {
   ResumenCuentas,
 } from "@/lib/tipos";
 import { normalizarError, obtenerClaseBadgeMoneda } from "@/lib/utilidades";
-import { TopAuthBar, AuthScreens, UsuarioSesion } from "./authSection";
+import { AuthScreens, TopAuthBar, UsuarioSesion } from "./authSection";
 
 // --- FUNCIONES UTILERÍA ---
 interface EvaluacionMovimiento {
@@ -43,6 +44,23 @@ export default function MisCuentasPage() {
   const [vistaAuth, setVistaAuth] = useState<
     "ninguna" | "login" | "registro" | "perfil"
   >("ninguna");
+
+  useEffect(() => {
+    const vencimiento = usuarioSesion?.vencimiento ?? usuarioSesion?.expira_en;
+    if (!vencimiento) return;
+    const tiempo = Date.parse(vencimiento);
+    if (!Number.isFinite(tiempo)) return;
+    const timer = window.setTimeout(
+      () => {
+        void invoke("cerrar_sesion").catch(() => undefined);
+        setUsuarioSesion(null);
+        setSesionVencida(true);
+        setVistaAuth("ninguna");
+      },
+      Math.max(0, tiempo - Date.now()),
+    );
+    return () => window.clearTimeout(timer);
+  }, [usuarioSesion]);
 
   // --- NAVEGACIÓN Y MODO PANTALLA COMPLETA (ENTREGA 4) ---
   const [pantalla, setPantalla] = useState<Pantalla>("cuentas");
@@ -102,30 +120,6 @@ export default function MisCuentasPage() {
   const [guardando, setGuardando] = useState(false);
   const [estadoServidor, setEstadoServidor] = useState("");
   const [probandoServidor, setProbandoServidor] = useState(false);
-
-  const verificarSesionGuardada = async () => {
-    try {
-      // Llama al comando Rust que lee el token del keyring y valida GET /usuarios/yo
-      const perfil = await invoke<UsuarioSesion | null>(
-        "obtener_sesion_actual",
-      );
-      if (perfil) {
-        setUsuarioSesion(perfil);
-        setSesionVencida(false);
-      }
-    } catch (err: any) {
-      // Si el backend/Rust devuelve 401 (token vencido), avisa sin bloquear la app local
-      const msg = String(err?.mensaje ?? err ?? "").toLowerCase();
-      if (
-        msg.includes("401") ||
-        msg.includes("venci") ||
-        msg.includes("expir")
-      ) {
-        setUsuarioSesion(null);
-        setSesionVencida(true);
-      }
-    }
-  };
 
   const manejarCerrarSesion = async () => {
     try {
@@ -415,6 +409,19 @@ export default function MisCuentasPage() {
     if (destino === "cuentas") void cargarDatos();
   };
 
+  if (pantalla === "social") {
+    return (
+      <PantallaSocial
+        volver={() => irAPantalla("cuentas")}
+        sesion={Boolean(usuarioSesion)}
+        sesionVencida={sesionVencida}
+        iniciarSesion={() => {
+          irAPantalla("cuentas");
+          setVistaAuth("login");
+        }}
+      />
+    );
+  }
   if (pantalla === "patrimonio") {
     return (
       <PantallaPatrimonio
@@ -490,6 +497,13 @@ export default function MisCuentasPage() {
               onClick={() => irAPantalla("patrimonio")}
             >
               Patrimonio
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => irAPantalla("social")}
+            >
+              Amigos y grupos
             </button>
             <button
               type="button"

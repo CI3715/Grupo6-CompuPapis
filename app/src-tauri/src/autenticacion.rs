@@ -6,7 +6,7 @@ const SERVER_URL: &str = "http://127.0.0.1:8000";
 
 #[derive(Default)]
 pub struct AuthState {
-    token: Mutex<Option<String>>,
+    pub(crate) token: Mutex<Option<String>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -25,7 +25,7 @@ pub struct ErrorAuth {
 }
 
 impl ErrorAuth {
-    fn general(mensaje: &str) -> Self {
+    pub(crate) fn general(mensaje: &str) -> Self {
         Self {
             campo: "general".into(),
             mensaje: mensaje.into(),
