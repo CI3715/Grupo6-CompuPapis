@@ -219,7 +219,7 @@ async fn iniciar(
     .map_err(|_| interno())?;
     let row = row.filter(|_| valid).ok_or_else(credenciales_invalidas)?;
     let user = usuario(&row);
-    let vencimiento = Utc::now() + Duration::minutes(60);
+    let vencimiento = Utc::now() + Duration::minutes(1);
     let token = encode(
         &Header::default(),
         &Claims {
@@ -244,15 +244,28 @@ async fn perfil(
         .and_then(|h| h.to_str().ok())
         .and_then(|h| h.strip_prefix("Bearer "))
         .ok_or_else(token_invalido)?;
+
     let mut validation = Validation::default();
-    validation.leeway = 0;
+    validation.leeway = 0; // Sin margen de tolerancia
+
     let claims = decode::<Claims>(
         token,
         &DecodingKey::from_secret(s.secret.as_bytes()),
         &validation,
     )
-    .map_err(|_| token_invalido())?
+    .map_err(|err| {
+        // Imprime o verifica si el error específico fue por expiración (ExpiredSignature)
+        println!("Error decodificando token: {:?}", err);
+        token_invalido()
+    })?
     .claims;
+
+    // Comprobación manual adicional por seguridad estricta
+    let ahora_timestamp = Utc::now().timestamp() as usize;
+    if claims.exp < ahora_timestamp {
+        return Err(token_invalido()); // Retorna 401 Unauthorized si ya pasó el tiempo
+    }
+
     let row = sqlx::query(
         "SELECT id,nombre_usuario,nombre_visible,correo,fecha_alta FROM usuarios WHERE id=$1",
     )
@@ -261,6 +274,7 @@ async fn perfil(
     .await
     .map_err(|_| interno())?
     .ok_or_else(token_invalido)?;
+
     Ok(Json(usuario(&row)))
 }
 pub fn routes(state: State) -> Router {
