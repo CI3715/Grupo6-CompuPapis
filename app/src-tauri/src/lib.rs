@@ -28,10 +28,6 @@ use domain::{
     ejecutar_obtener_detalle_cuenta, ejecutar_obtener_moneda_base, ejecutar_registrar_movimiento,
 };
 
-use auth_client::{
-    borrar_token_seguro, iniciar_sesion_en_servidor, obtener_perfil_actual, registrar_en_servidor,
-    EstadoSesionApp, UsuarioPublico,
-};
 use sqlite_repo::RepositorioSqlite;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -429,49 +425,6 @@ fn corregir_movimiento(
     )
 }
 
-// --- COMANDOS DE AUTENTICACIÓN (ENTREGA 5) ---
-#[tauri::command]
-fn registrar_usuario(
-    state: State<'_, AppState>,
-    nombre_usuario: String,
-    nombre_visible: String,
-    correo: String,
-    contrasena: String,
-) -> Result<UsuarioPublico, ErrorDominio> {
-    registrar_en_servidor(
-        &state.server_url,
-        &nombre_usuario,
-        &nombre_visible,
-        &correo,
-        &contrasena,
-    )
-}
-
-#[tauri::command]
-fn iniciar_sesion(
-    state: State<'_, AppState>,
-    correo: String,
-    contrasena: String,
-) -> Result<UsuarioPublico, ErrorDominio> {
-    iniciar_sesion_en_servidor(
-        &state.server_url,
-        &state.ruta_token_fallback,
-        &correo,
-        &contrasena,
-    )
-}
-
-#[tauri::command]
-fn obtener_usuario_actual(state: State<'_, AppState>) -> Result<EstadoSesionApp, ErrorDominio> {
-    obtener_perfil_actual(&state.server_url, &state.ruta_token_fallback)
-}
-
-#[tauri::command]
-fn cerrar_sesion(state: State<'_, AppState>) -> Result<(), ErrorDominio> {
-    borrar_token_seguro(&state.ruta_token_fallback);
-    Ok(())
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -531,10 +484,7 @@ pub fn run() {
             crear_categoria,
             registrar_movimiento,
             corregir_movimiento,
-            registrar_usuario,
-            iniciar_sesion,
-            obtener_usuario_actual,
-            cerrar_sesion
+
         ])
         .run(tauri::generate_context!())
         .expect("Error al ejecutar la aplicación Tauri");
