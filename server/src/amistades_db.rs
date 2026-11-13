@@ -1,4 +1,3 @@
-
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
@@ -45,7 +44,7 @@ pub async fn son_amigos(
     let datos = sqlx::query(
         "SELECT id FROM amistades
          WHERE (usuario1_id = $1 AND usuario2_id = $2)
-         OR (usuario1_id = $2 AND usuario2_id = $1)"
+         OR (usuario1_id = $2 AND usuario2_id = $1)",
     )
     .bind(usuario1)
     .bind(usuario2)
@@ -76,7 +75,7 @@ pub async fn guardar_solicitud(
              WHERE (usuario1_id = $2::uuid AND usuario2_id = $3::uuid)
              OR (usuario1_id = $3::uuid AND usuario2_id = $2::uuid)
          )
-         ON CONFLICT DO NOTHING"
+         ON CONFLICT DO NOTHING",
     )
     .bind(id)
     .bind(emisor)
@@ -96,7 +95,7 @@ pub async fn solicitudes_enviadas(
         "SELECT id, emisor_id, destinatario_id, creada_en
          FROM solicitudes_amistad
          WHERE emisor_id = $1 AND estado = 'pendiente'
-         ORDER BY creada_en, id"
+         ORDER BY creada_en, id",
     )
     .bind(usuario)
     .fetch_all(pool)
@@ -113,7 +112,7 @@ pub async fn solicitudes_recibidas(
         "SELECT id, emisor_id, destinatario_id, creada_en
          FROM solicitudes_amistad
          WHERE destinatario_id = $1 AND estado = 'pendiente'
-         ORDER BY creada_en, id"
+         ORDER BY creada_en, id",
     )
     .bind(usuario)
     .fetch_all(pool)
@@ -135,7 +134,7 @@ pub async fn aceptar_solicitud(
         "UPDATE solicitudes_amistad
          SET estado = 'aceptada', respondida_en = $3
          WHERE id = $1 AND destinatario_id = $2 AND estado = 'pendiente'
-         RETURNING emisor_id"
+         RETURNING emisor_id",
     )
     .bind(solicitud)
     .bind(destinatario)
@@ -164,7 +163,7 @@ pub async fn aceptar_solicitud(
     sqlx::query(
         "INSERT INTO amistades
          (id, usuario1_id, usuario2_id, creada_en)
-         VALUES ($1, $2, $3, $4)"
+         VALUES ($1, $2, $3, $4)",
     )
     .bind(amistad_id)
     .bind(usuario1)
@@ -187,7 +186,7 @@ pub async fn rechazar_solicitud(
     let resultado = sqlx::query(
         "UPDATE solicitudes_amistad
          SET estado = 'rechazada', respondida_en = $3
-         WHERE id = $1 AND destinatario_id = $2 AND estado = 'pendiente'"
+         WHERE id = $1 AND destinatario_id = $2 AND estado = 'pendiente'",
     )
     .bind(solicitud)
     .bind(destinatario)
@@ -198,17 +197,14 @@ pub async fn rechazar_solicitud(
     Ok(resultado.rows_affected() == 1)
 }
 
-pub async fn listar_amigos(
-    pool: &PgPool,
-    usuario: Uuid,
-) -> Result<Vec<Amigo>, sqlx::Error> {
+pub async fn listar_amigos(pool: &PgPool, usuario: Uuid) -> Result<Vec<Amigo>, sqlx::Error> {
     let filas = sqlx::query(
         "SELECT a.id AS amistad_id, u.id, u.nombre_usuario, u.nombre_visible
          FROM amistades a
          JOIN usuarios u ON u.id = a.usuario1_id OR u.id = a.usuario2_id
          WHERE (a.usuario1_id = $1 OR a.usuario2_id = $1)
          AND u.id <> $1
-         ORDER BY u.nombre_usuario"
+         ORDER BY u.nombre_usuario",
     )
     .bind(usuario)
     .fetch_all(pool)
@@ -236,7 +232,7 @@ pub async fn eliminar_amistad(
 ) -> Result<bool, sqlx::Error> {
     let resultado = sqlx::query(
         "DELETE FROM amistades
-         WHERE id = $1 AND (usuario1_id = $2 OR usuario2_id = $2)"
+         WHERE id = $1 AND (usuario1_id = $2 OR usuario2_id = $2)",
     )
     .bind(amistad)
     .bind(usuario)
@@ -253,8 +249,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requiere PostgreSQL de pruebas"]
     async fn guardar_y_revisar_amistades() -> Result<(), sqlx::Error> {
-        let url = std::env::var("E5_TEST_DATABASE_URL")
-            .expect("Falta E5_TEST_DATABASE_URL");
+        let url = std::env::var("E5_TEST_DATABASE_URL").expect("Falta E5_TEST_DATABASE_URL");
         let pool = PgPool::connect(&url).await?;
 
         let base: String = sqlx::query_scalar("SELECT current_database()")
@@ -282,7 +277,7 @@ mod tests {
             sqlx::query(
                 "INSERT INTO usuarios
                  (id, nombre_usuario, nombre_visible, correo, password_hash)
-                 VALUES ($1, $2, $3, $4, $5)"
+                 VALUES ($1, $2, $3, $4, $5)",
             )
             .bind(id)
             .bind(usuario)
@@ -328,7 +323,7 @@ mod tests {
         assert_eq!(amigos[0].id, beto);
         assert_eq!(amigos[0].amistad_id, amistad);
 
-        // Carla rechaza la solicitud 
+        // Carla rechaza la solicitud
         let solicitud2 = Uuid::new_v4();
         assert!(guardar_solicitud(&pool, solicitud2, beto, carla, fecha).await?);
 
@@ -347,12 +342,11 @@ mod tests {
 
         assert!(son_amigos(&pool, ana, beto).await?);
 
-        let estado: String = sqlx::query_scalar(
-            "SELECT estado FROM solicitudes_amistad WHERE id = $1"
-        )
-        .bind(solicitud2)
-        .fetch_one(&pool)
-        .await?;
+        let estado: String =
+            sqlx::query_scalar("SELECT estado FROM solicitudes_amistad WHERE id = $1")
+                .bind(solicitud2)
+                .fetch_one(&pool)
+                .await?;
 
         assert_eq!(estado, "rechazada");
 
@@ -361,12 +355,11 @@ mod tests {
         assert!(eliminar_amistad(&pool, amistad, ana).await?);
         assert!(!son_amigos(&pool, ana, beto).await?);
 
-        let estado: String = sqlx::query_scalar(
-            "SELECT estado FROM solicitudes_amistad WHERE id = $1"
-        )
-        .bind(solicitud1)
-        .fetch_one(&pool)
-        .await?;
+        let estado: String =
+            sqlx::query_scalar("SELECT estado FROM solicitudes_amistad WHERE id = $1")
+                .bind(solicitud1)
+                .fetch_one(&pool)
+                .await?;
 
         assert_eq!(estado, "aceptada");
 

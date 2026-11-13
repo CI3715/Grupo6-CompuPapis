@@ -16,12 +16,24 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct State {
-    pool: PgPool,
+    pub(crate) pool: PgPool,
     secret: String,
+    duracion_sesion: Duration,
 }
 impl State {
     pub fn new(pool: PgPool, secret: String) -> Self {
-        Self { pool, secret }
+        Self {
+            pool,
+            secret,
+            duracion_sesion: Duration::minutes(60),
+        }
+    }
+
+    pub fn con_modo_demostracion(mut self, habilitado: bool) -> Self {
+        if habilitado {
+            self.duracion_sesion = Duration::minutes(1);
+        }
+        self
     }
 }
 
@@ -219,7 +231,7 @@ async fn iniciar(
     .map_err(|_| interno())?;
     let row = row.filter(|_| valid).ok_or_else(credenciales_invalidas)?;
     let user = usuario(&row);
-    let vencimiento = Utc::now() + Duration::minutes(1);
+    let vencimiento = Utc::now() + s.duracion_sesion;
     let token = encode(
         &Header::default(),
         &Claims {
@@ -235,6 +247,27 @@ async fn iniciar(
         usuario: user,
     }))
 }
+pub(crate) fn autenticar(headers: &HeaderMap, state: &State) -> Result<Uuid, StatusCode> {
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    let mut validation = Validation::default();
+    validation.leeway = 0;
+    let claims = decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(state.secret.as_bytes()),
+        &validation,
+    )
+    .map_err(|_| StatusCode::UNAUTHORIZED)?
+    .claims;
+    if claims.exp <= Utc::now().timestamp() as usize {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(claims.sub)
+}
+
 async fn perfil(
     AxumState(s): AxumState<State>,
     headers: HeaderMap,
@@ -413,6 +446,47 @@ mod tests {
         let body = to_bytes(response.into_body(), 65536).await.unwrap();
         let session: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let token = session["token"].as_str().unwrap();
+        let decodificado = decode::<Claims>(
+            token,
+            &DecodingKey::from_secret(b"secreto de prueba con al menos 32 bytes"),
+            &Validation::default(),
+        )
+        .unwrap()
+        .claims;
+        let restante = decodificado.exp as i64 - Utc::now().timestamp();
+        assert!(
+            (3580..=3600).contains(&restante),
+            "Vigencia normal inesperada: {restante}"
+        );
+        let demo = routes(
+            State::new(
+                pool.clone(),
+                "secreto de prueba con al menos 32 bytes".into(),
+            )
+            .con_modo_demostracion(true),
+        );
+        let respuesta_demo = demo
+            .oneshot(request(
+                "/sesiones",
+                serde_json::json!({"correo": correo, "contrasena": "clave-super-segura"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(respuesta_demo.status(), StatusCode::OK);
+        let datos_demo = to_bytes(respuesta_demo.into_body(), 65536).await.unwrap();
+        let sesion_demo: serde_json::Value = serde_json::from_slice(&datos_demo).unwrap();
+        let claims_demo = decode::<Claims>(
+            sesion_demo["token"].as_str().unwrap(),
+            &DecodingKey::from_secret(b"secreto de prueba con al menos 32 bytes"),
+            &Validation::default(),
+        )
+        .unwrap()
+        .claims;
+        let restante_demo = claims_demo.exp as i64 - Utc::now().timestamp();
+        assert!(
+            (40..=60).contains(&restante_demo),
+            "Vigencia de demostración inesperada: {restante_demo}"
+        );
         let response = app
             .clone()
             .oneshot(
@@ -444,6 +518,17 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn vigencia_normal_y_modo_demostracion() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://test:test@127.0.0.1/test")
+            .unwrap();
+        let normal = State::new(pool.clone(), "secreto de prueba".into());
+        let demostracion = State::new(pool, "secreto de prueba".into()).con_modo_demostracion(true);
+        assert_eq!(normal.duracion_sesion, Duration::minutes(60));
+        assert_eq!(demostracion.duracion_sesion, Duration::minutes(1));
     }
 
     #[test]

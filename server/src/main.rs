@@ -1,6 +1,9 @@
-mod auth;
 pub mod amistades_db;
+mod auth;
 mod db;
+mod division;
+mod grupos;
+mod social;
 pub mod usuarios_db;
 
 use axum::{Json, Router, routing::get};
@@ -33,9 +36,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool = db::conectar_y_migrar(&database_url).await?;
 
+    let modo_demostracion = std::env::var("TOKEN_DEMO_1_MINUTO").as_deref() == Ok("1");
+    let estado = auth::State::new(pool, secret).con_modo_demostracion(modo_demostracion);
     let app = Router::new()
         .route("/ping", get(ping))
-        .merge(auth::routes(auth::State::new(pool, secret)));
+        .merge(grupos::routes(estado.clone()))
+        .merge(social::routes(estado.clone()))
+        .merge(auth::routes(estado));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8000").await?;
     println!("Servidor activo en http://127.0.0.1:8000");

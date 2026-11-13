@@ -85,12 +85,19 @@ set +a
 cargo run --manifest-path server/Cargo.toml
 ```
 
+Por defecto, los tokens emitidos por el servidor duran **60 minutos**. Para demostrar el vencimiento en un minuto, inicia el servidor con esta opción después de cargar `server/.env`:
+
+```bash
+TOKEN_DEMO_1_MINUTO=1 cargo run --manifest-path server/Cargo.toml
+```
+
+Inicia una sesión nueva con ese servidor: la duración se fija cuando se emite el token. Para volver al comportamiento normal, detén el servidor y ejecútalo sin la opción; los tokens ya emitidos conservan su vencimiento original.
+
 En **Fish**, desde la raíz, carga el mismo archivo y ejecuta el servidor así:
 
 ```fish
 bash -c 'set -a; source server/.env; set +a; exec cargo run --manifest-path server/Cargo.toml'
 ```
-
 
 La base de pruebas `cuentas_claras_pruebas` se crea junto con la base principal. Los datos persisten en un volumen Docker. El archivo `.env` no se sube a Git. Para un despliegue futuro se puede configurar PostgreSQL administrado (ver [ADR 003](docs/adr/003-base-datos-postgresql-neon.md)).
 
@@ -105,7 +112,6 @@ cargo test --manifest-path server/Cargo.toml -- --ignored
 Tauri expone `registrar_usuario`, `iniciar_sesion`, `obtener_perfil` y `cerrar_sesion`; el equipo de interfaz puede usar los adaptadores tipados de `app/lib/autenticacion.ts`. La sesión se conserva solo en memoria hasta cerrar la aplicación o sesión; las pantallas de autenticación siguen pendientes. El libro personal sigue siendo local.
 
 Desde el front de Tauri, importa las funciones desde `app/lib/autenticacion.ts`. `registrarUsuario({ nombre_usuario, nombre_visible, correo, contrasena })` devuelve el usuario; `iniciarSesion({ correo, contrasena })` devuelve usuario y vencimiento; `obtenerPerfil()` consulta la sesión activa y `cerrarSesion()` la descarta. Los errores del servidor se rechazan con `{ campo, mensaje }`. El token queda en memoria de Tauri y se pierde al cerrar la aplicación, por lo que hay que iniciar sesión nuevamente al abrirla. Estas funciones requieren la aplicación Tauri y el servidor iniciado en `127.0.0.1:8000`.
-
 
 Comprobar desde cualquier terminal:
 

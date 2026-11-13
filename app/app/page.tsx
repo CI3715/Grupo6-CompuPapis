@@ -35,10 +35,14 @@ async function leerDatos() {
 }
 
 export default function MisCuentasPage() {
-// Entrega 5: Autenticación y manejo de sesión
-const [usuarioSesion, setUsuarioSesion] = useState<UsuarioSesion | null>(null);
-const [sesionVencida, setSesionVencida] = useState(false);
-const [vistaAuth, setVistaAuth] = useState<"ninguna" | "login" | "registro" | "perfil">("ninguna");
+  // Entrega 5: Autenticación y manejo de sesión
+  const [usuarioSesion, setUsuarioSesion] = useState<UsuarioSesion | null>(
+    null,
+  );
+  const [sesionVencida, setSesionVencida] = useState(false);
+  const [vistaAuth, setVistaAuth] = useState<
+    "ninguna" | "login" | "registro" | "perfil"
+  >("ninguna");
 
   // --- NAVEGACIÓN Y MODO PANTALLA COMPLETA (ENTREGA 4) ---
   const [pantalla, setPantalla] = useState<Pantalla>("cuentas");
@@ -100,34 +104,40 @@ const [vistaAuth, setVistaAuth] = useState<"ninguna" | "login" | "registro" | "p
   const [probandoServidor, setProbandoServidor] = useState(false);
 
   const verificarSesionGuardada = async () => {
-  try {
-    // Llama al comando Rust que lee el token del keyring y valida GET /usuarios/yo
-    const perfil = await invoke<UsuarioSesion | null>("obtener_sesion_actual");
-    if (perfil) {
-      setUsuarioSesion(perfil);
-      setSesionVencida(false);
+    try {
+      // Llama al comando Rust que lee el token del keyring y valida GET /usuarios/yo
+      const perfil = await invoke<UsuarioSesion | null>(
+        "obtener_sesion_actual",
+      );
+      if (perfil) {
+        setUsuarioSesion(perfil);
+        setSesionVencida(false);
+      }
+    } catch (err: any) {
+      // Si el backend/Rust devuelve 401 (token vencido), avisa sin bloquear la app local
+      const msg = String(err?.mensaje ?? err ?? "").toLowerCase();
+      if (
+        msg.includes("401") ||
+        msg.includes("venci") ||
+        msg.includes("expir")
+      ) {
+        setUsuarioSesion(null);
+        setSesionVencida(true);
+      }
     }
-  } catch (err: any) {
-    // Si el backend/Rust devuelve 401 (token vencido), avisa sin bloquear la app local
-    const msg = String(err?.mensaje ?? err ?? "").toLowerCase();
-    if (msg.includes("401") || msg.includes("venci") || msg.includes("expir")) {
-      setUsuarioSesion(null);
-      setSesionVencida(true);
-    }
-  }
-};
+  };
 
-const manejarCerrarSesion = async () => {
-  try {
-    await invoke("cerrar_sesion");
-  } catch {
-    // Incluso sin red, borra la sesión en pantalla
-  } finally {
-    setUsuarioSesion(null);
-    setSesionVencida(false);
-    setVistaAuth("ninguna");
-  }
-};
+  const manejarCerrarSesion = async () => {
+    try {
+      await invoke("cerrar_sesion");
+    } catch {
+      // Incluso sin red, borra la sesión en pantalla
+    } finally {
+      setUsuarioSesion(null);
+      setSesionVencida(false);
+      setVistaAuth("ninguna");
+    }
+  };
 
   const probarServidor = async () => {
     setProbandoServidor(true);
@@ -424,7 +434,9 @@ const manejarCerrarSesion = async () => {
 
   // --- RENDER ---
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+    <div
+      style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}
+    >
       <TopAuthBar
         usuario={usuarioSesion}
         sesionVencida={sesionVencida}
@@ -448,727 +460,750 @@ const manejarCerrarSesion = async () => {
       <div
         className={`app-wrapper ${cuentaSeleccionadaId ? "layout-split" : "layout-single"}`}
       >
-      {/* PANEL IZQUIERDO: LISTA DE CUENTAS Y FORMULARIO */}
-      <aside className="sidebar-cuentas">
-        <header className="header">
-          <div>
-            <span className="header-tag">Cuentas Claras • Local-First</span>
-            <h1 className="header-title">Mis cuentas</h1>
-          </div>
-          {!cuentaSeleccionadaId && (
-            <button
-              onClick={() => {
-                setError(null);
-                setMostrarFormulario(!mostrarFormulario);
-              }}
-              className={`btn ${mostrarFormulario ? "btn-secondary" : "btn-primary"}`}
-            >
-              {mostrarFormulario ? "Cancelar" : "+ Nueva cuenta"}
-            </button>
-          )}
-        </header>
-
-        <div className="acciones-movimientos" style={{ marginBottom: "20px" }}>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => irAPantalla("patrimonio")}
-          >
-            Patrimonio
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => irAPantalla("tasas")}
-          >
-            Tasas de cambio
-          </button>
-        </div>
-
-        <details>
-          <summary>Conexión con el servidor</summary>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            disabled={probandoServidor}
-            onClick={probarServidor}
-          >
-            {probandoServidor ? "Comprobando…" : "Probar conexión"}
-          </button>
-          {estadoServidor && <p role="status">{estadoServidor}</p>}
-        </details>
-
-        {error && !mostrarFormulario && (
-          <div className="error-alert" role="alert">
-            {error.mensaje}
-          </div>
-        )}
-        {errorMovimiento && !mostrarFormMovimiento && (
-          <div className="error-alert" role="alert">
-            Revisa el campo «{errorMovimiento.campo}»: {errorMovimiento.mensaje}
-          </div>
-        )}
-
-        {mostrarFormulario && (
-          <section className="form-card">
-            <h2 className="form-title">Registrar nueva cuenta</h2>
-            <p className="form-subtitle">
-              Los datos se guardan únicamente en este dispositivo. La moneda no
-              podrá cambiarse después de creada.
-            </p>
-
-            {error && (
-              <div className="error-alert">
-                <strong>!</strong>
-                <div>
-                  <strong>Revisa el campo «{error.campo}»: </strong>
-                  <span>{error.mensaje}</span>
-                </div>
-              </div>
-            )}
-
-            <form onSubmit={manejarCrearCuenta}>
-              <div className="form-group">
-                <label className="form-label">Nombre de la cuenta</label>
-                <input
-                  type="text"
-                  value={nombre}
-                  onChange={(e) => setNombre(e.target.value)}
-                  placeholder="Ej: Cartera, Cuenta nómina, Billetera dólares"
-                  className={`form-control ${error?.campo === "nombre" ? "input-error" : ""}`}
-                />
-              </div>
-
-              <div className="form-row">
-                <div>
-                  <label className="form-label">Tipo de cuenta</label>
-                  <select
-                    value={tipo}
-                    onChange={(e) => setTipo(e.target.value)}
-                    className={`form-control ${error?.campo === "tipo" ? "input-error" : ""}`}
-                  >
-                    <option value="efectivo">Efectivo</option>
-                    <option value="banco">Banco</option>
-                    <option value="billetera digital">Billetera digital</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="form-label">Moneda</label>
-                  <select
-                    value={moneda}
-                    onChange={(e) => setMoneda(e.target.value)}
-                    className={`form-control ${error?.campo === "moneda" ? "input-error" : ""}`}
-                  >
-                    <option value="" disabled hidden>
-                      Seleccione...
-                    </option>
-                    {monedas.map((m) => (
-                      <option key={m.codigo} value={m.codigo}>
-                        {m.codigo} ({m.simbolo})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="form-label">Saldo inicial</label>
-                  <input
-                    type="text"
-                    value={saldoInicial}
-                    onChange={(e) => setSaldoInicial(e.target.value)}
-                    placeholder="0.00"
-                    className={`form-control ${error?.campo === "saldo_inicial" ? "input-error" : ""}`}
-                  />
-                </div>
-              </div>
-
-              <div className="form-actions">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setError(null);
-                    setMostrarFormulario(false);
-                  }}
-                  className="btn btn-ghost"
-                >
-                  Cancelar
-                </button>
-                <button type="submit" className="btn btn-primary">
-                  Guardar cuenta
-                </button>
-              </div>
-            </form>
-          </section>
-        )}
-
-        {/* Subtotales por Moneda */}
-        {resumen.subtotales.length > 0 && (
-          <section className="section-block">
-            <h2 className="section-title">Subtotales por moneda</h2>
-            <div className="subtotals-grid">
-              {resumen.subtotales.map((sub) => (
-                <div key={sub.codigo} className="subtotal-card">
-                  <div className="subtotal-header">
-                    <span className="subtotal-label">Subtotal</span>
-                    <span className={obtenerClaseBadgeMoneda(sub.codigo)}>
-                      {sub.codigo}
-                    </span>
-                  </div>
-                  <div className="subtotal-amount">
-                    {formatearMontoLocal(sub.subtotal, sub.simbolo)}
-                  </div>
-                </div>
-              ))}
+        {/* PANEL IZQUIERDO: LISTA DE CUENTAS Y FORMULARIO */}
+        <aside className="sidebar-cuentas">
+          <header className="header">
+            <div>
+              <span className="header-tag">Cuentas Claras • Local-First</span>
+              <h1 className="header-title">Mis cuentas</h1>
             </div>
-          </section>
-        )}
-
-        <section className="section-block">
-          <h2 className="section-title">
-            Cuentas registradas ({resumen.cuentas.length})
-          </h2>
-
-          {resumen.cuentas.length === 0 ? (
-            <div className="empty-state">
-              <p className="empty-title">
-                Todavía no tienes cuentas registradas
-              </p>
-              <p className="empty-description">
-                Crea tu primera cuenta de efectivo, banco o billetera digital
-                para empezar a llevar el control en este dispositivo.
-              </p>
+            {!cuentaSeleccionadaId && (
               <button
-                onClick={() => setMostrarFormulario(true)}
-                className="btn btn-primary"
+                onClick={() => {
+                  setError(null);
+                  setMostrarFormulario(!mostrarFormulario);
+                }}
+                className={`btn ${mostrarFormulario ? "btn-secondary" : "btn-primary"}`}
               >
-                Crear mi primera cuenta
+                {mostrarFormulario ? "Cancelar" : "+ Nueva cuenta"}
               </button>
-            </div>
-          ) : (
-            <div className="accounts-list">
-              {resumen.cuentas.map((c) => (
-                <div
-                  key={c.id}
-                  className={`account-card ${c.id === cuentaSeleccionadaId ? "account-card-active" : ""}`}
-                  onClick={() => seleccionarCuenta(c.id)}
-                  style={{ cursor: "pointer" }}
-                >
-                  <div>
-                    <div className="account-name-row">
-                      <h3 className="account-name">{c.nombre}</h3>
-                      <span className={obtenerClaseBadgeMoneda(c.moneda)}>
-                        {c.moneda}
-                      </span>
-                    </div>
-                    <p className="account-meta">Tipo: {c.tipo}</p>
-                  </div>
-                  <div className="account-balance-box">
-                    <span className="account-balance-label">Saldo actual</span>
-                    <span className="account-balance-value">
-                      {formatearMontoLocal(
-                        c.saldo.cantidad,
-                        obtenerSimbolo(c.moneda),
-                      )}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      </aside>
-
-      {/* PANEL DERECHO: DETALLE DE LA CUENTA Y MOVIMIENTOS */}
-      {cuentaSeleccionadaId && cuentaSeleccionada && detalleCuenta && (
-        <main className="content-detalle">
-          <button
-            className="btn btn-ghost"
-            onClick={() => setCuentaSeleccionadaId(null)}
-          >
-            <span style={{ fontSize: "14px", lineHeight: "0.8" }}>
-              ← Volver
-            </span>
-          </button>
-
-          <header className="detalle-header">
-            <div className="detalle-header-top">
-              <div className="detalle-info">
-                <h2 className="detalle-titulo">{cuentaSeleccionada.nombre}</h2>
-                <div
-                  style={{ display: "flex", gap: "8px", alignItems: "center" }}
-                >
-                  <span
-                    className={obtenerClaseBadgeMoneda(
-                      cuentaSeleccionada.moneda,
-                    )}
-                  >
-                    {cuentaSeleccionada.moneda}
-                  </span>
-                  <span className="account-meta">
-                    ({cuentaSeleccionada.tipo})
-                  </span>
-                </div>
-              </div>
-
-              <div className="detalle-saldo">
-                <p className="detalle-subtitulo">Saldo Actual</p>
-                <h1 className="saldo-gigante">
-                  {formatearMontoLocal(
-                    detalleCuenta.saldoActual,
-                    obtenerSimbolo(cuentaSeleccionada.moneda),
-                  )}
-                </h1>
-              </div>
-            </div>
+            )}
           </header>
 
-          {/* Composición del saldo (Sección 2.3) */}
-          <section className="section-block">
-            <h3 className="section-title">Composición del saldo</h3>
-            <div className="subtotals-grid">
-              <div className="subtotal-card">
-                <span className="subtotal-label">Saldo inicial</span>
-                <div className="subtotal-amount">
-                  {formatearMontoLocal(
-                    detalleCuenta.composicion.inicial,
-                    obtenerSimbolo(cuentaSeleccionada.moneda),
-                  )}
-                </div>
-              </div>
-              <div className="subtotal-card">
-                <span className="subtotal-label">Total ingresos</span>
-                <div
-                  className="subtotal-amount"
-                  style={{ color: "var(--text-success)" }}
-                >
-                  {formatearMontoLocal(
-                    detalleCuenta.composicion.ingresos,
-                    obtenerSimbolo(cuentaSeleccionada.moneda),
-                    true,
-                  )}
-                </div>
-              </div>
-              <div className="subtotal-card">
-                <span className="subtotal-label">Total gastos</span>
-                <div
-                  className="subtotal-amount"
-                  style={{ color: "var(--text-danger)" }}
-                >
-                  {formatearMontoLocal(
-                    `-${detalleCuenta.composicion.gastos}`,
-                    obtenerSimbolo(cuentaSeleccionada.moneda),
-                  )}
-                </div>
-              </div>
-              <div className="subtotal-card">
-                <span className="subtotal-label">Total ajustes</span>
-                <div
-                  className="subtotal-amount"
-                  style={{ color: "var(--text-ajust)" }}
-                >
-                  {formatearMontoLocal(
-                    detalleCuenta.composicion.ajustes,
-                    obtenerSimbolo(cuentaSeleccionada.moneda),
-                    true,
-                  )}
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* Botones de Acción de Movimientos */}
           <div
             className="acciones-movimientos"
             style={{ marginBottom: "20px" }}
           >
-            <h3
-              className="section-title"
-              style={{ margin: 0, alignSelf: "center" }}
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => irAPantalla("patrimonio")}
             >
-              Historial de Movimientos ({detalleCuenta.movimientos.length})
-            </h3>
-            <div style={{ display: "flex", gap: "10px" }}>
-              <button
-                type="button"
-                onClick={() => abrirFormularioMovimiento("gasto")}
-                className="btn btn-danger"
-                style={{ border: "1px solid var(--error-border)" }}
-              >
-                - Registrar Gasto
-              </button>
-              <button
-                type="button"
-                onClick={() => abrirFormularioMovimiento("ingreso")}
-                className="btn btn-success"
-                style={{ border: "1px solid var(--text-success)" }}
-              >
-                + Registrar Ingreso
-              </button>
-            </div>
+              Patrimonio
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => irAPantalla("tasas")}
+            >
+              Tasas de cambio
+            </button>
           </div>
 
-          {/* Formulario Registrar Gasto / Ingreso */}
-          {mostrarFormMovimiento && (
-            <section className="form-card">
-              <h3 className="form-title">
-                Registrar {tipoMovimiento === "gasto" ? "Gasto" : "Ingreso"} en{" "}
-                {cuentaSeleccionada.moneda}
-              </h3>
-              <p className="form-subtitle">
-                La moneda del movimiento es siempre la de la cuenta (
-                {cuentaSeleccionada.moneda}).
-              </p>
+          <details>
+            <summary>Conexión con el servidor</summary>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={probandoServidor}
+              onClick={probarServidor}
+            >
+              {probandoServidor ? "Comprobando…" : "Probar conexión"}
+            </button>
+            {estadoServidor && <p role="status">{estadoServidor}</p>}
+          </details>
 
-              {errorMovimiento && (
-                <div className="error-alert">
-                  <strong>!</strong>
-                  <div>
-                    <strong>Revisa el campo «{errorMovimiento.campo}»: </strong>
-                    <span>{errorMovimiento.mensaje}</span>
-                  </div>
-                </div>
-              )}
-
-              {/* Advertencia de Saldo Negativo (RF-LIB-04) */}
-              {advertenciaSaldoNegativo && (
-                <div className="warning-alert">
-                  <div>
-                    <strong>Advertencia de saldo negativo: </strong>
-                    <span>
-                      Este gasto dejará el saldo de la cuenta en negativo.
-                      ¿Deseas confirmarlo de todas formas?
-                    </span>
-                  </div>
-                  <div
-                    style={{ display: "flex", gap: "8px", marginTop: "10px" }}
-                  >
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      disabled={guardando}
-                      onClick={() => manejarRegistrarMovimiento(true)}
-                    >
-                      Sí, confirmar gasto
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      onClick={() => setAdvertenciaSaldoNegativo(false)}
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void manejarRegistrarMovimiento();
-                }}
-              >
-                <div className="form-row">
-                  <div>
-                    <label className="form-label">Tipo</label>
-                    <select
-                      value={tipoMovimiento}
-                      onChange={(e) => {
-                        const nuevoTipo = e.target.value as "gasto" | "ingreso";
-                        setTipoMovimiento(nuevoTipo);
-                        const primera =
-                          categorias.find((c) => c.tipo === nuevoTipo)
-                            ?.nombre ?? "";
-                        setCategoriaMovimiento(primera);
-                        setAdvertenciaSaldoNegativo(false);
-                      }}
-                      className="form-control"
-                    >
-                      <option value="gasto">Gasto</option>
-                      <option value="ingreso">Ingreso</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="form-label">
-                      Monto ({cuentaSeleccionada.moneda})
-                    </label>
-                    <input
-                      type="text"
-                      value={montoMovimiento}
-                      onChange={(e) => {
-                        setMontoMovimiento(e.target.value);
-                        setAdvertenciaSaldoNegativo(false);
-                      }}
-                      placeholder="0.00"
-                      className={`form-control ${errorMovimiento?.campo === "monto" ? "input-error" : ""}`}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="form-label">Fecha</label>
-                    <input
-                      type="date"
-                      value={fechaMovimiento}
-                      onChange={(e) => setFechaMovimiento(e.target.value)}
-                      className={`form-control ${errorMovimiento?.campo === "fecha" ? "input-error" : ""}`}
-                    />
-                  </div>
-                </div>
-
-                <div className="form-row">
-                  <div>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                      }}
-                    >
-                      <label className="form-label">Categoría</label>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setMostrarNuevaCategoria(!mostrarNuevaCategoria)
-                        }
-                        style={{
-                          background: "none",
-                          border: "none",
-                          color: "var(--brand-primary)",
-                          fontSize: "12px",
-                          fontWeight: 600,
-                          cursor: "pointer",
-                        }}
-                      >
-                        {mostrarNuevaCategoria ? "Cerrar" : "+ Nueva categoría"}
-                      </button>
-                    </div>
-                    <select
-                      value={categoriaMovimiento}
-                      onChange={(e) => setCategoriaMovimiento(e.target.value)}
-                      className={`form-control ${errorMovimiento?.campo === "categoria" ? "input-error" : ""}`}
-                    >
-                      <option value="">Seleccione categoría...</option>
-                      {categoriasFiltradas.map((cat) => (
-                        <option
-                          key={`${cat.tipo}-${cat.nombre}`}
-                          value={cat.nombre}
-                        >
-                          {cat.nombre}
-                        </option>
-                      ))}
-                    </select>
-
-                    {mostrarNuevaCategoria && (
-                      <div
-                        style={{
-                          display: "flex",
-                          gap: "8px",
-                          marginTop: "8px",
-                        }}
-                      >
-                        <input
-                          type="text"
-                          value={nombreNuevaCategoria}
-                          onChange={(e) =>
-                            setNombreNuevaCategoria(e.target.value)
-                          }
-                          placeholder="Nombre de nueva categoría"
-                          className="form-control"
-                        />
-                        <button
-                          type="button"
-                          onClick={manejarCrearCategoria}
-                          className="btn btn-secondary"
-                        >
-                          Añadir
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="form-label">Nota (opcional)</label>
-                    <input
-                      type="text"
-                      value={notaMovimiento}
-                      onChange={(e) => setNotaMovimiento(e.target.value)}
-                      placeholder="Ej: Mercado del sábado"
-                      className="form-control"
-                    />
-                  </div>
-                </div>
-
-                <div className="form-actions">
-                  <button
-                    type="button"
-                    onClick={() => setMostrarFormMovimiento(false)}
-                    className="btn btn-ghost"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    className="btn btn-primary"
-                    disabled={guardando}
-                  >
-                    Guardar movimiento
-                  </button>
-                </div>
-              </form>
-            </section>
+          {error && !mostrarFormulario && (
+            <div className="error-alert" role="alert">
+              {error.mensaje}
+            </div>
+          )}
+          {errorMovimiento && !mostrarFormMovimiento && (
+            <div className="error-alert" role="alert">
+              Revisa el campo «{errorMovimiento.campo}»:{" "}
+              {errorMovimiento.mensaje}
+            </div>
           )}
 
-          {/* Formulario de Corrección de Movimiento (RF-LIB-06) */}
-          {movimientoACorregir && (
+          {mostrarFormulario && (
             <section className="form-card">
-              <h3 className="form-title">Corregir movimiento</h3>
+              <h2 className="form-title">Registrar nueva cuenta</h2>
               <p className="form-subtitle">
-                El movimiento original ({movimientoACorregir.categoria} del{" "}
-                {movimientoACorregir.fecha}) no se borrará: se registrará un
-                ajuste por la diferencia. Si el movimiento no debió existir,
-                escribe <strong>0</strong>.
+                Los datos se guardan únicamente en este dispositivo. La moneda
+                no podrá cambiarse después de creada.
               </p>
 
-              {errorCorreccion && (
+              {error && (
                 <div className="error-alert">
                   <strong>!</strong>
                   <div>
-                    <strong>Revisa el campo «{errorCorreccion.campo}»: </strong>
-                    <span>{errorCorreccion.mensaje}</span>
+                    <strong>Revisa el campo «{error.campo}»: </strong>
+                    <span>{error.mensaje}</span>
                   </div>
                 </div>
               )}
 
-              <form onSubmit={manejarCorregirMovimiento}>
+              <form onSubmit={manejarCrearCuenta}>
                 <div className="form-group">
-                  <label className="form-label">
-                    Monto correcto ({cuentaSeleccionada.moneda}) — Valor vigente
-                    actual: {movimientoACorregir.montoVigente}
-                  </label>
+                  <label className="form-label">Nombre de la cuenta</label>
                   <input
                     type="text"
-                    value={montoCorrecto}
-                    onChange={(e) => setMontoCorrecto(e.target.value)}
-                    placeholder="0.00"
-                    className={`form-control ${errorCorreccion?.campo === "monto" ? "input-error" : ""}`}
+                    value={nombre}
+                    onChange={(e) => setNombre(e.target.value)}
+                    placeholder="Ej: Cartera, Cuenta nómina, Billetera dólares"
+                    className={`form-control ${error?.campo === "nombre" ? "input-error" : ""}`}
                   />
                 </div>
 
+                <div className="form-row">
+                  <div>
+                    <label className="form-label">Tipo de cuenta</label>
+                    <select
+                      value={tipo}
+                      onChange={(e) => setTipo(e.target.value)}
+                      className={`form-control ${error?.campo === "tipo" ? "input-error" : ""}`}
+                    >
+                      <option value="efectivo">Efectivo</option>
+                      <option value="banco">Banco</option>
+                      <option value="billetera digital">
+                        Billetera digital
+                      </option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="form-label">Moneda</label>
+                    <select
+                      value={moneda}
+                      onChange={(e) => setMoneda(e.target.value)}
+                      className={`form-control ${error?.campo === "moneda" ? "input-error" : ""}`}
+                    >
+                      <option value="" disabled hidden>
+                        Seleccione...
+                      </option>
+                      {monedas.map((m) => (
+                        <option key={m.codigo} value={m.codigo}>
+                          {m.codigo} ({m.simbolo})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="form-label">Saldo inicial</label>
+                    <input
+                      type="text"
+                      value={saldoInicial}
+                      onChange={(e) => setSaldoInicial(e.target.value)}
+                      placeholder="0.00"
+                      className={`form-control ${error?.campo === "saldo_inicial" ? "input-error" : ""}`}
+                    />
+                  </div>
+                </div>
+
                 <div className="form-actions">
                   <button
                     type="button"
-                    onClick={() => setMovimientoACorregir(null)}
+                    onClick={() => {
+                      setError(null);
+                      setMostrarFormulario(false);
+                    }}
                     className="btn btn-ghost"
                   >
                     Cancelar
                   </button>
-                  <button
-                    type="submit"
-                    className="btn btn-primary"
-                    disabled={guardando}
-                  >
-                    Registrar ajuste de corrección
+                  <button type="submit" className="btn btn-primary">
+                    Guardar cuenta
                   </button>
                 </div>
               </form>
             </section>
           )}
 
-          {/* Lista de Movimientos (Sección 2.3) */}
-          <section className="lista-movimientos">
-            {detalleCuenta.movimientos.length === 0 ? (
+          {/* Subtotales por Moneda */}
+          {resumen.subtotales.length > 0 && (
+            <section className="section-block">
+              <h2 className="section-title">Subtotales por moneda</h2>
+              <div className="subtotals-grid">
+                {resumen.subtotales.map((sub) => (
+                  <div key={sub.codigo} className="subtotal-card">
+                    <div className="subtotal-header">
+                      <span className="subtotal-label">Subtotal</span>
+                      <span className={obtenerClaseBadgeMoneda(sub.codigo)}>
+                        {sub.codigo}
+                      </span>
+                    </div>
+                    <div className="subtotal-amount">
+                      {formatearMontoLocal(sub.subtotal, sub.simbolo)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section className="section-block">
+            <h2 className="section-title">
+              Cuentas registradas ({resumen.cuentas.length})
+            </h2>
+
+            {resumen.cuentas.length === 0 ? (
               <div className="empty-state">
-                No hay movimientos registrados en esta cuenta.
+                <p className="empty-title">
+                  Todavía no tienes cuentas registradas
+                </p>
+                <p className="empty-description">
+                  Crea tu primera cuenta de efectivo, banco o billetera digital
+                  para empezar a llevar el control en este dispositivo.
+                </p>
+                <button
+                  onClick={() => setMostrarFormulario(true)}
+                  className="btn btn-primary"
+                >
+                  Crear mi primera cuenta
+                </button>
               </div>
             ) : (
               <div className="accounts-list">
-                {detalleCuenta.movimientos.map((mov) => {
-                  const esPositivo = !mov.monto.startsWith("-");
-                  return (
-                    <div key={mov.id} className="account-card">
-                      <div>
-                        <div className="account-name-row">
-                          <span className="account-name">{mov.categoria}</span>
-                          <span
-                            className="badge"
-                            style={{ textTransform: "uppercase" }}
-                          >
-                            {mov.tipo}
-                          </span>
-                          {mov.corregido && (
-                            <span className="badge badge-corregido">
-                              Corregido (vigente:{" "}
-                              {formatearMontoLocal(
-                                mov.montoVigente,
-                                obtenerSimbolo(cuentaSeleccionada.moneda),
-                              )}
-                              )
-                            </span>
-                          )}
-                          {mov.esAjuste && (
-                            <span className="badge badge-ajuste">
-                              Ajuste de #{mov.referenciaId?.slice(0, 8)}
-                            </span>
-                          )}
-                        </div>
-                        <p className="account-meta">
-                          Fecha: {mov.fecha} {mov.nota ? `• ${mov.nota}` : ""} •
-                          ID: #{mov.id.slice(0, 8)}
-                        </p>
+                {resumen.cuentas.map((c) => (
+                  <div
+                    key={c.id}
+                    className={`account-card ${c.id === cuentaSeleccionadaId ? "account-card-active" : ""}`}
+                    onClick={() => seleccionarCuenta(c.id)}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <div>
+                      <div className="account-name-row">
+                        <h3 className="account-name">{c.nombre}</h3>
+                        <span className={obtenerClaseBadgeMoneda(c.moneda)}>
+                          {c.moneda}
+                        </span>
                       </div>
-
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "16px",
-                        }}
-                      >
-                        <div className="account-balance-box">
-                          <span
-                            className="account-balance-value"
-                            style={{
-                              color: mov.esAjuste
-                                ? "var(--text-ajust)"
-                                : esPositivo
-                                  ? "var(--text-success)"
-                                  : "var(--text-danger)",
-                            }}
-                          >
-                            {formatearMontoLocal(
-                              mov.monto,
-                              obtenerSimbolo(cuentaSeleccionada.moneda),
-                              true,
-                            )}
-                          </span>
-                        </div>
-
-                        {/* Solo los movimientos originales se pueden corregir; no existe opción de editar ni eliminar (INV-04) */}
-                        {!mov.esAjuste && (
-                          <button
-                            type="button"
-                            onClick={() => iniciarCorreccion(mov)}
-                            className="btn btn-primary"
-                            style={{
-                              border: "1px solid var(--border-subtle)",
-                              padding: "6px 12px",
-                              fontSize: "12px",
-                            }}
-                          >
-                            Corregir
-                          </button>
-                        )}
-                      </div>
+                      <p className="account-meta">Tipo: {c.tipo}</p>
                     </div>
-                  );
-                })}
+                    <div className="account-balance-box">
+                      <span className="account-balance-label">
+                        Saldo actual
+                      </span>
+                      <span className="account-balance-value">
+                        {formatearMontoLocal(
+                          c.saldo.cantidad,
+                          obtenerSimbolo(c.moneda),
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </section>
-        </main>
-      )}
-    </div>
+        </aside>
+
+        {/* PANEL DERECHO: DETALLE DE LA CUENTA Y MOVIMIENTOS */}
+        {cuentaSeleccionadaId && cuentaSeleccionada && detalleCuenta && (
+          <main className="content-detalle">
+            <button
+              className="btn btn-ghost"
+              onClick={() => setCuentaSeleccionadaId(null)}
+            >
+              <span style={{ fontSize: "14px", lineHeight: "0.8" }}>
+                ← Volver
+              </span>
+            </button>
+
+            <header className="detalle-header">
+              <div className="detalle-header-top">
+                <div className="detalle-info">
+                  <h2 className="detalle-titulo">
+                    {cuentaSeleccionada.nombre}
+                  </h2>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: "8px",
+                      alignItems: "center",
+                    }}
+                  >
+                    <span
+                      className={obtenerClaseBadgeMoneda(
+                        cuentaSeleccionada.moneda,
+                      )}
+                    >
+                      {cuentaSeleccionada.moneda}
+                    </span>
+                    <span className="account-meta">
+                      ({cuentaSeleccionada.tipo})
+                    </span>
+                  </div>
+                </div>
+
+                <div className="detalle-saldo">
+                  <p className="detalle-subtitulo">Saldo Actual</p>
+                  <h1 className="saldo-gigante">
+                    {formatearMontoLocal(
+                      detalleCuenta.saldoActual,
+                      obtenerSimbolo(cuentaSeleccionada.moneda),
+                    )}
+                  </h1>
+                </div>
+              </div>
+            </header>
+
+            {/* Composición del saldo (Sección 2.3) */}
+            <section className="section-block">
+              <h3 className="section-title">Composición del saldo</h3>
+              <div className="subtotals-grid">
+                <div className="subtotal-card">
+                  <span className="subtotal-label">Saldo inicial</span>
+                  <div className="subtotal-amount">
+                    {formatearMontoLocal(
+                      detalleCuenta.composicion.inicial,
+                      obtenerSimbolo(cuentaSeleccionada.moneda),
+                    )}
+                  </div>
+                </div>
+                <div className="subtotal-card">
+                  <span className="subtotal-label">Total ingresos</span>
+                  <div
+                    className="subtotal-amount"
+                    style={{ color: "var(--text-success)" }}
+                  >
+                    {formatearMontoLocal(
+                      detalleCuenta.composicion.ingresos,
+                      obtenerSimbolo(cuentaSeleccionada.moneda),
+                      true,
+                    )}
+                  </div>
+                </div>
+                <div className="subtotal-card">
+                  <span className="subtotal-label">Total gastos</span>
+                  <div
+                    className="subtotal-amount"
+                    style={{ color: "var(--text-danger)" }}
+                  >
+                    {formatearMontoLocal(
+                      `-${detalleCuenta.composicion.gastos}`,
+                      obtenerSimbolo(cuentaSeleccionada.moneda),
+                    )}
+                  </div>
+                </div>
+                <div className="subtotal-card">
+                  <span className="subtotal-label">Total ajustes</span>
+                  <div
+                    className="subtotal-amount"
+                    style={{ color: "var(--text-ajust)" }}
+                  >
+                    {formatearMontoLocal(
+                      detalleCuenta.composicion.ajustes,
+                      obtenerSimbolo(cuentaSeleccionada.moneda),
+                      true,
+                    )}
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Botones de Acción de Movimientos */}
+            <div
+              className="acciones-movimientos"
+              style={{ marginBottom: "20px" }}
+            >
+              <h3
+                className="section-title"
+                style={{ margin: 0, alignSelf: "center" }}
+              >
+                Historial de Movimientos ({detalleCuenta.movimientos.length})
+              </h3>
+              <div style={{ display: "flex", gap: "10px" }}>
+                <button
+                  type="button"
+                  onClick={() => abrirFormularioMovimiento("gasto")}
+                  className="btn btn-danger"
+                  style={{ border: "1px solid var(--error-border)" }}
+                >
+                  - Registrar Gasto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => abrirFormularioMovimiento("ingreso")}
+                  className="btn btn-success"
+                  style={{ border: "1px solid var(--text-success)" }}
+                >
+                  + Registrar Ingreso
+                </button>
+              </div>
+            </div>
+
+            {/* Formulario Registrar Gasto / Ingreso */}
+            {mostrarFormMovimiento && (
+              <section className="form-card">
+                <h3 className="form-title">
+                  Registrar {tipoMovimiento === "gasto" ? "Gasto" : "Ingreso"}{" "}
+                  en {cuentaSeleccionada.moneda}
+                </h3>
+                <p className="form-subtitle">
+                  La moneda del movimiento es siempre la de la cuenta (
+                  {cuentaSeleccionada.moneda}).
+                </p>
+
+                {errorMovimiento && (
+                  <div className="error-alert">
+                    <strong>!</strong>
+                    <div>
+                      <strong>
+                        Revisa el campo «{errorMovimiento.campo}»:{" "}
+                      </strong>
+                      <span>{errorMovimiento.mensaje}</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Advertencia de Saldo Negativo (RF-LIB-04) */}
+                {advertenciaSaldoNegativo && (
+                  <div className="warning-alert">
+                    <div>
+                      <strong>Advertencia de saldo negativo: </strong>
+                      <span>
+                        Este gasto dejará el saldo de la cuenta en negativo.
+                        ¿Deseas confirmarlo de todas formas?
+                      </span>
+                    </div>
+                    <div
+                      style={{ display: "flex", gap: "8px", marginTop: "10px" }}
+                    >
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        disabled={guardando}
+                        onClick={() => manejarRegistrarMovimiento(true)}
+                      >
+                        Sí, confirmar gasto
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => setAdvertenciaSaldoNegativo(false)}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void manejarRegistrarMovimiento();
+                  }}
+                >
+                  <div className="form-row">
+                    <div>
+                      <label className="form-label">Tipo</label>
+                      <select
+                        value={tipoMovimiento}
+                        onChange={(e) => {
+                          const nuevoTipo = e.target.value as
+                            "gasto" | "ingreso";
+                          setTipoMovimiento(nuevoTipo);
+                          const primera =
+                            categorias.find((c) => c.tipo === nuevoTipo)
+                              ?.nombre ?? "";
+                          setCategoriaMovimiento(primera);
+                          setAdvertenciaSaldoNegativo(false);
+                        }}
+                        className="form-control"
+                      >
+                        <option value="gasto">Gasto</option>
+                        <option value="ingreso">Ingreso</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="form-label">
+                        Monto ({cuentaSeleccionada.moneda})
+                      </label>
+                      <input
+                        type="text"
+                        value={montoMovimiento}
+                        onChange={(e) => {
+                          setMontoMovimiento(e.target.value);
+                          setAdvertenciaSaldoNegativo(false);
+                        }}
+                        placeholder="0.00"
+                        className={`form-control ${errorMovimiento?.campo === "monto" ? "input-error" : ""}`}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="form-label">Fecha</label>
+                      <input
+                        type="date"
+                        value={fechaMovimiento}
+                        onChange={(e) => setFechaMovimiento(e.target.value)}
+                        className={`form-control ${errorMovimiento?.campo === "fecha" ? "input-error" : ""}`}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-row">
+                    <div>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <label className="form-label">Categoría</label>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setMostrarNuevaCategoria(!mostrarNuevaCategoria)
+                          }
+                          style={{
+                            background: "none",
+                            border: "none",
+                            color: "var(--brand-primary)",
+                            fontSize: "12px",
+                            fontWeight: 600,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {mostrarNuevaCategoria
+                            ? "Cerrar"
+                            : "+ Nueva categoría"}
+                        </button>
+                      </div>
+                      <select
+                        value={categoriaMovimiento}
+                        onChange={(e) => setCategoriaMovimiento(e.target.value)}
+                        className={`form-control ${errorMovimiento?.campo === "categoria" ? "input-error" : ""}`}
+                      >
+                        <option value="">Seleccione categoría...</option>
+                        {categoriasFiltradas.map((cat) => (
+                          <option
+                            key={`${cat.tipo}-${cat.nombre}`}
+                            value={cat.nombre}
+                          >
+                            {cat.nombre}
+                          </option>
+                        ))}
+                      </select>
+
+                      {mostrarNuevaCategoria && (
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: "8px",
+                            marginTop: "8px",
+                          }}
+                        >
+                          <input
+                            type="text"
+                            value={nombreNuevaCategoria}
+                            onChange={(e) =>
+                              setNombreNuevaCategoria(e.target.value)
+                            }
+                            placeholder="Nombre de nueva categoría"
+                            className="form-control"
+                          />
+                          <button
+                            type="button"
+                            onClick={manejarCrearCategoria}
+                            className="btn btn-secondary"
+                          >
+                            Añadir
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="form-label">Nota (opcional)</label>
+                      <input
+                        type="text"
+                        value={notaMovimiento}
+                        onChange={(e) => setNotaMovimiento(e.target.value)}
+                        placeholder="Ej: Mercado del sábado"
+                        className="form-control"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-actions">
+                    <button
+                      type="button"
+                      onClick={() => setMostrarFormMovimiento(false)}
+                      className="btn btn-ghost"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={guardando}
+                    >
+                      Guardar movimiento
+                    </button>
+                  </div>
+                </form>
+              </section>
+            )}
+
+            {/* Formulario de Corrección de Movimiento (RF-LIB-06) */}
+            {movimientoACorregir && (
+              <section className="form-card">
+                <h3 className="form-title">Corregir movimiento</h3>
+                <p className="form-subtitle">
+                  El movimiento original ({movimientoACorregir.categoria} del{" "}
+                  {movimientoACorregir.fecha}) no se borrará: se registrará un
+                  ajuste por la diferencia. Si el movimiento no debió existir,
+                  escribe <strong>0</strong>.
+                </p>
+
+                {errorCorreccion && (
+                  <div className="error-alert">
+                    <strong>!</strong>
+                    <div>
+                      <strong>
+                        Revisa el campo «{errorCorreccion.campo}»:{" "}
+                      </strong>
+                      <span>{errorCorreccion.mensaje}</span>
+                    </div>
+                  </div>
+                )}
+
+                <form onSubmit={manejarCorregirMovimiento}>
+                  <div className="form-group">
+                    <label className="form-label">
+                      Monto correcto ({cuentaSeleccionada.moneda}) — Valor
+                      vigente actual: {movimientoACorregir.montoVigente}
+                    </label>
+                    <input
+                      type="text"
+                      value={montoCorrecto}
+                      onChange={(e) => setMontoCorrecto(e.target.value)}
+                      placeholder="0.00"
+                      className={`form-control ${errorCorreccion?.campo === "monto" ? "input-error" : ""}`}
+                    />
+                  </div>
+
+                  <div className="form-actions">
+                    <button
+                      type="button"
+                      onClick={() => setMovimientoACorregir(null)}
+                      className="btn btn-ghost"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={guardando}
+                    >
+                      Registrar ajuste de corrección
+                    </button>
+                  </div>
+                </form>
+              </section>
+            )}
+
+            {/* Lista de Movimientos (Sección 2.3) */}
+            <section className="lista-movimientos">
+              {detalleCuenta.movimientos.length === 0 ? (
+                <div className="empty-state">
+                  No hay movimientos registrados en esta cuenta.
+                </div>
+              ) : (
+                <div className="accounts-list">
+                  {detalleCuenta.movimientos.map((mov) => {
+                    const esPositivo = !mov.monto.startsWith("-");
+                    return (
+                      <div key={mov.id} className="account-card">
+                        <div>
+                          <div className="account-name-row">
+                            <span className="account-name">
+                              {mov.categoria}
+                            </span>
+                            <span
+                              className="badge"
+                              style={{ textTransform: "uppercase" }}
+                            >
+                              {mov.tipo}
+                            </span>
+                            {mov.corregido && (
+                              <span className="badge badge-corregido">
+                                Corregido (vigente:{" "}
+                                {formatearMontoLocal(
+                                  mov.montoVigente,
+                                  obtenerSimbolo(cuentaSeleccionada.moneda),
+                                )}
+                                )
+                              </span>
+                            )}
+                            {mov.esAjuste && (
+                              <span className="badge badge-ajuste">
+                                Ajuste de #{mov.referenciaId?.slice(0, 8)}
+                              </span>
+                            )}
+                          </div>
+                          <p className="account-meta">
+                            Fecha: {mov.fecha} {mov.nota ? `• ${mov.nota}` : ""}{" "}
+                            • ID: #{mov.id.slice(0, 8)}
+                          </p>
+                        </div>
+
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "16px",
+                          }}
+                        >
+                          <div className="account-balance-box">
+                            <span
+                              className="account-balance-value"
+                              style={{
+                                color: mov.esAjuste
+                                  ? "var(--text-ajust)"
+                                  : esPositivo
+                                    ? "var(--text-success)"
+                                    : "var(--text-danger)",
+                              }}
+                            >
+                              {formatearMontoLocal(
+                                mov.monto,
+                                obtenerSimbolo(cuentaSeleccionada.moneda),
+                                true,
+                              )}
+                            </span>
+                          </div>
+
+                          {/* Solo los movimientos originales se pueden corregir; no existe opción de editar ni eliminar (INV-04) */}
+                          {!mov.esAjuste && (
+                            <button
+                              type="button"
+                              onClick={() => iniciarCorreccion(mov)}
+                              className="btn btn-primary"
+                              style={{
+                                border: "1px solid var(--border-subtle)",
+                                padding: "6px 12px",
+                                fontSize: "12px",
+                              }}
+                            >
+                              Corregir
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          </main>
+        )}
+      </div>
     </div>
   );
 }
