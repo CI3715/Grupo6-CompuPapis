@@ -86,7 +86,7 @@ export function TopAuthBar({
             >
               {vistaAuth === "ninguna"
                 ? "Iniciar sesión"
-                : "Volver a mis finanzas"}
+                : "Volver a mis cuentas"}
             </button>
           )}
         </div>

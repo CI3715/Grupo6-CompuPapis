@@ -354,7 +354,7 @@ export default function PantallaSocial({
                           @{s.nombre_usuario}
                         </span>
                       </span>
-                      <div className="social-actions">
+                      <div className="social-actions social-actions-columna">
                         <button
                           className="btn btn-primary"
                           disabled={ocupado}

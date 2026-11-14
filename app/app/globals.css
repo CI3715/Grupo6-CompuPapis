@@ -519,7 +519,7 @@ select.form-control {
 /* Botones alineados a la derecha */
 .acciones-movimientos {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   width: 100%;
 }
@@ -725,4 +725,9 @@ select.form-control {
 }
 .social-value {
   max-width: 150px;
+}
+/* Botones apilados, del mismo ancho */
+.social-actions-columna {
+  flex-direction: column;
+  align-items: stretch;
 }
