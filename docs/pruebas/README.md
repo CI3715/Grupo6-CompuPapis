@@ -397,3 +397,16 @@ posiciones (el formateador todavía muestra un mínimo de dos), revisar visualme
 formularios, cambios de base/errores y tamaños de ventana. El formato ya conserva
 hasta 28 posiciones recibidas para conversiones sin pasar por Number; no debe
 redondear cada fila antes de sumar.
+
+## Entrega 7: registro de cambios y verificación de INV-17
+
+Las pruebas automatizadas del servidor en `server/src/main.rs` verifican la
+generación de eventos inmutables de gastos compartidos y el cumplimiento de la
+invariante **INV-17** sin requerir una instancia activa de PostgreSQL ni Axum.
+
+Ejecutar desde la raíz del repositorio:
+
+```bash
+cargo test --manifest-path server/Cargo.toml
+cargo fmt --manifest-path server/Cargo.toml -- --check
+cargo clippy --manifest-path server/Cargo.toml --all-targets -- -D warnings
