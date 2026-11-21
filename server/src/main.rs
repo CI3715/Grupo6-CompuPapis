@@ -25,6 +25,8 @@ use axum::http::StatusCode;
 
 use crate::gastos_db::ErrorGasto;
 
+use sqlx::{Postgres, Transaction};
+
 #[derive(Serialize)]
 struct PingResponse {
     estado: &'static str,
@@ -202,6 +204,28 @@ pub fn filtrar_destinatarios_evento(
 
     // Ordena los ids igual que sincronizacion_db para evitar bloqueos cruzados en PostgreSQL
     destinatarios.sort();
+    Ok(destinatarios)
+}
+
+// Persiste eventos inmutables para participantes válidos en una transacción y devuelve sus destinatarios
+#[allow(dead_code)]
+pub async fn emitir_eventos_gasto(
+    tx: &mut Transaction<'_, Postgres>,
+    solicitante_id: Uuid,
+    miembros_activos: &HashSet<Uuid>,
+    participantes_gasto: &[Uuid],
+    gasto_id: Uuid,
+) -> Result<Vec<Uuid>, ErrorGasto> {
+    // Verifica membresía y excluye no participantes antes de escribir en base de datos
+    let destinatarios = filtrar_destinatarios_evento(
+        solicitante_id,
+        miembros_activos,
+        participantes_gasto,
+    )
+    .map_err(ErrorDestinatarios::a_error_gasto)?;
+    // Delega el INSERT con UUID y cursor creciente, propagando errores SQLx
+    sincronizacion_db::guardar_eventos_gasto(tx, gasto_id).await?;
+
     Ok(destinatarios)
 }
 
