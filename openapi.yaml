@@ -179,11 +179,7 @@ paths:
       security: [{ bearerAuth: [] }]
       responses:
         "200":
-          {
-            description: Datos del grupo,
-            miembros,
-            gastos con partes y balances,
-          }
+          description: "Datos del grupo, miembros, gastos con partes y balances"
         "401": { description: Sesión inválida }
         "404": { description: Grupo inexistente o sin acceso }
   /grupos/{id}/gastos:
@@ -194,8 +190,17 @@ paths:
           required: true,
           schema: { type: string, format: uuid },
         }
+    # Registra un gasto compartido o devuelve el existente si repite la clave
     post:
+      summary: Registrar gasto compartido con idempotencia
+      description: >-
+        Registra un gasto compartido en el grupo y calcula sus partes exactas
+        en el servidor. Si se repite una clave en Idempotency-Key con los mismos
+        datos devuelve el gasto ya guardado con 200; si cambian los datos responde 409.
       security: [{ bearerAuth: [] }]
+      # Reutiliza la clave opcional para evitar duplicados en reintentos sin conexión
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -229,11 +234,36 @@ paths:
                           nullable: true,
                           description: Porcentaje o monto fijo exacto,
                         }
+      # Declara creación inicial, reintento idempotente y errores de validación o conflicto
       responses:
-        "201": { description: Gasto y partes calculadas por el servidor }
-        "400": { description: Datos o división inválidos }
-        "401": { description: Sesión inválida }
-        "404": { description: Grupo inexistente o sin acceso }
+        "200":
+          description: Clave Idempotency-Key ya procesada con los mismos datos; devuelve el gasto existente
+        "201":
+          description: Gasto compartido y partes exactas creados por primera vez por el servidor
+        "400":
+          description: Datos del gasto, división o encabezado Idempotency-Key inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorRespuesta"
+        "401":
+          description: Token ausente, inválido o vencido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorRespuesta"
+        "404":
+          description: Grupo inexistente o usuario sin membresía activa
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorRespuesta"
+        "409":
+          description: Clave Idempotency-Key ya utilizada previamente con datos distintos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorRespuesta"
   /grupos/{id}/miembros:
     parameters:
       - {
