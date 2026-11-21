@@ -148,6 +148,7 @@ pub enum ErrorDestinatarios {
 #[allow(dead_code)]
 impl ErrorDestinatarios {
     // Devuelve el código HTTP correspondiente, ocultando inexistencia o falta de membresía con 404
+    #[allow(dead_code)]
     pub fn codigo_http(&self) -> StatusCode {
         match self {
             Self::GrupoNoAccesible => StatusCode::NOT_FOUND,
@@ -257,4 +258,401 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Servidor activo en http://127.0.0.1:8000");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+// Pruebas unitarias de emisión de eventos e invariante INV-17
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    // Crea un UUID determinista para identificar entidades en pruebas
+    fn id_fijo(valor: u128) -> Uuid {
+        Uuid::from_u128(valor)
+    }
+
+    // Cuota individual de un participante dentro de un gasto grupal.
+    struct PartePrueba {
+        usuario_id: Uuid,
+        monto_parte: &'static str,
+        recibio_residuo: bool,
+    }
+
+    // Metadatos compartidos de un gasto grupal para casos de prueba
+    struct GastoPrueba<'a> {
+        grupo_id: Uuid,
+        gasto_id: Uuid,
+        concepto: &'a str,
+        fecha: NaiveDate,
+        moneda: &'a str,
+    }
+
+    // Registro en memoria por usuario para validar generación de eventos.
+    struct RegistroCambiosPrueba {
+        siguiente_id_evento: u128,
+        eventos_por_usuario: HashMap<Uuid, Vec<EventoCambio>>,
+    }
+
+    impl RegistroCambiosPrueba {
+        // Valida destinatarios con INV-17 y agrega eventos inmutables por participantes
+        fn registrar_gasto(
+            &mut self,
+            solicitante_id: Uuid,
+            miembros_activos: &HashSet<Uuid>,
+            gasto: &GastoPrueba<'_>,
+            partes: &[PartePrueba],
+        ) -> Result<(), ErrorDestinatarios> {
+            let participantes: Vec<Uuid> = partes.iter().map(|p| p.usuario_id).collect();
+            // Bloquea la emisión completa si falla la membresía o algún participante.
+            let destinatarios =
+                filtrar_destinatarios_evento(solicitante_id, miembros_activos, &participantes)?;
+
+            let mapa_partes: HashMap<Uuid, &PartePrueba> =
+                partes.iter().map(|p| (p.usuario_id, p)).collect();
+
+            for usuario_id in destinatarios {
+                let parte = mapa_partes[&usuario_id];
+                let lista = self.eventos_por_usuario.entry(usuario_id).or_default();
+                // Incrementa la posición local del usuario para conservar cursor creciente.
+                let posicion =
+                    i64::try_from(lista.len() + 1).expect("La posición debe caber en i64");
+                let evento_id = id_fijo(self.siguiente_id_evento);
+                self.siguiente_id_evento += 1;
+
+                let datos = DatosParteGasto {
+                    grupo_id: gasto.grupo_id,
+                    gasto_id: gasto.gasto_id,
+                    concepto: String::from(gasto.concepto),
+                    fecha: gasto.fecha,
+                    moneda: String::from(gasto.moneda),
+                    monto_parte: String::from(parte.monto_parte),
+                    recibio_residuo: parte.recibio_residuo,
+                };
+
+                let evento = EventoCambio::nuevo_gasto_grupo(evento_id, posicion, datos)
+                    .expect("La posición secuencial debe ser positiva");
+                lista.push(evento);
+            }
+
+            Ok(())
+        }
+
+        // Devuelve los eventos registrados para un usuario en orden de llegada
+        fn eventos_de(&self, usuario_id: Uuid) -> &[EventoCambio] {
+            self.eventos_por_usuario
+                .get(&usuario_id)
+                .map_or(&[], Vec::as_slice)
+        }
+
+        // Cuenta el total de eventos almacenados entre todos los usuarios.
+        fn total_eventos(&self) -> usize {
+            self.eventos_por_usuario.values().map(Vec::len).sum()
+        }
+    }
+
+    // Comprueba que cada participante reciba exactamente un evento con datos correctos
+    #[test]
+    fn cada_participante_recibe_un_evento_con_datos_y_redondeo_correctos() {
+        let ana = id_fijo(1);
+        let beto = id_fijo(2);
+        let carla = id_fijo(3);
+        let miembros = HashSet::from([ana, beto, carla]);
+        let fecha = NaiveDate::from_ymd_opt(2026, 11, 20).expect("Fecha válida");
+
+        let gasto = GastoPrueba {
+            grupo_id: id_fijo(10),
+            gasto_id: id_fijo(100),
+            concepto: "Hotel",
+            fecha,
+            moneda: "USD",
+        };
+        // Simula el reparto de 100.00 USD del hotel con céntimo residual.
+        let partes = [
+            PartePrueba {
+                usuario_id: ana,
+                monto_parte: "33.34",
+                recibio_residuo: true,
+            },
+            PartePrueba {
+                usuario_id: beto,
+                monto_parte: "33.33",
+                recibio_residuo: false,
+            },
+            PartePrueba {
+                usuario_id: carla,
+                monto_parte: "33.33",
+                recibio_residuo: false,
+            },
+        ];
+
+        let mut registro = RegistroCambiosPrueba::nuevo();
+        let resultado = registro.registrar_gasto(ana, &miembros, &gasto, &partes);
+        assert!(resultado.is_ok());
+        assert_eq!(registro.total_eventos(), 3);
+
+        for (usuario_id, monto_esperado, residuo_esperado) in [
+            (ana, "33.34", true),
+            (beto, "33.33", false),
+            (carla, "33.33", false),
+        ] {
+            let eventos = registro.eventos_de(usuario_id);
+            assert_eq!(eventos.len(), 1);
+            let evento = &eventos[0];
+            assert_eq!(evento.tipo(), TIPO_EVENTO_GASTO_GRUPO);
+            assert_eq!(evento.posicion(), 1);
+            assert_eq!(evento.datos().grupo_id, gasto.grupo_id);
+            assert_eq!(evento.datos().gasto_id, gasto.gasto_id);
+            assert_eq!(evento.datos().concepto, "Hotel");
+            assert_eq!(evento.datos().fecha, fecha);
+            assert_eq!(evento.datos().moneda, "USD");
+            assert_eq!(evento.datos().monto_parte, monto_esperado);
+            assert_eq!(evento.datos().recibio_residuo, residuo_esperado);
+        }
+    }
+
+    // Verifica que un miembro excluido del gasto no reciba ningún evento
+    #[test]
+    fn miembro_excluido_de_la_division_no_recibe_eventos() {
+        let ana = id_fijo(1);
+        let beto = id_fijo(2);
+        let carla = id_fijo(3);
+        let miembros = HashSet::from([ana, beto, carla]);
+        let fecha = NaiveDate::from_ymd_opt(2026, 11, 20).expect("Fecha válida");
+
+        let gasto = GastoPrueba {
+            grupo_id: id_fijo(10),
+            gasto_id: id_fijo(101),
+            concepto: "Taxi",
+            fecha,
+            moneda: "USD",
+        };
+        let partes = [
+            PartePrueba {
+                usuario_id: ana,
+                monto_parte: "10.00",
+                recibio_residuo: false,
+            },
+            PartePrueba {
+                usuario_id: beto,
+                monto_parte: "10.00",
+                recibio_residuo: false,
+            },
+        ];
+
+        let mut registro = RegistroCambiosPrueba::nuevo();
+        let resultado = registro.registrar_gasto(ana, &miembros, &gasto, &partes);
+        assert!(resultado.is_ok());
+        assert_eq!(registro.eventos_de(ana).len(), 1);
+        assert_eq!(registro.eventos_de(beto).len(), 1);
+        assert!(registro.eventos_de(carla).is_empty());
+        assert_eq!(registro.total_eventos(), 2);
+    }
+
+    // Comprueba INV-17 rechazando ajenos y devolviendo 404 sin generar eventos
+    #[test]
+    fn inv_17_rechaza_no_miembros_y_mantiene_404_sin_generar_eventos() {
+        let ana = id_fijo(1);
+        let beto = id_fijo(2);
+        let externo = id_fijo(99);
+        let miembros = HashSet::from([ana, beto]);
+        let grupo_vacio = HashSet::new();
+        let fecha = NaiveDate::from_ymd_opt(2026, 11, 20).expect("Fecha válida");
+
+        let gasto = GastoPrueba {
+            grupo_id: id_fijo(10),
+            gasto_id: id_fijo(102),
+            concepto: "Cena",
+            fecha,
+            moneda: "USD",
+        };
+        let mut registro = RegistroCambiosPrueba::nuevo();
+
+        // Caso participante externo falla y evita emisiones parciales
+        let partes_con_externo = [
+            PartePrueba {
+                usuario_id: ana,
+                monto_parte: "15.00",
+                recibio_residuo: false,
+            },
+            PartePrueba {
+                usuario_id: externo,
+                monto_parte: "15.00",
+                recibio_residuo: false,
+            },
+        ];
+        let error_externo = registro
+            .registrar_gasto(ana, &miembros, &gasto, &partes_con_externo)
+            .expect_err("Un participante ajeno debe rechazarse");
+        assert_eq!(
+            error_externo,
+            ErrorDestinatarios::ParticipanteNoMiembro(externo)
+        );
+        assert_eq!(error_externo.codigo_http(), StatusCode::BAD_REQUEST);
+        assert_eq!(registro.total_eventos(), 0);
+
+        // Caso solicitante sin membresía recibe 404 ocultando acceso
+        let partes_validas = [PartePrueba {
+            usuario_id: ana,
+            monto_parte: "30.00",
+            recibio_residuo: false,
+        }];
+        let error_sin_membresia = registro
+            .registrar_gasto(externo, &miembros, &gasto, &partes_validas)
+            .expect_err("Un solicitante externo debe recibir 404");
+        assert_eq!(error_sin_membresia, ErrorDestinatarios::GrupoNoAccesible);
+        assert_eq!(error_sin_membresia.codigo_http(), StatusCode::NOT_FOUND);
+        assert!(matches!(
+            error_sin_membresia.a_error_gasto(),
+            ErrorGasto::SinAcceso
+        ));
+        assert_eq!(registro.total_eventos(), 0);
+
+        // Caso grupo inexistente responde con el mismo 404
+        let error_inexistente = registro
+            .registrar_gasto(ana, &grupo_vacio, &gasto, &partes_validas)
+            .expect_err("Un grupo inexistente debe recibir 404");
+        assert_eq!(error_inexistente, ErrorDestinatarios::GrupoNoAccesible);
+        assert_eq!(error_inexistente.codigo_http(), StatusCode::NOT_FOUND);
+        assert!(matches!(
+            error_inexistente.a_error_gasto(),
+            ErrorGasto::SinAcceso
+        ));
+        assert_eq!(registro.total_eventos(), 0);
+    }
+
+    // Valida identificadores únicos, orden creciente por usuario y rechazo de posición inválida
+    #[test]
+    fn eventos_conservan_id_unico_y_orden_creciente_por_usuario() {
+        let ana = id_fijo(1);
+        let beto = id_fijo(2);
+        let carla = id_fijo(3);
+        let miembros = HashSet::from([ana, beto, carla]);
+        let grupo_id = id_fijo(10);
+        let fecha = NaiveDate::from_ymd_opt(2026, 11, 21).expect("Fecha válida");
+        let mut registro = RegistroCambiosPrueba::nuevo();
+
+        let hotel = GastoPrueba {
+            grupo_id,
+            gasto_id: id_fijo(201),
+            concepto: "Hotel",
+            fecha,
+            moneda: "USD",
+        };
+        let taxi = GastoPrueba {
+            grupo_id,
+            gasto_id: id_fijo(202),
+            concepto: "Taxi",
+            fecha,
+            moneda: "USD",
+        };
+        let cena = GastoPrueba {
+            grupo_id,
+            gasto_id: id_fijo(203),
+            concepto: "Cena",
+            fecha,
+            moneda: "USD",
+        };
+
+        registro
+            .registrar_gasto(
+                ana,
+                &miembros,
+                &hotel,
+                &[
+                    PartePrueba {
+                        usuario_id: ana,
+                        monto_parte: "33.34",
+                        recibio_residuo: true,
+                    },
+                    PartePrueba {
+                        usuario_id: beto,
+                        monto_parte: "33.33",
+                        recibio_residuo: false,
+                    },
+                    PartePrueba {
+                        usuario_id: carla,
+                        monto_parte: "33.33",
+                        recibio_residuo: false,
+                    },
+                ],
+            )
+            .expect("El primer gasto debe registrarse");
+
+        registro
+            .registrar_gasto(
+                beto,
+                &miembros,
+                &taxi,
+                &[
+                    PartePrueba {
+                        usuario_id: ana,
+                        monto_parte: "10.00",
+                        recibio_residuo: false,
+                    },
+                    PartePrueba {
+                        usuario_id: beto,
+                        monto_parte: "10.00",
+                        recibio_residuo: false,
+                    },
+                ],
+            )
+            .expect("El segundo gasto debe registrarse");
+
+        registro
+            .registrar_gasto(
+                carla,
+                &miembros,
+                &cena,
+                &[
+                    PartePrueba {
+                        usuario_id: ana,
+                        monto_parte: "30.00",
+                        recibio_residuo: false,
+                    },
+                    PartePrueba {
+                        usuario_id: beto,
+                        monto_parte: "15.00",
+                        recibio_residuo: false,
+                    },
+                    PartePrueba {
+                        usuario_id: carla,
+                        monto_parte: "15.00",
+                        recibio_residuo: false,
+                    },
+                ],
+            )
+            .expect("El tercer gasto debe registrarse");
+
+        // Comprueba crecimiento estricto del cursor y unicidad global de identificadores.
+        let mut ids_unicos = HashSet::new();
+        for (usuario_id, posiciones_esperadas) in [
+            (ana, &[1, 2, 3][..]),
+            (beto, &[1, 2, 3][..]),
+            (carla, &[1, 2][..]),
+        ] {
+            let eventos = registro.eventos_de(usuario_id);
+            let posiciones: Vec<i64> = eventos.iter().map(EventoCambio::posicion).collect();
+            assert_eq!(posiciones, posiciones_esperadas);
+
+            for par in eventos.windows(2) {
+                assert!(par[0].posicion() < par[1].posicion());
+            }
+            for evento in eventos {
+                assert!(ids_unicos.insert(evento.id()));
+            }
+        }
+        assert_eq!(ids_unicos.len(), 8);
+
+        // Verifica la invariante de posición estrictamente positiva en el constructor.
+        let datos_invalidos = DatosParteGasto {
+            grupo_id,
+            gasto_id: id_fijo(204),
+            concepto: String::from("Prueba"),
+            fecha,
+            moneda: String::from("USD"),
+            monto_parte: String::from("1.00"),
+            recibio_residuo: false,
+        };
+        assert!(EventoCambio::nuevo_gasto_grupo(id_fijo(9000), 0, datos_invalidos).is_err());
+    }
 }
