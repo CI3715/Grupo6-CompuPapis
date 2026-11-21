@@ -133,7 +133,6 @@ impl EventoCambio {
 }
 
 // Errores de validación de membresía y destinatarios al emitir eventos de cambio
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ErrorDestinatarios {
     // El grupo no existe o el solicitante no es miembro activo
@@ -173,7 +172,6 @@ impl ErrorDestinatarios {
 }
 
 // Valida membresía del solicitante y devuelve solo los participantes activos para emitir eventos
-#[allow(dead_code)]
 pub fn filtrar_destinatarios_evento(
     solicitante_id: Uuid,
     miembros_activos: &HashSet<Uuid>,
@@ -208,7 +206,6 @@ pub fn filtrar_destinatarios_evento(
 }
 
 // Persiste eventos inmutables para participantes válidos en una transacción y devuelve sus destinatarios
-#[allow(dead_code)]
 pub async fn emitir_eventos_gasto(
     tx: &mut Transaction<'_, Postgres>,
     solicitante_id: Uuid,
