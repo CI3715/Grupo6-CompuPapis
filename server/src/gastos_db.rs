@@ -129,6 +129,18 @@ pub async fn registrar(
             recibio_residuo: Some(parte.recibio_residuo),
         });
     }
+    // Reúne miembros activos y participantes del gasto para emitir cambios
+    let miembros_activos: HashSet<Uuid> = nombres.keys().copied().collect();
+    let participantes_gasto: Vec<Uuid> = guardadas.iter().map(|p| p.usuario_id).collect();
+    // Emite eventos en la misma transacción para revertir todo si ocurre un error.
+    crate::emitir_eventos_gasto(
+        &mut tx,
+        solicitante,
+        &miembros_activos,
+        &participantes_gasto,
+        id,
+    )
+    .await?;
     tx.commit().await?;
     Ok(GastoGuardado {
         id,
