@@ -5,6 +5,7 @@ pub mod division;
 pub mod gastos_db;
 mod grupos;
 mod social;
+pub mod sincronizacion_db;
 pub mod usuarios_db;
 
 use axum::{Json, Router, routing::get};
