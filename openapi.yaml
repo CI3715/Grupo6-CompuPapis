@@ -1,3 +1,6 @@
+# openapi.yaml: contrato HTTP del servidor Cuentas Claras para funciones sociales y sincronización
+# Define solo datos compartidos, excluye cuentas, saldos y movimientos del libro personal
+
 openapi: 3.0.3
 info:
   title: Cuentas Claras API
@@ -284,6 +287,29 @@ components:
               aceptar: { type: boolean }
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  # Parámetros reutilizables para paginación y control de idempotencia
+  parameters:
+    # Parámetro de consulta que indica el último cursor procesado por el cliente
+    CursorDesde:
+      name: desde
+      in: query
+      required: false
+      description: Posición del último evento procesado; si se omite inicia en cero.
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+        default: 0
+    # Encabezado de clave única que evita duplicar gastos compartidos en reintentos
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Clave única del cliente repetida en reintentos para evitar registros duplicados.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
   schemas:
     Usuario:
       type: object
@@ -294,3 +320,90 @@ components:
         nombre_visible: { type: string }
         correo: { type: string, format: email }
         fecha_alta: { type: string, format: date-time }
+    # Evento inmutable del registro compartido con la parte correspondiente a un participante
+    EventoCambio:
+      type: object
+      required:
+        [
+          id,
+          cursor,
+          tipo,
+          grupo_id,
+          grupo_nombre,
+          gasto_id,
+          concepto,
+          fecha,
+          moneda,
+          monto_parte,
+          incluye_centimos_redondeo,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Identificador único e inmutable del evento en el servidor.
+        cursor:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Posición creciente del evento dentro del registro del usuario.
+        tipo:
+          type: string
+          description: Tipo de evento compartido; el cliente ignora tipos desconocidos.
+        grupo_id:
+          type: string
+          format: uuid
+          description: Identificador del grupo donde se registró el gasto.
+        grupo_nombre:
+          type: string
+          description: Nombre del grupo usado para etiquetar el gasto al aplicarlo.
+        gasto_id:
+          type: string
+          format: uuid
+          description: Identificador del gasto compartido que originó esta parte.
+        concepto:
+          type: string
+          description: Descripción del gasto registrado en el grupo.
+        fecha:
+          type: string
+          format: date
+          description: Fecha civil del gasto compartido.
+        moneda:
+          type: string
+          pattern: "^[A-Z]{3}$"
+          description: Código ISO de tres letras de la moneda del grupo.
+        monto_parte:
+          type: string
+          description: Monto decimal exacto de la parte del participante con hasta dos decimales.
+        incluye_centimos_redondeo:
+          type: boolean
+          description: Indica si la parte incluye céntimos del residuo de redondeo.
+    # Lote paginado de cambios compartidos con nuevo cursor e indicador de continuidad
+    RespuestaCambios:
+      type: object
+      required: [eventos, nuevo_cursor, hay_mas]
+      properties:
+        eventos:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/EventoCambio" }
+          description: Lista ordenada de hasta 100 eventos posteriores al cursor consultado.
+        nuevo_cursor:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Cursor actualizado que el cliente guarda para la siguiente sincronización.
+        hay_mas:
+          type: boolean
+          description: Indica si existen más eventos pendientes por descargar en el servidor.
+    # Respuesta uniforme de error para fallos de validación, autenticación, acceso o conflicto
+    ErrorRespuesta:
+      type: object
+      required: [codigo, mensaje]
+      properties:
+        codigo:
+          type: string
+          description: Identificador corto del tipo de error ocurrido.
+        mensaje:
+          type: string
+          description: Explicación legible del motivo del rechazo.
