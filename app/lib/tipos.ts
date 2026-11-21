@@ -50,6 +50,7 @@ export interface Movimiento {
   corregido: boolean;
   esAjuste: boolean;
   referenciaId?: string;
+  esGastoDeGrupo?: boolean;
 }
 
 export interface DetalleCuenta {
@@ -63,7 +64,6 @@ export interface DetalleCuenta {
   movimientos: Movimiento[];
 }
 
-// --- Entrega 4 ---
 export type Pantalla = "cuentas" | "patrimonio" | "tasas" | "social";
 
 export interface Tasa {
@@ -107,4 +107,28 @@ export interface Patrimonio {
 export interface PropsPantalla {
   onVolver: () => void;
   onIr: () => void;
+}
+
+// --- Entrega 7 ---
+export interface ResultadoSync {
+  ultimaSincronizacion: string | null;
+  aplicados: number;
+}
+
+export interface PendienteAplicar {
+  eventoId: string;
+  grupoId: string;
+  grupo: string;
+  concepto: string;
+  monto: string;
+  moneda: string;
+}
+
+export interface GastoEnCola {
+  clave: string;
+  grupoId: string;
+  concepto: string;
+  monto: string;
+  estado: "pendiente" | "rechazado";
+  motivo: string | null;
 }

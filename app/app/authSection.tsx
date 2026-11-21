@@ -2,6 +2,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
+import type { EstadoSincronizacion } from "@/app/sincronizacion";
+import { formatearFechaHora } from "@/lib/utilidades";
 
 export interface UsuarioSesion {
   id: string;
@@ -26,6 +28,7 @@ interface AuthBarProps {
     vista: "ninguna" | "login" | "registro" | "perfil",
   ) => void;
   onCerrarSesion: () => void;
+  sincronizacion?: EstadoSincronizacion;
 }
 
 // --- BARRA SUPERIOR DE SESIÓN ---
@@ -35,6 +38,7 @@ export function TopAuthBar({
   vistaAuth,
   onCambiarVistaAuth,
   onCerrarSesion,
+  sincronizacion,
 }: AuthBarProps) {
   return (
     <>
@@ -51,6 +55,27 @@ export function TopAuthBar({
         <div className="top-auth-actions">
           {usuario ? (
             <>
+            {sincronizacion && (
+                <>
+                  <span className="top-auth-status" role="status">
+                    {sincronizacion.sincronizando
+                      ? "Sincronizando…"
+                      : sincronizacion.errorSync ||
+                        (sincronizacion.ultimaSync
+                          ? `Última sincronización: ${formatearFechaHora(sincronizacion.ultimaSync)}`
+                          : "Aún sin sincronizar")}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ padding: "6px 12px", fontSize: "13px" }}
+                    disabled={sincronizacion.sincronizando}
+                    onClick={() => void sincronizacion.sincronizar()}
+                  >
+                    Sincronizar
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 className="user-pill"
@@ -86,7 +111,7 @@ export function TopAuthBar({
             >
               {vistaAuth === "ninguna"
                 ? "Iniciar sesión"
-                : "Volver a mis cuentas"}
+                : "Cuentas"}
             </button>
           )}
         </div>
@@ -341,7 +366,7 @@ export function AuthScreens({
               className="btn btn-ghost"
               onClick={() => cambiarVista("ninguna")}
             >
-              Volver a mis cuentas
+              Cuentas
             </button>
             <button
               type="button"
