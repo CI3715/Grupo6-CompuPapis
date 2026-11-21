@@ -274,6 +274,41 @@ paths:
         "200": { description: Invitación respondida }
         "401": { description: Sesión inválida }
         "409": { description: No hay invitación pendiente }
+  # Recurso de sincronización incremental de cambios compartidos por el usuario
+  /cambios:
+    # Devuelve lotes ordenados de hasta 100 eventos compartidos posteriores al cursor
+    get:
+      summary: Obtener cambios compartidos desde un cursor
+      description: >-
+        Devuelve en orden creciente los eventos compartidos del usuario autenticado
+        posteriores al cursor indicado en el parámetro desde, en lotes de máximo
+        100 eventos junto con el nuevo cursor y el indicador de continuidad. Si
+        desde se omite o es 0, comienza desde el primer evento del registro.
+      # Exige token Bearer válido para aislar eventos del usuario autenticado
+      security: [{ bearerAuth: [] }]
+      # Reutiliza el cursor opcional; si se omite, inicia desde el principio
+      parameters:
+        - $ref: "#/components/parameters/CursorDesde"
+      # Declara el lote paginado exitoso y los errores de cursor o sesión
+      responses:
+        "200":
+          description: Lote de máximo 100 eventos ordenados, nuevo cursor e indicador de si quedan más
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RespuestaCambios"
+        "400":
+          description: Cursor inválido (valor negativo o no numérico)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorRespuesta"
+        "401":
+          description: Token ausente, inválido o vencido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorRespuesta"
 components:
   requestBodies:
     RespuestaInvitacion:
