@@ -207,6 +207,8 @@ export default function PantallaSocial({
 
   const admin =
     detalle && grupos?.grupos.find((g) => g.id === detalle.id)?.es_admin;
+  const nombreGrupo = (id: string) =>
+    grupos?.grupos.find((g) => g.id === id)?.nombre ?? "Grupo";
   return (
     <main className="app-container social-page">
       <header className="header">
@@ -284,13 +286,19 @@ export default function PantallaSocial({
                 cuenta donde aplicarlas. Abre el grupo y elige una cuenta: se
                 aplicarán en cuanto la elijas.
               </p>
-              {pendientes.map((p) => (
-                <div className="social-row" key={p.eventoId}>
+                            {pendientes.map((p) => (
+                <div className="social-row" key={p.id}>
+                  <div>
+                    <strong>
+                      {nombreGrupo(p.grupo_id)} · {p.concepto}
+                    </strong>
+                    <p className="social-muted">
+                      {p.fecha}
+                      {p.recibio_residuo ? " · incluye 0,01 de redondeo" : ""}
+                    </p>
+                  </div>
                   <strong>
-                    {p.grupo} · {p.concepto}
-                  </strong>
-                  <strong>
-                    {p.monto} {p.moneda}
+                    {p.monto_parte} {p.moneda}
                   </strong>
                 </div>
               ))}
@@ -526,7 +534,7 @@ export default function PantallaSocial({
                   className="btn btn-ghost"
                   onClick={() => setDetalle(null)}
                 >
-                  ← Mis grupos
+                  ← Grupos
                 </button>
                 <h2 className="form-title">{detalle.nombre}</h2>
                 <p className="social-muted">
@@ -594,7 +602,7 @@ export default function PantallaSocial({
                   </form>
                 </section>
               )}
-              <section className="form-card">
+              <section className="form-card" >
                 <h2 className="form-title">Cuenta para mis partes</h2>
                 <p className="social-muted">
                   Tus partes de los gastos de este grupo se aplicarán en la
@@ -639,9 +647,9 @@ export default function PantallaSocial({
                 miembros={detalle.miembros}
                 moneda={detalle.moneda}
                 registrar={async (datos) => {
-                  let resultado: { pendiente: boolean };
+                  let resultado: { pendiente?: boolean };
                   try {
-                    resultado = await llamar<{ pendiente: boolean }>(
+                    resultado = await llamar<{ pendiente?: boolean }>(
                       "registrar_gasto",
                       { id: detalle.id, ...datos },
                     );
