@@ -24,7 +24,7 @@ export default function VistaGasto({
     pagado_por: string;
     regla: ReglaDivision;
     participantes: { usuario_id: string; valor: string | null }[];
-  }) => Promise<{ pendiente: boolean }>;
+  }) => Promise<{ pendiente?: boolean }>;
 }) {
   const [monto, setMonto] = useState("");
   const [guardando, setGuardando] = useState(false);
@@ -233,7 +233,7 @@ export default function VistaGasto({
               setParticipantes([]);
               setValores({});
               setExito(true);
-              setPendienteEnvio(resultado.pendiente);
+              setPendienteEnvio(resultado.pendiente === true);
             })
             .catch((e: unknown) =>
               setErrorServidor(

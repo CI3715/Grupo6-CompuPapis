@@ -116,17 +116,19 @@ export interface ResultadoSync {
 }
 
 export interface PendienteAplicar {
-  eventoId: string;
-  grupoId: string;
-  grupo: string;
+  id: string; // id del evento de origen (eventos_usuario.id)
+  gasto_id: string;
+  grupo_id: string;
   concepto: string;
-  monto: string;
+  fecha: string;
   moneda: string;
+  monto_parte: string;
+  recibio_residuo: boolean;
 }
 
 export interface GastoEnCola {
-  clave: string;
-  grupoId: string;
+  clave: string; // Idempotency-Key (claves_gastos.clave)
+  grupo_id: string;
   concepto: string;
   monto: string;
   estado: "pendiente" | "rechazado";
