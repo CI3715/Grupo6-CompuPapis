@@ -1,6 +1,6 @@
-//! main.rs: Servidor HTTP de Cuentas Claras, rutas principales y modelos de eventos.
+//! main.rs: Servidor HTTP de Cuentas Claras, rutas principales y modelos de eventos
 //!
-//! Dirigido al equipo backend para gestionar el arranque y contratos de sincronización.
+//! Dirigido al equipo backend para gestionar el arranque y contratos de sincronización
 
 pub mod amistades_db;
 mod auth;
@@ -18,6 +18,12 @@ use chrono::NaiveDate;
 use uuid::Uuid;
 
 use crate::sincronizacion_db::EventoUsuario;
+
+use std::collections::HashSet;
+
+use axum::http::StatusCode;
+
+use crate::gastos_db::ErrorGasto;
 
 #[derive(Serialize)]
 struct PingResponse {
@@ -122,6 +128,81 @@ impl EventoCambio {
     pub fn datos(&self) -> &DatosParteGasto {
         &self.datos
     }
+}
+
+// Errores de validación de membresía y destinatarios al emitir eventos de cambio
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ErrorDestinatarios {
+    // El grupo no existe o el solicitante no es miembro activo
+    GrupoNoAccesible,
+    // El gasto no contiene participantes para emitir eventos
+    SinParticipantes,
+    // Un participante aparece repetido en la división del gasto
+    ParticipanteDuplicado(Uuid),
+    // Un participante del gasto no pertenece activamente al grupo
+    ParticipanteNoMiembro(Uuid),
+}
+
+#[allow(dead_code)]
+impl ErrorDestinatarios {
+    // Devuelve el código HTTP correspondiente, ocultando inexistencia o falta de membresía con 404
+    pub fn codigo_http(&self) -> StatusCode {
+        match self {
+            Self::GrupoNoAccesible => StatusCode::NOT_FOUND,
+            Self::SinParticipantes
+            | Self::ParticipanteDuplicado(_)
+            | Self::ParticipanteNoMiembro(_) => StatusCode::BAD_REQUEST,
+        }
+    }
+
+    // Convierte el error de validación al tipo compartido por la capa de gastos
+    pub fn a_error_gasto(self) -> ErrorGasto {
+        match self {
+            Self::GrupoNoAccesible => ErrorGasto::SinAcceso,
+            Self::SinParticipantes | Self::ParticipanteDuplicado(_) => {
+                ErrorGasto::Invalido("Selecciona participantes únicos.".into())
+            }
+            Self::ParticipanteNoMiembro(_) => {
+                ErrorGasto::Invalido("Cada participante debe ser miembro del grupo.".into())
+            }
+        }
+    }
+}
+
+// Valida membresía del solicitante y devuelve solo los participantes activos para emitir eventos
+#[allow(dead_code)]
+pub fn filtrar_destinatarios_evento(
+    solicitante_id: Uuid,
+    miembros_activos: &HashSet<Uuid>,
+    participantes_gasto: &[Uuid],
+) -> Result<Vec<Uuid>, ErrorDestinatarios> {
+    // Oculta si el grupo no existe o si el solicitante no pertenece
+    if miembros_activos.is_empty() || !miembros_activos.contains(&solicitante_id) {
+        return Err(ErrorDestinatarios::GrupoNoAccesible);
+    }
+
+    if participantes_gasto.is_empty() {
+        return Err(ErrorDestinatarios::SinParticipantes);
+    }
+
+    // Evita emitir duplicados y rechaza usuarios ajenos al grupo
+    let mut vistos = HashSet::with_capacity(participantes_gasto.len());
+    let mut destinatarios = Vec::with_capacity(participantes_gasto.len());
+
+    for &participante_id in participantes_gasto {
+        if !miembros_activos.contains(&participante_id) {
+            return Err(ErrorDestinatarios::ParticipanteNoMiembro(participante_id));
+        }
+        if !vistos.insert(participante_id) {
+            return Err(ErrorDestinatarios::ParticipanteDuplicado(participante_id));
+        }
+        destinatarios.push(participante_id);
+    }
+
+    // Ordena los ids igual que sincronizacion_db para evitar bloqueos cruzados en PostgreSQL
+    destinatarios.sort();
+    Ok(destinatarios)
 }
 
 async fn ping() -> Json<PingResponse> {
