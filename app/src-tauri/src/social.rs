@@ -77,19 +77,8 @@ fn datos_gasto_grupo(datos: &Value) -> Value {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn payload_no_incluye_datos_del_libro_personal() {
-        let datos = json!({"concepto": "Cena", "monto": "10.00", "cuenta": "privada", "saldo": "100", "movimientos": [], "tasas": []});
-        let payload = datos_gasto_grupo(&datos);
-        for campo in ["cuenta", "saldo", "movimientos", "tasas"] {
-            assert!(payload.get(campo).is_none());
-        }
-        assert_eq!(payload["concepto"], "Cena");
-    }
-}
+#[path = "social_tests.rs"]
+mod tests;
 
 #[tauri::command]
 pub async fn operacion_social(

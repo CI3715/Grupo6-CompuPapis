@@ -35,7 +35,7 @@ pub struct UsuarioAuth {
     pub fecha_alta: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ErrorAuth {
     pub campo: String,
     pub mensaje: String,

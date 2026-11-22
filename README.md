@@ -135,7 +135,7 @@ En la aplicación, abrir **Conexión con el servidor · Entrega 1 → Probar con
 
 La [guía de pruebas](docs/pruebas/README.md) reúne los comandos, qué comprueba cada caso, resultados esperados, ubicación de SQLite y procedimientos manuales de las Entregas 2, 3 y 4. Incluye los ejemplos de **1750 USD** y **316.100 VES → tasa faltante → 350 USD**, persistencia, categorías, advertencia de saldo negativo y prueba offline con el ejecutable.
 
-Las pruebas de dominio usan un repositorio en memoria. Las de persistencia y migración usan bases SQLite temporales; no reemplazan la base personal. Pasar las pruebas automáticas o compilar el ejecutable no certifica las interacciones de la ventana: **la demostración manual sigue pendiente hasta ejecutarse y registrarse**.
+Las pruebas de dominio usan un repositorio en memoria. Las de persistencia y migración usan bases SQLite temporales; no reemplazan la base personal.
 
 El archivo personal `cuentas_claras.sqlite` reside en `app_data_dir` de Tauri. La actualización desde el identificador antiguo conserva la base anterior y no sobrescribe un destino existente; ver la [guía de SQLite](docs/pruebas/README.md#6-sqlite-y-actualización-de-datos-existentes) y el [ADR 007](docs/adr/007-libro-local-compatible.md). No se deben borrar ni editar eventos para preparar las pruebas.
 
