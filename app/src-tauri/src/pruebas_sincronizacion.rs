@@ -1,0 +1,401 @@
+#[cfg(test)]
+mod tests {
+    use crate::domain::{
+        ejecutar_corregir_movimiento, ejecutar_crear_cuenta, ejecutar_obtener_detalle_cuenta,
+    };
+    use crate::sqlite_repo::{EventoCambioRecibido, RepositorioSqlite};
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    fn bd_temporal() -> (RepositorioSqlite, PathBuf) {
+        let ruta = std::env::temp_dir().join(format!("test_sync_{}.sqlite", Uuid::new_v4()));
+        let repo = RepositorioSqlite::inicializar(ruta.clone()).unwrap();
+        (repo, ruta)
+    }
+
+    fn limpiar_bd(ruta: PathBuf) {
+        let _ = std::fs::remove_file(ruta);
+    }
+
+    #[test]
+    fn prueba_idempotencia_mismo_lote_aplicado_dos_veces() {
+        let (mut repo, ruta) = bd_temporal();
+        let cuenta = ejecutar_crear_cuenta(
+            &mut repo,
+            "Efectivo USD",
+            "efectivo",
+            "USD",
+            "200.00",
+            "prueba",
+        )
+        .unwrap();
+
+        let grupo_id = Uuid::new_v4().to_string();
+        repo.elegir_cuenta_grupo(&grupo_id, cuenta.id()).unwrap();
+
+        let evento_hotel = EventoCambioRecibido {
+            id: Uuid::new_v4().to_string(),
+            cursor: 1,
+            tipo: "gasto_grupo".to_string(),
+            grupo_id: grupo_id.clone(),
+            grupo_nombre: "Viaje a Mérida".to_string(),
+            gasto_id: Uuid::new_v4().to_string(),
+            concepto: "Hotel".to_string(),
+            fecha: "2026-11-20".to_string(),
+            moneda: "USD".to_string(),
+            monto_parte: "33.33".to_string(),
+            incluye_centimos_redondeo: false,
+        };
+
+        // Primera aplicación del lote
+        let aplicados_1 = repo
+            .aplicar_lote_cambios(1, vec![evento_hotel.clone()])
+            .unwrap();
+        assert_eq!(aplicados_1, 1);
+
+        let detalle_1 = ejecutar_obtener_detalle_cuenta(&repo, cuenta.id()).unwrap();
+        assert_eq!(detalle_1.saldo_actual, "166.67");
+        assert_eq!(detalle_1.movimientos.len(), 1);
+        assert_eq!(detalle_1.movimientos[0].es_gasto_de_grupo, true);
+        assert_eq!(detalle_1.movimientos[0].categoria, "Viaje a Mérida · Hotel");
+
+        // Segunda aplicación del mismo lote (o cursor reiniciado)
+        let aplicados_2 = repo
+            .aplicar_lote_cambios(1, vec![evento_hotel.clone()])
+            .unwrap();
+        assert_eq!(aplicados_2, 0);
+
+        let detalle_2 = ejecutar_obtener_detalle_cuenta(&repo, cuenta.id()).unwrap();
+        // El saldo y los movimientos no cambian (INV-13, INV-15)
+        assert_eq!(detalle_2.saldo_actual, "166.67");
+        assert_eq!(detalle_2.movimientos.len(), 1);
+
+        limpiar_bd(ruta);
+    }
+
+    #[test]
+    fn prueba_interrupcion_a_mitad_de_lote_no_duplica_y_conserva_cursor() {
+        let (mut repo, ruta) = bd_temporal();
+        let cuenta = ejecutar_crear_cuenta(
+            &mut repo,
+            "Efectivo USD",
+            "efectivo",
+            "USD",
+            "200.00",
+            "prueba",
+        )
+        .unwrap();
+
+        let grupo_id = Uuid::new_v4().to_string();
+        repo.elegir_cuenta_grupo(&grupo_id, cuenta.id()).unwrap();
+
+        assert_eq!(repo.obtener_cursor_sincronizacion().unwrap(), 0);
+
+        let evento_1 = EventoCambioRecibido {
+            id: Uuid::new_v4().to_string(),
+            cursor: 1,
+            tipo: "gasto_grupo".to_string(),
+            grupo_id: grupo_id.clone(),
+            grupo_nombre: "Viaje a Mérida".to_string(),
+            gasto_id: Uuid::new_v4().to_string(),
+            concepto: "Hotel".to_string(),
+            fecha: "2026-11-20".to_string(),
+            moneda: "USD".to_string(),
+            monto_parte: "33.33".to_string(),
+            incluye_centimos_redondeo: false,
+        };
+
+        // Evento con monto inválido para simular fallo a mitad de lote dentro de la transacción
+        let evento_invalido = EventoCambioRecibido {
+            id: Uuid::new_v4().to_string(),
+            cursor: 2,
+            tipo: "gasto_grupo".to_string(),
+            grupo_id: grupo_id.clone(),
+            grupo_nombre: "Viaje a Mérida".to_string(),
+            gasto_id: Uuid::new_v4().to_string(),
+            concepto: "Cena".to_string(),
+            fecha: "2026-11-20".to_string(),
+            moneda: "USD".to_string(),
+            monto_parte: "invalido_monto".to_string(),
+            incluye_centimos_redondeo: false,
+        };
+
+        // La transacción debe fallar y hacer rollback completo
+        let resultado = repo.aplicar_lote_cambios(2, vec![evento_1.clone(), evento_invalido]);
+        assert!(resultado.is_err());
+
+        // El cursor debe mantenerse en 0 y no debe haber movimientos guardados
+        assert_eq!(repo.obtener_cursor_sincronizacion().unwrap(), 0);
+        let detalle_antes = ejecutar_obtener_detalle_cuenta(&repo, cuenta.id()).unwrap();
+        assert_eq!(detalle_antes.movimientos.len(), 0);
+        assert_eq!(detalle_antes.saldo_actual, "200.00");
+
+        // Al reintentar con el lote correcto desde el cursor guardado (0), se aplica limpiamente
+        let evento_2_corregido = EventoCambioRecibido {
+            id: Uuid::new_v4().to_string(),
+            cursor: 2,
+            tipo: "gasto_grupo".to_string(),
+            grupo_id: grupo_id.clone(),
+            grupo_nombre: "Viaje a Mérida".to_string(),
+            gasto_id: Uuid::new_v4().to_string(),
+            concepto: "Cena".to_string(),
+            fecha: "2026-11-20".to_string(),
+            moneda: "USD".to_string(),
+            monto_parte: "15.00".to_string(),
+            incluye_centimos_redondeo: false,
+        };
+
+        let aplicados = repo
+            .aplicar_lote_cambios(2, vec![evento_1, evento_2_corregido])
+            .unwrap();
+        assert_eq!(aplicados, 2);
+        assert_eq!(repo.obtener_cursor_sincronizacion().unwrap(), 2);
+
+        let detalle_despues = ejecutar_obtener_detalle_cuenta(&repo, cuenta.id()).unwrap();
+        assert_eq!(detalle_despues.movimientos.len(), 2);
+        assert_eq!(detalle_despues.saldo_actual, "151.67");
+
+        limpiar_bd(ruta);
+    }
+
+    #[test]
+    fn prueba_partes_pendientes_se_aplican_al_elegir_cuenta() {
+        let (mut repo, ruta) = bd_temporal();
+        let cuenta = ejecutar_crear_cuenta(
+            &mut repo,
+            "Efectivo USD",
+            "efectivo",
+            "USD",
+            "200.00",
+            "prueba",
+        )
+        .unwrap();
+
+        let grupo_id = Uuid::new_v4().to_string();
+
+        let evento_hotel = EventoCambioRecibido {
+            id: Uuid::new_v4().to_string(),
+            cursor: 1,
+            tipo: "gasto_grupo".to_string(),
+            grupo_id: grupo_id.clone(),
+            grupo_nombre: "Viaje a Mérida".to_string(),
+            gasto_id: Uuid::new_v4().to_string(),
+            concepto: "Hotel".to_string(),
+            fecha: "2026-11-20".to_string(),
+            moneda: "USD".to_string(),
+            monto_parte: "33.33".to_string(),
+            incluye_centimos_redondeo: false,
+        };
+
+        // Llega parte sin cuenta elegida para el grupo
+        let aplicados = repo
+            .aplicar_lote_cambios(1, vec![evento_hotel.clone()])
+            .unwrap();
+        assert_eq!(aplicados, 0);
+
+        // Queda en la lista de pendientes de aplicar
+        let pendientes = repo.listar_pendientes_aplicar().unwrap();
+        assert_eq!(pendientes.len(), 1);
+        assert_eq!(pendientes[0].id, evento_hotel.id);
+        assert_eq!(pendientes[0].concepto, "Hotel");
+
+        // El saldo del libro permanece intacto
+        let detalle_antes = ejecutar_obtener_detalle_cuenta(&repo, cuenta.id()).unwrap();
+        assert_eq!(detalle_antes.saldo_actual, "200.00");
+        assert_eq!(detalle_antes.movimientos.len(), 0);
+
+        // El usuario elige su cuenta para el grupo
+        let aplicados_al_elegir = repo.elegir_cuenta_grupo(&grupo_id, cuenta.id()).unwrap();
+        assert_eq!(aplicados_al_elegir, 1);
+
+        // Ya no hay pendientes
+        let pendientes_despues = repo.listar_pendientes_aplicar().unwrap();
+        assert_eq!(pendientes_despues.len(), 0);
+
+        // El gasto baja al libro reflejando el nuevo saldo
+        let detalle_despues = ejecutar_obtener_detalle_cuenta(&repo, cuenta.id()).unwrap();
+        assert_eq!(detalle_despues.saldo_actual, "166.67");
+        assert_eq!(detalle_despues.movimientos.len(), 1);
+        assert_eq!(detalle_despues.movimientos[0].es_gasto_de_grupo, true);
+
+        limpiar_bd(ruta);
+    }
+
+    #[test]
+    fn prueba_gasto_de_grupo_no_se_puede_corregir_en_el_libro_rf_com_10() {
+        let (mut repo, ruta) = bd_temporal();
+        let cuenta = ejecutar_crear_cuenta(
+            &mut repo,
+            "Efectivo USD",
+            "efectivo",
+            "USD",
+            "200.00",
+            "prueba",
+        )
+        .unwrap();
+
+        let grupo_id = Uuid::new_v4().to_string();
+        repo.elegir_cuenta_grupo(&grupo_id, cuenta.id()).unwrap();
+
+        let evento_hotel = EventoCambioRecibido {
+            id: Uuid::new_v4().to_string(),
+            cursor: 1,
+            tipo: "gasto_grupo".to_string(),
+            grupo_id: grupo_id.clone(),
+            grupo_nombre: "Viaje a Mérida".to_string(),
+            gasto_id: Uuid::new_v4().to_string(),
+            concepto: "Hotel".to_string(),
+            fecha: "2026-11-20".to_string(),
+            moneda: "USD".to_string(),
+            monto_parte: "33.33".to_string(),
+            incluye_centimos_redondeo: false,
+        };
+
+        repo.aplicar_lote_cambios(1, vec![evento_hotel]).unwrap();
+
+        let detalle = ejecutar_obtener_detalle_cuenta(&repo, cuenta.id()).unwrap();
+        let mov_id = &detalle.movimientos[0].id;
+
+        // Intentar corregir el movimiento desde el núcleo del libro debe ser rechazado
+        let resultado =
+            ejecutar_corregir_movimiento(&mut repo, cuenta.id(), mov_id, "40.00", "prueba");
+        assert!(resultado.is_err());
+        let err = resultado.unwrap_err();
+        assert_eq!(err.campo, "movimiento");
+        assert!(
+            err.mensaje
+                .contains("Los gastos de grupo no se pueden editar ni corregir")
+        );
+
+        // El saldo permanece inalterado
+        let detalle_despues = ejecutar_obtener_detalle_cuenta(&repo, cuenta.id()).unwrap();
+        assert_eq!(detalle_despues.saldo_actual, "166.67");
+
+        limpiar_bd(ruta);
+    }
+
+    #[test]
+    fn prueba_cola_de_gastos_con_reintentos_y_rechazo() {
+        let (mut repo, ruta) = bd_temporal();
+        let clave_1 = Uuid::new_v4().to_string();
+        let clave_2 = Uuid::new_v4().to_string();
+        let grupo_id = Uuid::new_v4().to_string();
+
+        repo.encolar_gasto(
+            &clave_1,
+            &grupo_id,
+            "Cena",
+            "60.00",
+            "{\"concepto\":\"Cena\",\"monto\":\"60.00\"}",
+        )
+        .unwrap();
+
+        repo.encolar_gasto(
+            &clave_2,
+            &grupo_id,
+            "Taxis",
+            "20.00",
+            "{\"concepto\":\"Taxis\",\"monto\":\"20.00\"}",
+        )
+        .unwrap();
+
+        let cola = repo.listar_cola_gastos().unwrap();
+        assert_eq!(cola.len(), 2);
+        assert_eq!(cola[0].estado, "pendiente");
+        assert_eq!(cola[1].estado, "pendiente");
+
+        // Simular que el primer gasto fue enviado exitosamente al volver la red
+        repo.eliminar_de_cola(&clave_1).unwrap();
+
+        // Simular que el segundo gasto fue rechazado por el servidor (ej. ya no es miembro)
+        repo.marcar_gasto_rechazado(
+            &clave_2,
+            "No perteneces a este grupo o fue archivado.",
+        )
+        .unwrap();
+
+        let cola_actualizada = repo.listar_cola_gastos().unwrap();
+        assert_eq!(cola_actualizada.len(), 1);
+        assert_eq!(cola_actualizada[0].clave, clave_2);
+        assert_eq!(cola_actualizada[0].estado, "rechazado");
+        assert_eq!(
+            cola_actualizada[0].motivo.as_deref(),
+            Some("No perteneces a este grupo o fue archivado.")
+        );
+
+        // Descartar rechazo
+        repo.eliminar_de_cola(&clave_2).unwrap();
+        assert!(repo.listar_cola_gastos().unwrap().is_empty());
+
+        limpiar_bd(ruta);
+    }
+
+    #[test]
+    fn prueba_reinicio_cursor_a_cero_no_duplica_movimientos() {
+        let (mut repo, ruta) = bd_temporal();
+        let cuenta = ejecutar_crear_cuenta(
+            &mut repo,
+            "Efectivo USD",
+            "efectivo",
+            "USD",
+            "200.00",
+            "prueba",
+        )
+        .unwrap();
+
+        let grupo_id = Uuid::new_v4().to_string();
+        repo.elegir_cuenta_grupo(&grupo_id, cuenta.id()).unwrap();
+
+        let evento_hotel = EventoCambioRecibido {
+            id: Uuid::new_v4().to_string(),
+            cursor: 1,
+            tipo: "gasto_grupo".to_string(),
+            grupo_id: grupo_id.clone(),
+            grupo_nombre: "Viaje a Mérida".to_string(),
+            gasto_id: Uuid::new_v4().to_string(),
+            concepto: "Hotel".to_string(),
+            fecha: "2026-11-20".to_string(),
+            moneda: "USD".to_string(),
+            monto_parte: "33.33".to_string(),
+            incluye_centimos_redondeo: false,
+        };
+
+        let evento_cena = EventoCambioRecibido {
+            id: Uuid::new_v4().to_string(),
+            cursor: 2,
+            tipo: "gasto_grupo".to_string(),
+            grupo_id: grupo_id.clone(),
+            grupo_nombre: "Viaje a Mérida".to_string(),
+            gasto_id: Uuid::new_v4().to_string(),
+            concepto: "Cena".to_string(),
+            fecha: "2026-11-20".to_string(),
+            moneda: "USD".to_string(),
+            monto_parte: "15.00".to_string(),
+            incluye_centimos_redondeo: false,
+        };
+
+        // Bajan ambos eventos
+        repo.aplicar_lote_cambios(2, vec![evento_hotel.clone(), evento_cena.clone()])
+            .unwrap();
+        assert_eq!(repo.obtener_cursor_sincronizacion().unwrap(), 2);
+        let detalle = ejecutar_obtener_detalle_cuenta(&repo, cuenta.id()).unwrap();
+        assert_eq!(detalle.saldo_actual, "151.67");
+        assert_eq!(detalle.movimientos.len(), 2);
+
+        // Paso 3 del flujo: reinicio de cursor a cero
+        repo.reiniciar_cursor_sincronizacion().unwrap();
+        assert_eq!(repo.obtener_cursor_sincronizacion().unwrap(), 0);
+
+        // Bajan de nuevo los dos eventos desde la posición 0: ya estaban aplicados y se ignoran
+        let aplicados_reinicio = repo
+            .aplicar_lote_cambios(2, vec![evento_hotel, evento_cena])
+            .unwrap();
+        assert_eq!(aplicados_reinicio, 0);
+
+        let detalle_despues = ejecutar_obtener_detalle_cuenta(&repo, cuenta.id()).unwrap();
+        assert_eq!(detalle_despues.saldo_actual, "151.67");
+        assert_eq!(detalle_despues.movimientos.len(), 2);
+
+        limpiar_bd(ruta);
+    }
+}
