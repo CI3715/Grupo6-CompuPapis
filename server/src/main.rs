@@ -14,10 +14,14 @@ pub mod usuarios_db;
 
 use axum::{
     Json, Router,
-    extract::{Path, State as AxumState, rejection::JsonRejection},
+    extract::{
+        Path, Query, State as AxumState,
+        rejection::{JsonRejection, QueryRejection},
+    },
     http::{HeaderMap, StatusCode},
     routing::get,
 };
+
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -27,7 +31,7 @@ use uuid::Uuid;
 
 use crate::division::Regla;
 use crate::gastos_db::{ErrorGasto, GastoNuevo, ParticipanteNuevo, ResultadoRegistroGasto};
-use crate::sincronizacion_db::EventoUsuario;
+use crate::sincronizacion_db::{EventoUsuario, PaginaCambiosDb};
 
 #[derive(Serialize)]
 struct PingResponse {
@@ -632,10 +636,67 @@ impl RespuestaCambios {
     }
 }
 
+// Convierte una página de base de datos en la respuesta HTTP validada
+fn construir_respuesta_cambios(pagina: PaginaCambiosDb) -> Result<RespuestaCambios, &'static str> {
+    let eventos = pagina
+        .eventos
+        .into_iter()
+        .map(|item| EventoCambioRespuesta::desde_evento_db(item.evento, item.grupo_nombre))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    RespuestaCambios::nueva(eventos, pagina.nuevo_cursor, pagina.hay_mas)
+}
+
+// Responde errores internos de sincronización con estado HTTP 500
+fn error_interno_cambios() -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({
+            "codigo": "error_interno",
+            "mensaje": "No se pudo completar la operación."
+        })),
+    )
+}
+
+// Procesa GET /cambios validando sesión, cursor y devolviendo hasta cien eventos
+pub async fn obtener_cambios_http(
+    AxumState(estado): AxumState<auth::State>,
+    headers: HeaderMap,
+    parametros: Result<Query<ParametrosCambios>, QueryRejection>,
+) -> Result<(StatusCode, Json<RespuestaCambios>), (StatusCode, Json<Value>)> {
+    // Valida el token JWT antes del cursor para proteger el recurso
+    let usuario_id = auth::autenticar(&headers, &estado).map_err(|_| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "codigo": "no_autorizado",
+                "mensaje": "Sesión inválida o vencida."
+            })),
+        )
+    })?;
+
+    let Query(consulta) = parametros.map_err(|_| {
+        ErrorCursorCambios::CursorInvalido("El parámetro de consulta desde es inválido.")
+            .a_respuesta_http()
+    })?;
+
+    let desde =
+        validar_cursor_desde(consulta.desde.as_deref()).map_err(|e| e.a_respuesta_http())?;
+
+    let pagina = sincronizacion_db::consultar_cambios_paginados(&estado.pool, usuario_id, desde)
+        .await
+        .map_err(|_| error_interno_cambios())?;
+
+    let respuesta = construir_respuesta_cambios(pagina).map_err(|_| error_interno_cambios())?;
+    Ok((StatusCode::OK, Json(respuesta)))
+}
+
 // Construye el enrutador HTTP principal con todas las rutas del servidor
 pub fn construir_app(estado: auth::State) -> Router {
     Router::new()
         .route("/ping", get(ping))
+        .route("/cambios", get(obtener_cambios_http))
+        .with_state(estado.clone())
         .merge(grupos::routes(estado.clone()))
         .merge(social::routes(estado.clone()))
         .merge(auth::routes(estado))
