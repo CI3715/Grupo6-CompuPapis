@@ -13,6 +13,8 @@ Cuentas Claras permite crear cuentas personales multimoneda, registrar ingresos,
 - **Entrega 2:** inicio en Mis cuentas sin login; creación y validación de efectivo, banco y billetera digital, catálogo VES/USD/EUR/USDT, subtotales por moneda y persistencia local.
 - **Entrega 3:** ingresos/gastos, categorías, correcciones mediante ajustes inmutables, composición del saldo e historial. El ejemplo obligatorio produce **1750 USD** conservando el gasto original.
 - **Entrega 4 (monedas, tasas y patrimonio):** monedas propias, registro, anulación e historial activo de tasas por par, validaciones de fecha/fuente/valor y moneda base predeterminada USD. La consulta de patrimonio usa saldos y tasas a la fecha elegida, aplica tasas directas o inversas sin cruces y redondea el total una sola vez. Si falta una tasa, muestra los subtotales y el par pendiente sin devolver un total consolidado. Los eventos se conservan en SQLite local.
+- **Entrega 5 (usuarios):** Búsqueda de usuarios por nombre, consultas por correo e ID y pruebas para revisar que no se repitan nombres ni correos.
+- **Entrega 6 (amistades):** Tablas y consultas para mandar, aceptar y rechazar solicitudes de amistad, evitar solicitudes repetidas, ver los amigos y eliminar amistades.
 - **Servidor:** PostgreSQL + Neon para funcionalidades sociales. Las cuentas, movimientos y saldos personales permanecen en SQLite local y no se envían al servidor.
 
 El flujo financiero es `Next.js → invoke() → Tauri/Rust → dominio → SQLite`. Axum no participa en él. Las decisiones arquitectónicas están en [docs/adr](docs/adr/README.md).

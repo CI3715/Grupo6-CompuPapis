@@ -1,3 +1,6 @@
+# openapi.yaml: contrato HTTP del servidor Cuentas Claras para funciones sociales y sincronización
+# Define solo datos compartidos, excluye cuentas, saldos y movimientos del libro personal
+
 openapi: 3.0.3
 info:
   title: Cuentas Claras API
@@ -176,11 +179,7 @@ paths:
       security: [{ bearerAuth: [] }]
       responses:
         "200":
-          {
-            description: Datos del grupo,
-            miembros,
-            gastos con partes y balances,
-          }
+          description: "Datos del grupo, miembros, gastos con partes y balances"
         "401": { description: Sesión inválida }
         "404": { description: Grupo inexistente o sin acceso }
   /grupos/{id}/gastos:
@@ -191,8 +190,17 @@ paths:
           required: true,
           schema: { type: string, format: uuid },
         }
+    # Registra un gasto compartido o devuelve el existente si repite la clave
     post:
+      summary: Registrar gasto compartido con idempotencia
+      description: >-
+        Registra un gasto compartido en el grupo y calcula sus partes exactas
+        en el servidor. Si se repite una clave en Idempotency-Key con los mismos
+        datos devuelve el gasto ya guardado con 200; si cambian los datos responde 409.
       security: [{ bearerAuth: [] }]
+      # Reutiliza la clave opcional para evitar duplicados en reintentos sin conexión
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -226,11 +234,36 @@ paths:
                           nullable: true,
                           description: Porcentaje o monto fijo exacto,
                         }
+      # Declara creación inicial, reintento idempotente y errores de validación o conflicto
       responses:
-        "201": { description: Gasto y partes calculadas por el servidor }
-        "400": { description: Datos o división inválidos }
-        "401": { description: Sesión inválida }
-        "404": { description: Grupo inexistente o sin acceso }
+        "200":
+          description: Clave Idempotency-Key ya procesada con los mismos datos; devuelve el gasto existente
+        "201":
+          description: Gasto compartido y partes exactas creados por primera vez por el servidor
+        "400":
+          description: Datos del gasto, división o encabezado Idempotency-Key inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorRespuesta"
+        "401":
+          description: Token ausente, inválido o vencido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorRespuesta"
+        "404":
+          description: Grupo inexistente o usuario sin membresía activa
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorRespuesta"
+        "409":
+          description: Clave Idempotency-Key ya utilizada previamente con datos distintos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorRespuesta"
   /grupos/{id}/miembros:
     parameters:
       - {
@@ -271,6 +304,41 @@ paths:
         "200": { description: Invitación respondida }
         "401": { description: Sesión inválida }
         "409": { description: No hay invitación pendiente }
+  # Recurso de sincronización incremental de cambios compartidos por el usuario
+  /cambios:
+    # Devuelve lotes ordenados de hasta 100 eventos compartidos posteriores al cursor
+    get:
+      summary: Obtener cambios compartidos desde un cursor
+      description: >-
+        Devuelve en orden creciente los eventos compartidos del usuario autenticado
+        posteriores al cursor indicado en el parámetro desde, en lotes de máximo
+        100 eventos junto con el nuevo cursor y el indicador de continuidad. Si
+        desde se omite o es 0, comienza desde el primer evento del registro.
+      # Exige token Bearer válido para aislar eventos del usuario autenticado
+      security: [{ bearerAuth: [] }]
+      # Reutiliza el cursor opcional; si se omite, inicia desde el principio
+      parameters:
+        - $ref: "#/components/parameters/CursorDesde"
+      # Declara el lote paginado exitoso y los errores de cursor o sesión
+      responses:
+        "200":
+          description: Lote de máximo 100 eventos ordenados, nuevo cursor e indicador de si quedan más
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RespuestaCambios"
+        "400":
+          description: Cursor inválido (valor negativo o no numérico)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorRespuesta"
+        "401":
+          description: Token ausente, inválido o vencido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorRespuesta"
 components:
   requestBodies:
     RespuestaInvitacion:
@@ -284,6 +352,29 @@ components:
               aceptar: { type: boolean }
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  # Parámetros reutilizables para paginación y control de idempotencia
+  parameters:
+    # Parámetro de consulta que indica el último cursor procesado por el cliente
+    CursorDesde:
+      name: desde
+      in: query
+      required: false
+      description: Posición del último evento procesado; si se omite inicia en cero.
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+        default: 0
+    # Encabezado de clave única que evita duplicar gastos compartidos en reintentos
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Clave única del cliente repetida en reintentos para evitar registros duplicados.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
   schemas:
     Usuario:
       type: object
@@ -294,3 +385,90 @@ components:
         nombre_visible: { type: string }
         correo: { type: string, format: email }
         fecha_alta: { type: string, format: date-time }
+    # Evento inmutable del registro compartido con la parte correspondiente a un participante
+    EventoCambio:
+      type: object
+      required:
+        [
+          id,
+          cursor,
+          tipo,
+          grupo_id,
+          grupo_nombre,
+          gasto_id,
+          concepto,
+          fecha,
+          moneda,
+          monto_parte,
+          incluye_centimos_redondeo,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Identificador único e inmutable del evento en el servidor.
+        cursor:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Posición creciente del evento dentro del registro del usuario.
+        tipo:
+          type: string
+          description: Tipo de evento compartido; el cliente ignora tipos desconocidos.
+        grupo_id:
+          type: string
+          format: uuid
+          description: Identificador del grupo donde se registró el gasto.
+        grupo_nombre:
+          type: string
+          description: Nombre del grupo usado para etiquetar el gasto al aplicarlo.
+        gasto_id:
+          type: string
+          format: uuid
+          description: Identificador del gasto compartido que originó esta parte.
+        concepto:
+          type: string
+          description: Descripción del gasto registrado en el grupo.
+        fecha:
+          type: string
+          format: date
+          description: Fecha civil del gasto compartido.
+        moneda:
+          type: string
+          pattern: "^[A-Z]{3}$"
+          description: Código ISO de tres letras de la moneda del grupo.
+        monto_parte:
+          type: string
+          description: Monto decimal exacto de la parte del participante con hasta dos decimales.
+        incluye_centimos_redondeo:
+          type: boolean
+          description: Indica si la parte incluye céntimos del residuo de redondeo.
+    # Lote paginado de cambios compartidos con nuevo cursor e indicador de continuidad
+    RespuestaCambios:
+      type: object
+      required: [eventos, nuevo_cursor, hay_mas]
+      properties:
+        eventos:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/EventoCambio" }
+          description: Lista ordenada de hasta 100 eventos posteriores al cursor consultado.
+        nuevo_cursor:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Cursor actualizado que el cliente guarda para la siguiente sincronización.
+        hay_mas:
+          type: boolean
+          description: Indica si existen más eventos pendientes por descargar en el servidor.
+    # Respuesta uniforme de error para fallos de validación, autenticación, acceso o conflicto
+    ErrorRespuesta:
+      type: object
+      required: [codigo, mensaje]
+      properties:
+        codigo:
+          type: string
+          description: Identificador corto del tipo de error ocurrido.
+        mensaje:
+          type: string
+          description: Explicación legible del motivo del rechazo.
