@@ -246,9 +246,7 @@ pub async fn registrar_con_idempotencia(
         id,
         pagado_por: datos.pagado_por,
         concepto: datos.concepto.trim().into(),
-        monto: division::formato(
-            division::centesimas(&datos.monto).map_err(ErrorGasto::Invalido)?,
-        ),
+        monto: division::formato(division::centesimas(&datos.monto).map_err(ErrorGasto::Invalido)?),
         fecha: datos.fecha.to_string(),
         regla: Some(regla.into()),
         partes: guardadas,
@@ -689,7 +687,6 @@ mod tests {
         }
     }
 
-
     #[tokio::test]
     #[ignore = "requiere PostgreSQL aislado de pruebas"]
     async fn migracion_conserva_gastos_anteriores_sin_inventar_residuos() {
@@ -995,13 +992,9 @@ mod tests {
         };
 
         // Comprueba rollback de clave cuando el gasto falla validación de negocio
-        let invalido = registrar_con_idempotencia(
-            &pool,
-            ana,
-            crear_datos("0.00", false),
-            Some(&clave_seq),
-        )
-        .await;
+        let invalido =
+            registrar_con_idempotencia(&pool, ana, crear_datos("0.00", false), Some(&clave_seq))
+                .await;
         assert!(matches!(invalido, Err(ErrorGasto::Invalido(_))));
 
         // Primer intento válido crea el gasto y registra la clave
@@ -1036,14 +1029,10 @@ mod tests {
         assert_eq!(repetido.partes.len(), 2);
 
         // Misma clave con monto distinto dispara conflicto de idempotencia
-        let conflicto = registrar_con_idempotencia(
-            &pool,
-            ana,
-            crear_datos("120.00", false),
-            Some(&clave_seq),
-        )
-        .await
-        .unwrap();
+        let conflicto =
+            registrar_con_idempotencia(&pool, ana, crear_datos("120.00", false), Some(&clave_seq))
+                .await
+                .unwrap();
         assert!(matches!(
             conflicto,
             ResultadoRegistroGasto::ConflictoIdempotencia

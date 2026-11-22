@@ -1,7 +1,7 @@
-use sqlx::{Postgres, Transaction};
 use chrono::NaiveDate;
 use serde::Serialize;
 use sqlx::PgPool;
+use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 pub async fn guardar_eventos_gasto(
@@ -23,7 +23,7 @@ pub async fn guardar_eventos_gasto(
             .fetch_one(&mut **tx)
             .await?;
 
-         // Buscamos la siguiente posicion del usuario
+        // Buscamos la siguiente posicion del usuario
         let posicion: i64 = sqlx::query_scalar(
             "SELECT COALESCE(MAX(posicion), 0) + 1
              FROM eventos_usuario WHERE usuario_id = $1",
@@ -75,8 +75,12 @@ pub async fn revisar_clave(
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (usuario_id, clave) DO NOTHING",
     )
-    .bind(usuario_id).bind(clave).bind(grupo_id).bind(datos)
-    .execute(&mut **tx).await?;
+    .bind(usuario_id)
+    .bind(clave)
+    .bind(grupo_id)
+    .bind(datos)
+    .execute(&mut **tx)
+    .await?;
 
     if res.rows_affected() == 1 {
         return Ok(ResultadoClave::Nueva);
@@ -87,8 +91,10 @@ pub async fn revisar_clave(
         "SELECT grupo_id, datos, gasto_id FROM claves_gastos
          WHERE usuario_id = $1 AND clave = $2",
     )
-    .bind(usuario_id).bind(clave)
-    .fetch_one(&mut **tx).await?;
+    .bind(usuario_id)
+    .bind(clave)
+    .fetch_one(&mut **tx)
+    .await?;
 
     if fila.0 != grupo_id || fila.1 != datos {
         return Ok(ResultadoClave::DatosDistintos);
@@ -112,8 +118,11 @@ pub async fn guardar_clave(
         "UPDATE claves_gastos SET gasto_id = $3
          WHERE usuario_id = $1 AND clave = $2 AND gasto_id IS NULL",
     )
-    .bind(usuario_id).bind(clave).bind(gasto_id)
-    .execute(&mut **tx).await?;
+    .bind(usuario_id)
+    .bind(clave)
+    .bind(gasto_id)
+    .execute(&mut **tx)
+    .await?;
 
     if res.rows_affected() != 1 {
         return Err(sqlx::Error::RowNotFound);
@@ -148,21 +157,31 @@ pub async fn consultar_cambios(
     desde: i64,
 ) -> Result<LoteCambios, sqlx::Error> {
     // Buscamos los eventos nuevos de este usuario
-    let mut filas: Vec<(Uuid, i64, String, Uuid, Uuid, String, NaiveDate, String, String, bool)> =
-        sqlx::query_as(
-            "SELECT id, posicion, tipo, gasto_id, grupo_id, concepto,
+    let mut filas: Vec<(
+        Uuid,
+        i64,
+        String,
+        Uuid,
+        Uuid,
+        String,
+        NaiveDate,
+        String,
+        String,
+        bool,
+    )> = sqlx::query_as(
+        "SELECT id, posicion, tipo, gasto_id, grupo_id, concepto,
                     fecha, moneda, monto_parte::text, recibio_residuo
              FROM eventos_usuario
              WHERE usuario_id = $1 AND posicion > $2
              ORDER BY posicion
              LIMIT 101",
-        )
-        .bind(usuario_id)
-        .bind(desde)
-        .fetch_all(pool)
-        .await?;
-    
-     // Quitamos el evento extra si hay mas de 100
+    )
+    .bind(usuario_id)
+    .bind(desde)
+    .fetch_all(pool)
+    .await?;
+
+    // Quitamos el evento extra si hay mas de 100
     let hay_mas = filas.len() > 100;
     if hay_mas {
         filas.pop();
@@ -170,10 +189,21 @@ pub async fn consultar_cambios(
 
     let mut resp = Vec::new();
     let mut cursor = desde;
-    
+
     // Guardamos los eventos y actualizamos el cursor
-    for (id, posicion, tipo, gasto_id, grupo_id, concepto,
-         fecha, moneda, monto_parte, recibio_residuo) in filas {
+    for (
+        id,
+        posicion,
+        tipo,
+        gasto_id,
+        grupo_id,
+        concepto,
+        fecha,
+        moneda,
+        monto_parte,
+        recibio_residuo,
+    ) in filas
+    {
         let evento = EventoUsuario {
             id,
             posicion,
