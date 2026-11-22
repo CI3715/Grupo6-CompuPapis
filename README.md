@@ -165,7 +165,7 @@ Desde `app/`, `npm run format` aplica Prettier y formato Rust a ambos paquetes. 
 
 ## Estudiantes
 
-- Maikel Delgado — `16-10287`
+- Maikel Delgado — `16-10287` [@Maikelacho](https://github.com/Maikelacho)
 - Gabriel Orejarena — `18-10292` [@Arnold-Wesker](https://github.com/Arnold-Wesker)
 - Keyber Sequera — `16-11120` [@keybersequera8](https://github.com/keybersequera8)
 - Gabriel De Ornelas — `15-10377` [@gabodornelas](https://github.com/gabodornelas)

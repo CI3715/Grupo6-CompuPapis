@@ -483,7 +483,7 @@ mod tests {
         .claims;
         let restante_demo = claims_demo.exp as i64 - Utc::now().timestamp();
         assert!(
-            (40..=60).contains(&restante_demo),
+            (580..=600).contains(&restante_demo),
             "Vigencia de demostración inesperada: {restante_demo}"
         );
         let response = app

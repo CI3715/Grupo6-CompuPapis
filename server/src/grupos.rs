@@ -400,6 +400,11 @@ mod tests {
                 .unwrap();
         assert_eq!(datos["gastos"].as_array().unwrap().len(), 1);
 
+        sqlx::query("DELETE FROM eventos_usuario WHERE grupo_id=$1")
+            .bind(Uuid::parse_str(grupo).unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("DELETE FROM grupos WHERE id=$1")
             .bind(Uuid::parse_str(grupo).unwrap())
             .execute(&pool)
