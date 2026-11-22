@@ -8,20 +8,21 @@ mod db;
 pub mod division;
 pub mod gastos_db;
 mod grupos;
-mod social;
 pub mod sincronizacion_db;
+mod social;
 pub mod usuarios_db;
 
 use axum::{Json, Router, routing::get};
-use serde::Serialize;
 use chrono::NaiveDate;
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::sincronizacion_db::EventoUsuario;
 
 use std::collections::HashSet;
 
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
+use serde_json::{Value, json};
 
 use crate::gastos_db::ErrorGasto;
 
@@ -236,6 +237,164 @@ async fn ping() -> Json<PingResponse> {
     })
 }
 
+// Nombre estándar del encabezado HTTP para claves de idempotencia
+#[allow(dead_code)]
+pub const ENCABEZADO_IDEMPOTENCY_KEY: &str = "idempotency-key";
+
+// Límite máximo de bytes permitidos para una clave de idempotencia
+#[allow(dead_code)]
+pub const LONGITUD_MAXIMA_CLAVE_IDEMPOTENCIA: usize = 128;
+
+// Mensaje uniforme para ocultar si un grupo existe o falta membresía
+#[allow(dead_code)]
+const MENSAJE_GRUPO_NO_ENCONTRADO: &str = "Grupo no encontrado.";
+
+// Clave de idempotencia HTTP para evitar gastos duplicados
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaveIdempotencia(String);
+
+#[allow(dead_code)]
+impl ClaveIdempotencia {
+    // Construye una clave válida y rechaza textos vacíos, extensos o inválidos
+    pub fn nueva(valor: &str) -> Result<Self, ErrorPrecondicionGasto> {
+        if valor.is_empty() {
+            return Err(ErrorPrecondicionGasto::ClaveInvalida(
+                "Idempotency-Key no puede estar vacío.",
+            ));
+        }
+
+        if valor.len() > LONGITUD_MAXIMA_CLAVE_IDEMPOTENCIA {
+            return Err(ErrorPrecondicionGasto::ClaveInvalida(
+                "Idempotency-Key excede el límite permitido.",
+            ));
+        }
+
+        // Rechaza espacios y caracteres de control para evitar claves ambiguas
+        if !valor.bytes().all(|b| b.is_ascii_graphic()) {
+            return Err(ErrorPrecondicionGasto::ClaveInvalida(
+                "Idempotency-Key contiene caracteres inválidos.",
+            ));
+        }
+
+        Ok(Self(valor.to_owned()))
+    }
+
+    // Devuelve la clave validada como referencia de texto
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+// Resultado validado de sesion, acceso al grupo y clave opcional
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrecondicionesGasto {
+    pub usuario_id: Uuid,
+    pub clave_idempotencia: Option<ClaveIdempotencia>,
+}
+
+// Errores de precondiciones HTTP al registrrar un gasto de grupo
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ErrorPrecondicionGasto {
+    // Sesión ausente, inválida o expirada
+    NoAutorizado,
+    // Grupo inexistente o usuario sin membresía aceptada
+    GrupoNoAccesible,
+    // Encabezado Idempotency-Key con formato o cantidad inválidos
+    ClaveInvalida(&'static str),
+    // Fallo inesperado al consultar la base de datos
+    ErrorInterno,
+}
+
+#[allow(dead_code)]
+impl ErrorPrecondicionGasto {
+    // Traduce el error a código HTTP y se representa en JSON
+    pub fn a_respuesta_http(&self) -> (StatusCode, Json<Value>) {
+        match self {
+            Self::NoAutorizado => (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({ "mensaje": "Sesión inválida o vencida." })),
+            ),
+            Self::GrupoNoAccesible => (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "mensaje": MENSAJE_GRUPO_NO_ENCONTRADO })),
+            ),
+            Self::ClaveInvalida(mensaje) => {
+                (StatusCode::BAD_REQUEST, Json(json!({ "mensaje": mensaje })))
+            }
+            Self::ErrorInterno => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "mensaje": "No se pudo completar la operación." })),
+            ),
+        }
+    }
+}
+
+// Extrae y valida el encabezado Idempotency-Key opcional desde la petición
+#[allow(dead_code)]
+pub fn extraer_clave_idempotencia(
+    headers: &HeaderMap,
+) -> Result<Option<ClaveIdempotencia>, ErrorPrecondicionGasto> {
+    let mut valores = headers.get_all(ENCABEZADO_IDEMPOTENCY_KEY).iter();
+    let Some(primero) = valores.next() else {
+        return Ok(None);
+    };
+
+    // Rechaza múltiples encabezados para evitar ambigüedad en la deduplicación
+    if valores.next().is_some() {
+        return Err(ErrorPrecondicionGasto::ClaveInvalida(
+            "Envía un solo encabezado Idempotency-Key.",
+        ));
+    }
+
+    let texto = primero.to_str().map_err(|_| {
+        ErrorPrecondicionGasto::ClaveInvalida("Idempotency-Key debe contener texto ASCII válido.")
+    })?;
+
+    ClaveIdempotencia::nueva(texto).map(Some)
+}
+
+// Verifica membresía aceptada y devuelve 404 uniforme si no existe acceso
+#[allow(dead_code)]
+pub fn validar_acceso_grupo(es_miembro_aceptado: bool) -> Result<(), ErrorPrecondicionGasto> {
+    if es_miembro_aceptado {
+        Ok(())
+    } else {
+        Err(ErrorPrecondicionGasto::GrupoNoAccesible)
+    }
+}
+
+// Comprueba sesión, membresía uniforme del grupo y encabezado de idempotencia
+#[allow(dead_code)]
+pub async fn validar_precondiciones_gasto(
+    estado: &auth::State,
+    headers: &HeaderMap,
+    grupo_id: Uuid,
+) -> Result<PrecondicionesGasto, ErrorPrecondicionGasto> {
+    let usuario_id =
+        auth::autenticar(headers, estado).map_err(|_| ErrorPrecondicionGasto::NoAutorizado)?;
+
+    // Valida acceso al grupo antes del encabezado para no filtrar información.
+    let es_miembro: Option<bool> = sqlx::query_scalar(
+        "SELECT es_admin FROM grupo_miembros WHERE grupo_id = $1 AND usuario_id = $2 AND estado_invitacion = 'aceptada'",
+    )
+    .bind(grupo_id)
+    .bind(usuario_id)
+    .fetch_optional(&estado.pool)
+    .await
+    .map_err(|_| ErrorPrecondicionGasto::ErrorInterno)?;
+
+    validar_acceso_grupo(es_miembro.is_some())?;
+
+    let clave_idempotencia = extraer_clave_idempotencia(headers)?;
+    Ok(PrecondicionesGasto {
+        usuario_id,
+        clave_idempotencia,
+    })
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database_url = std::env::var("DATABASE_URL").map_err(|_| "Falta DATABASE_URL")?;
@@ -265,6 +424,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use axum::http::{HeaderName, HeaderValue};
 
     // Crea un UUID determinista para identificar entidades en pruebas
     fn id_fijo(valor: u128) -> Uuid {
@@ -294,6 +454,14 @@ mod tests {
     }
 
     impl RegistroCambiosPrueba {
+        // Inicializa un registro vacío con secuenta determinista de identificación
+        fn nuevo() -> Self {
+            Self {
+                siguiente_id_evento: 1000,
+                eventos_por_usuario: HashMap::new(),
+            }
+        }
+
         // Valida destinatarios con INV-17 y agrega eventos inmutables por participantes
         fn registrar_gasto(
             &mut self,
@@ -654,5 +822,90 @@ mod tests {
             recibio_residuo: false,
         };
         assert!(EventoCambio::nuevo_gasto_grupo(id_fijo(9000), 0, datos_invalidos).is_err());
+    }
+
+    // Verifica que omitir Idempotency-Key sea válido y devuelve None
+    #[test]
+    fn idempotency_key_ausente_devuelve_none() {
+        let headers = HeaderMap::new();
+        let resultado = extraer_clave_idempotencia(&headers);
+        assert_eq!(resultado, Ok(None));
+    }
+
+    // Comrpueba que una clave ASCII válida se extraiga sin alteraciones
+    #[test]
+    fn idempotency_key_valida_se_extrae_correctamente() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static(ENCABEZADO_IDEMPOTENCY_KEY),
+            HeaderValue::from_static("gasto-offline-550e8400-e29b-41d4"),
+        );
+
+        let clave = extraer_clave_idempotencia(&headers)
+            .expect("La clave debe aceptarse")
+            .expect("Debe existir una clave");
+        assert_eq!(clave.as_str(), "gasto-offline-550e8400-e29b-41d4");
+    }
+
+    // Rechaza claves vacías, extensas, con espacios, inválidas o repetidas con código 400
+    #[test]
+    fn idempotency_key_invalida_responde_400() {
+        let clave_larga = "a".repeat(LONGITUD_MAXIMA_CLAVE_IDEMPOTENCIA + 1);
+        let casos_invalidos = ["", "   ", "clave con espacio", clave_larga.as_str()];
+
+        for valor in casos_invalidos {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                HeaderName::from_static(ENCABEZADO_IDEMPOTENCY_KEY),
+                HeaderValue::from_str(valor).expect("Valor de prueba construible"),
+            );
+
+            let error = extraer_clave_idempotencia(&headers)
+                .expect_err("El encabezado inválido debe rechazarse");
+            let (codigo, _) = error.a_respuesta_http();
+            assert_eq!(codigo, StatusCode::BAD_REQUEST);
+        }
+
+        // Verifica rechazo cuando el encazbezado contiene bytes no ASCII
+        let mut headers_no_ascii = HeaderMap::new();
+        headers_no_ascii.insert(
+            HeaderName::from_static(ENCABEZADO_IDEMPOTENCY_KEY),
+            HeaderValue::from_bytes(&[0xFF]).expect("Bytes válidos para prueba"),
+        );
+        let error_ascii = extraer_clave_idempotencia(&headers_no_ascii)
+            .expect_err("Bytes no ASCII deben rechazarse");
+        assert_eq!(error_ascii.a_respuesta_http().0, StatusCode::BAD_REQUEST);
+
+        // Verifica rechazo cuando se envían múltiples encabezados Idempotency-Key
+        let mut headers_duplicados = HeaderMap::new();
+        headers_duplicados.append(
+            HeaderName::from_static(ENCABEZADO_IDEMPOTENCY_KEY),
+            HeaderValue::from_static("clave-1"),
+        );
+        headers_duplicados.append(
+            HeaderName::from_static(ENCABEZADO_IDEMPOTENCY_KEY),
+            HeaderValue::from_static("clave-2"),
+        );
+        let error_duplicado = extraer_clave_idempotencia(&headers_duplicados)
+            .expect_err("Encabezados repetidos deben rechazarse");
+        assert_eq!(
+            error_duplicado.a_respuesta_http().0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    // Verifica respuestas 401 y 404 para sesión y acceso al grupo
+    #[test]
+    fn precondiciones_mantienen_401_y_404_uniformes() {
+        let (codigo_401, cuerpo_401) = ErrorPrecondicionGasto::NoAutorizado.a_respuesta_http();
+        assert_eq!(codigo_401, StatusCode::UNAUTHORIZED);
+        assert_eq!(cuerpo_401.0, json!({ "mensaje": "Sesión inválida o vencida." }));
+
+        let error_acceso = validar_acceso_grupo(false)
+            .expect_err("La falta de membresía o grupo debe fallar con 404");
+        let (codigo_404, cuerpo_404) = error_acceso.a_respuesta_http();
+        assert_eq!(codigo_404, StatusCode::NOT_FOUND);
+        assert_eq!(cuerpo_404.0, json!({ "mensaje": "Grupo no encontrado." }));
+        assert_eq!(validar_acceso_grupo(true), Ok(()));
     }
 }
