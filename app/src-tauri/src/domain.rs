@@ -160,6 +160,19 @@ pub struct DatosMovimientoCorregido {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DatosGastoDeGrupoAplicado {
+    pub movimiento_id: String,
+    pub cuenta_id: String,
+    pub evento_servidor_id: String,
+    pub grupo_id: String,
+    pub gasto_id: String,
+    pub concepto: String,
+    pub fecha: String,
+    pub monto: Monto,
+    pub incluye_centimos_redondeo: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventoLibro {
     pub id: String,
     pub tipo: String,
@@ -189,6 +202,7 @@ pub struct MovimientoVista {
     pub corregido: bool,
     pub es_ajuste: bool,
     pub referencia_id: Option<String>,
+    pub es_gasto_de_grupo: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -221,6 +235,7 @@ struct EstadoCuentaInterno {
     movimientos: Vec<MovimientoVista>,
     // Mapa movimiento_original_id -> (TipoMovimiento, monto_vigente_positivo, categoria, fecha)
     originales: HashMap<String, (TipoMovimiento, Decimal, String, String)>,
+    gastos_de_grupo: HashSet<String>,
 }
 
 impl EstadoCuentaInterno {
@@ -264,6 +279,7 @@ struct ProyeccionLibro {
     monedas: Vec<Moneda>,
     tasas: Vec<TasaCambio>,
     moneda_base: String,
+    eventos_servidor_aplicados: HashSet<String>,
 }
 
 fn error_libro() -> ErrorDominio {
@@ -320,6 +336,7 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
     let mut tasas = Vec::new();
     let mut moneda_base = "USD".to_string();
     let mut ids_movimientos = HashSet::new();
+    let mut eventos_servidor_aplicados = HashSet::new();
 
     for ev in eventos {
         if let Some(anterior) = eventos_aplicados.insert(ev.id.clone(), ev) {
@@ -459,6 +476,7 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                         ajustes: Decimal::ZERO,
                         movimientos: Vec::new(),
                         originales: HashMap::new(),
+                        gastos_de_grupo: HashSet::new(),
                     },
                 );
             }
@@ -552,6 +570,7 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                     corregido: false,
                     es_ajuste: false,
                     referencia_id: None,
+                    es_gasto_de_grupo: false,
                 });
                 cta.saldo_actual()?;
             }
@@ -642,6 +661,53 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                     corregido: false,
                     es_ajuste: true,
                     referencia_id: Some(d.movimiento_original_id),
+                    es_gasto_de_grupo: false,
+                });
+                cta.saldo_actual()?;
+            }
+            "GastoDeGrupoAplicado" => {
+                let d: DatosGastoDeGrupoAplicado =
+                    serde_json::from_str(&ev.datos_json).map_err(|_| error_libro())?;
+                let cta = cuentas.get_mut(&d.cuenta_id).ok_or_else(error_libro)?;
+                let moneda = buscar_moneda_en(&cta.moneda, &monedas).map_err(|_| error_libro())?;
+                if d.movimiento_id.is_empty()
+                    || !ids_movimientos.insert(d.movimiento_id.clone())
+                    || d.monto.moneda() != cta.moneda
+                    || d.concepto.trim().is_empty()
+                    || NaiveDate::parse_from_str(&d.fecha, "%Y-%m-%d").is_err()
+                {
+                    return Err(error_libro());
+                }
+                let cant = Monto::desde_str_con_moneda(
+                    &d.monto.cantidad().to_string(),
+                    &moneda,
+                    "monto",
+                    false,
+                )
+                .map_err(|_| error_libro())?
+                .cantidad();
+
+                cta.gastos = sumar_exacto(cta.gastos, cant)?;
+                cta.originales.insert(
+                    d.movimiento_id.clone(),
+                    (TipoMovimiento::Gasto, cant, d.concepto.clone(), d.fecha.clone()),
+                );
+                cta.gastos_de_grupo.insert(d.movimiento_id.clone());
+                eventos_servidor_aplicados.insert(d.evento_servidor_id.clone());
+
+                let dec = moneda.decimales as usize;
+                cta.movimientos.push(MovimientoVista {
+                    id: d.movimiento_id,
+                    fecha: d.fecha,
+                    tipo: "gasto".into(),
+                    categoria: d.concepto.clone(),
+                    nota: Some(d.concepto),
+                    monto: format!("{:.*}", dec, -cant),
+                    monto_vigente: format!("{:.*}", dec, cant),
+                    corregido: false,
+                    es_ajuste: false,
+                    referencia_id: None,
+                    es_gasto_de_grupo: true,
                 });
                 cta.saldo_actual()?;
             }
@@ -655,6 +721,7 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
         monedas,
         tasas,
         moneda_base,
+        eventos_servidor_aplicados,
     })
 }
 
@@ -1015,6 +1082,14 @@ pub fn ejecutar_corregir_movimiento<R: RepositorioEventos>(
             )
         })?;
 
+    // RF-COM-10: Los gastos de grupo no se pueden editar ni corregir desde el libro
+    if cta.gastos_de_grupo.contains(movimiento_id) {
+        return Err(ErrorDominio::nuevo(
+            "movimiento",
+            "Los gastos de grupo no se pueden editar ni corregir desde el libro.",
+        ));
+    }
+
     // El monto correcto puede ser 0 (para anular un movimiento que no debió existir) o positivo
     let moneda = buscar_moneda_en(&cta.moneda, &proyeccion.monedas)?;
     let monto_correcto = Monto::desde_str_con_moneda(monto_correcto_str, &moneda, "monto", true)?;
@@ -1070,6 +1145,16 @@ pub fn ejecutar_corregir_movimiento<R: RepositorioEventos>(
         .map_err(|_| ErrorDominio::nuevo("general", "No se pudo registrar la corrección."))?;
 
     ejecutar_obtener_detalle_cuenta(repo, cuenta_id)
+}
+
+pub fn consultar_eventos_servidor_aplicados<R: RepositorioEventos>(
+    repo: &R,
+) -> Result<HashSet<String>, ErrorDominio> {
+    let eventos = repo
+        .obtener_eventos()
+        .map_err(|_| ErrorDominio::nuevo("general", "No se pudo leer el libro local."))?;
+    let proyeccion = proyectar_libro(&eventos)?;
+    Ok(proyeccion.eventos_servidor_aplicados)
 }
 
 pub fn ejecutar_obtener_detalle_cuenta<R: RepositorioEventos>(

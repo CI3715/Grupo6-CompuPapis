@@ -74,6 +74,16 @@ export function TopAuthBar({
                   >
                     Sincronizar
                   </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ padding: "6px 12px", fontSize: "13px" }}
+                    title="Reiniciar cursor a cero"
+                    disabled={sincronizacion.sincronizando}
+                    onClick={() => void sincronizacion.reiniciarCursor()}
+                  >
+                    Reiniciar cursor
+                  </button>
                 </>
               )}
               <button

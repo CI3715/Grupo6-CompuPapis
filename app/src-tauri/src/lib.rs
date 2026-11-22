@@ -1,5 +1,6 @@
 mod autenticacion;
 mod social;
+pub mod sincronizacion;
 use crate::domain::RegistrarMovimiento;
 pub mod domain;
 pub mod sqlite_repo;
@@ -19,6 +20,8 @@ mod pruebas_patrimonio;
 mod pruebas_tasas_cambio;
 #[cfg(test)]
 mod pruebas_tasas_monedas;
+#[cfg(test)]
+mod pruebas_sincronizacion;
 
 // Importa los tipos y casos de uso del dominio, incluyendo consulta de patrimonio
 use domain::{
@@ -33,8 +36,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{Manager, State};
 
-struct PingState {
-    http_client: reqwest::Client,
+pub struct PingState {
+    pub http_client: reqwest::Client,
 }
 
 pub struct AppState {
@@ -485,6 +488,13 @@ pub fn run() {
             crear_categoria,
             registrar_movimiento,
             corregir_movimiento,
+            sincronizacion::sincronizar,
+            sincronizacion::obtener_cuenta_grupo,
+            sincronizacion::elegir_cuenta_grupo,
+            sincronizacion::listar_pendientes_aplicar,
+            sincronizacion::listar_cola_gastos,
+            sincronizacion::descartar_rechazo,
+            sincronizacion::reiniciar_cursor,
         ])
         .run(tauri::generate_context!())
         .expect("Error al ejecutar la aplicación Tauri");

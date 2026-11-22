@@ -46,6 +46,15 @@ export function useSincronizacion({
     }
   }, [sesion]);
 
+  const reiniciarCursor = useCallback(async () => {
+    try {
+      await invoke("reiniciar_cursor");
+    } catch (err: unknown) {
+      const e = normalizarError(err);
+      setErrorSync(e.mensaje);
+    }
+  }, []);
+
   // Al abrir con sesión vigente, periódica (5 min) y al volver la conexión
   useEffect(() => {
     if (!sesion) return;
@@ -59,7 +68,7 @@ export function useSincronizacion({
     };
   }, [sesion, sincronizar]);
 
-  return { sincronizar, sincronizando, ultimaSync, errorSync };
+  return { sincronizar, sincronizando, ultimaSync, errorSync, reiniciarCursor };
 }
 
 export type EstadoSincronizacion = ReturnType<typeof useSincronizacion>;
