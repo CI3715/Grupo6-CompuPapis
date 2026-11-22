@@ -1085,4 +1085,369 @@ mod tests {
         assert_eq!(codigo_400, StatusCode::BAD_REQUEST);
         assert_eq!(cuerpo_400.0, json!({ "mensaje": "faltan 5.00" }));
     }
+
+    use axum::{
+        body::{Body, to_bytes},
+        http::Request,
+    };
+    use chrono::{Duration, Utc};
+    use jsonwebtoken::{EncodingKey, Header, encode};
+    use sqlx::postgres::PgPoolOptions;
+    use tower::ServiceExt;
+
+    // Carga útil JWT usada para firmar tokens en pruebas HTTP
+    #[derive(Serialize)]
+    struct ClaimsPrueba {
+        sub: Uuid,
+        exp: usize,
+    }
+
+    // Firma un token JWT con vigencia relativa en minutos para pruebas
+    fn firmar_token_prueba(usuario_id: Uuid, secreto: &str, minutos: i64) -> String {
+        let exp = usize::try_from((Utc::now() + Duration::minutes(minutos)).timestamp())
+            .expect("La marca de tiempo debe ser positiva");
+        encode(
+            &Header::default(),
+            &ClaimsPrueba {
+                sub: usuario_id,
+                exp,
+            },
+            &EncodingKey::from_secret(secreto.as_bytes()),
+        )
+        .expect("El token de prueba debe firmarse")
+    }
+
+    // Construye una petición POST /grupos/{id}/gastos con token y clave opcionales
+    fn peticion_gasto_http(
+        grupo_id: Uuid,
+        token: Option<&str>,
+        clave_idempotencia: Option<&str>,
+        cuerpo: &str,
+    ) -> Request<Body> {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri(format!("/grupos/{grupo_id}/gastos"))
+            .header("content-type", "application/json");
+
+        if let Some(t) = token {
+            builder = builder.header("authorization", format!("Bearer {t}"));
+        }
+        if let Some(clave) = clave_idempotencia {
+            builder = builder.header(ENCABEZADO_IDEMPOTENCY_KEY, clave);
+        }
+
+        builder
+            .body(Body::from(cuerpo.to_owned()))
+            .expect("La petición HTTP de prueba debe construirse")
+    }
+
+    // Comprueba que POST /grupos/{id}/gastos rechace credenciales inválidas con 401
+    #[tokio::test]
+    async fn post_gastos_rechaza_credenciales_ausentes_invalidas_y_vencidas_con_401() {
+        let secreto = "secreto de prueba con al menos 32 bytes";
+        // Usa conexión diferida porque el rechazo 401 ocurre antes de consultar PostgreSQL
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://test:test@127.0.0.1/test")
+            .expect("El pool diferido debe configurarse");
+        let app = construir_app(auth::State::new(pool, secreto.into()));
+        let grupo_id = id_fijo(10);
+        let ana = id_fijo(1);
+        let token_vencido = firmar_token_prueba(ana, secreto, -5);
+        let token_otro_secreto =
+            firmar_token_prueba(ana, "otro secreto distinto con mas de 32 bytes", 5);
+
+        let casos = [
+            None,
+            Some("token-malformado"),
+            Some(token_otro_secreto.as_str()),
+            Some(token_vencido.as_str()),
+        ];
+
+        for token in casos {
+            let respuesta = app
+                .clone()
+                .oneshot(peticion_gasto_http(
+                    grupo_id,
+                    token,
+                    Some("clave-prueba-401"),
+                    "{}",
+                ))
+                .await
+                .expect("La petición de prueba debe ejecutarse");
+
+            assert_eq!(respuesta.status(), StatusCode::UNAUTHORIZED);
+            let bytes = to_bytes(respuesta.into_body(), 65536)
+                .await
+                .expect("El cuerpo de respuesta debe leerse");
+            let json_resp: Value =
+                serde_json::from_slice(&bytes).expect("La respuesta debe ser JSON válido");
+            assert_eq!(
+                json_resp,
+                json!({ "mensaje": "Sesión inválida o vencida." })
+            );
+        }
+    }
+
+    // Valida 201, 200, 409, 404 uniforme, 400 y 409 en POST /grupos/{id}/gastos
+    #[tokio::test]
+    #[ignore = "requiere PostgreSQL de pruebas"]
+    async fn post_gastos_idempotencia_http_201_200_409_404_400_y_401() {
+        let url = std::env::var("E5_TEST_DATABASE_URL").expect("Configura E5_TEST_DATABASE_URL");
+        let pool = db::conectar_y_migrar(&url)
+            .await
+            .expect("La base de pruebas debe conectarse");
+        let secreto = "secreto de prueba con al menos 32 bytes";
+        let app = construir_app(auth::State::new(pool.clone(), secreto.into()));
+
+        let ana = Uuid::new_v4();
+        let beto = Uuid::new_v4();
+        let ajeno = Uuid::new_v4();
+        let grupo = Uuid::new_v4();
+        let grupo_inexistente = Uuid::new_v4();
+        let sufijo = Uuid::new_v4().simple().to_string();
+
+        for (id, nombre) in [(ana, "ana"), (beto, "beto"), (ajeno, "ajeno")] {
+            let usuario = format!("{nombre}_{}", &sufijo[..8]);
+            sqlx::query("INSERT INTO usuarios(id,nombre_usuario,nombre_visible,correo,password_hash) VALUES($1,$2,$3,$4,'hash')")
+                .bind(id)
+                .bind(&usuario)
+                .bind(nombre)
+                .bind(format!("{usuario}@example.com"))
+                .execute(&pool)
+                .await
+                .expect("El usuario de prueba debe insertarse");
+        }
+        sqlx::query("INSERT INTO grupos(id,nombre,moneda,creador_id) VALUES($1,'Viaje','USD',$2)")
+            .bind(grupo)
+            .bind(ana)
+            .execute(&pool)
+            .await
+            .expect("El grupo de prueba debe insertarse");
+        for id in [ana, beto] {
+            sqlx::query("INSERT INTO grupo_miembros(grupo_id,usuario_id,estado_invitacion) VALUES($1,$2,'aceptada')")
+                .bind(grupo)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .expect("La membresía de prueba debe insertarse");
+        }
+
+        let token_ana = firmar_token_prueba(ana, secreto, 10);
+        let token_ajeno = firmar_token_prueba(ajeno, secreto, 10);
+        let token_vencido = firmar_token_prueba(ana, secreto, -5);
+
+        let cuerpo_hotel = json!({
+            "concepto": "Hotel",
+            "monto": "100.00",
+            "fecha": "2026-11-22",
+            "pagado_por": ana,
+            "regla": "iguales",
+            "participantes": [
+                { "usuario_id": ana },
+                { "usuario_id": beto }
+            ]
+        })
+        .to_string();
+
+        // Verifica rechazo 401 sin token y con token vencido
+        for token in [None, Some(token_vencido.as_str())] {
+            let resp = app
+                .clone()
+                .oneshot(peticion_gasto_http(
+                    grupo,
+                    token,
+                    Some("clave-401"),
+                    &cuerpo_hotel,
+                ))
+                .await
+                .expect("La petición 401 debe ejecutarse");
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        // Verifica 404 idéntico para grupo inexistente y usuario no miembro
+        let mut cuerpos_404 = Vec::new();
+        for (grupo_obj, token) in [
+            (grupo, token_ajeno.as_str()),
+            (grupo_inexistente, token_ana.as_str()),
+        ] {
+            let resp = app
+                .clone()
+                .oneshot(peticion_gasto_http(
+                    grupo_obj,
+                    Some(token),
+                    Some("clave-404"),
+                    &cuerpo_hotel,
+                ))
+                .await
+                .expect("La petición 404 debe ejecutarse");
+            assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+            let bytes = to_bytes(resp.into_body(), 65536).await.unwrap();
+            cuerpos_404.push(serde_json::from_slice::<Value>(&bytes).unwrap());
+        }
+        assert_eq!(cuerpos_404[0], json!({ "mensaje": "Grupo no encontrado." }));
+        assert_eq!(cuerpos_404[0], cuerpos_404[1]);
+
+        let clave_hotel = format!("clave-hotel-{}", Uuid::new_v4());
+
+        // Verifica rechazo 400 ante encabezado Idempotency-Key mal formado
+        let resp_clave_mala = app
+            .clone()
+            .oneshot(peticion_gasto_http(
+                grupo,
+                Some(&token_ana),
+                Some("clave con espacio"),
+                &cuerpo_hotel,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp_clave_mala.status(), StatusCode::BAD_REQUEST);
+
+        // Verifica rechazo 400 ante porcentajes inválidos sin bloquear la clave
+        let cuerpo_invalido = json!({
+            "concepto": "Hotel",
+            "monto": "100.00",
+            "fecha": "2026-11-22",
+            "pagado_por": ana,
+            "regla": "porcentajes",
+            "participantes": [
+                { "usuario_id": ana, "valor": "50" },
+                { "usuario_id": beto, "valor": "45" }
+            ]
+        })
+        .to_string();
+        let resp_400 = app
+            .clone()
+            .oneshot(peticion_gasto_http(
+                grupo,
+                Some(&token_ana),
+                Some(&clave_hotel),
+                &cuerpo_invalido,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp_400.status(), StatusCode::BAD_REQUEST);
+        let datos_400: Value =
+            serde_json::from_slice(&to_bytes(resp_400.into_body(), 65536).await.unwrap()).unwrap();
+        assert!(
+            datos_400["mensaje"]
+                .as_str()
+                .unwrap()
+                .contains("faltan 5.00")
+        );
+
+        // Verifica creación inicial con 201 Created usando la misma clave
+        let resp_201 = app
+            .clone()
+            .oneshot(peticion_gasto_http(
+                grupo,
+                Some(&token_ana),
+                Some(&clave_hotel),
+                &cuerpo_hotel,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp_201.status(), StatusCode::CREATED);
+        let gasto_creado: Value =
+            serde_json::from_slice(&to_bytes(resp_201.into_body(), 65536).await.unwrap()).unwrap();
+        assert_eq!(gasto_creado["monto"], "100.00");
+
+        // Verifica 200 OK en reintento equivalente devolviendo el mismo gasto
+        let cuerpo_equivalente = json!({
+            "participantes": [
+                { "usuario_id": beto },
+                { "usuario_id": ana }
+            ],
+            "regla": "iguales",
+            "pagado_por": ana,
+            "fecha": "2026-11-22",
+            "monto": "100",
+            "concepto": "  Hotel  "
+        })
+        .to_string();
+        let resp_200 = app
+            .clone()
+            .oneshot(peticion_gasto_http(
+                grupo,
+                Some(&token_ana),
+                Some(&clave_hotel),
+                &cuerpo_equivalente,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp_200.status(), StatusCode::OK);
+        let gasto_repetido: Value =
+            serde_json::from_slice(&to_bytes(resp_200.into_body(), 65536).await.unwrap()).unwrap();
+        assert_eq!(gasto_repetido["id"], gasto_creado["id"]);
+        assert_eq!(gasto_repetido["monto"], "100.00");
+
+        // Verifica 409 Conflict al reutilizar la clave con datos distintos
+        let cuerpo_distinto = json!({
+            "concepto": "Cena",
+            "monto": "60.00",
+            "fecha": "2026-11-22",
+            "pagado_por": ana,
+            "regla": "iguales",
+            "participantes": [
+                { "usuario_id": ana },
+                { "usuario_id": beto }
+            ]
+        })
+        .to_string();
+        let resp_409 = app
+            .clone()
+            .oneshot(peticion_gasto_http(
+                grupo,
+                Some(&token_ana),
+                Some(&clave_hotel),
+                &cuerpo_distinto,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp_409.status(), StatusCode::CONFLICT);
+        let datos_409: Value =
+            serde_json::from_slice(&to_bytes(resp_409.into_body(), 65536).await.unwrap()).unwrap();
+        assert_eq!(
+            datos_409,
+            json!({ "mensaje": MENSAJE_CONFLICTO_IDEMPOTENCIA })
+        );
+
+        // Confirma que no se duplicaron gastos ni eventos tras los reintentos
+        let total_gastos: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM gastos WHERE grupo_id = $1")
+                .bind(grupo)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(total_gastos, 1);
+
+        let total_eventos: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM eventos_usuario WHERE grupo_id = $1")
+                .bind(grupo)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(total_eventos, 2);
+
+        // Limpia en orden las tablas dependientes para dejar la base intacta
+        sqlx::query("DELETE FROM claves_gastos WHERE usuario_id = $1")
+            .bind(ana)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM eventos_usuario WHERE grupo_id = $1")
+            .bind(grupo)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM grupos WHERE id = $1")
+            .bind(grupo)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM usuarios WHERE id = ANY($1)")
+            .bind(&[ana, beto, ajeno][..])
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
 }
