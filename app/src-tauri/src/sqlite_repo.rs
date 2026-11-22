@@ -956,7 +956,7 @@ pub mod entrega7_local {
             Ok(aplicados)
         }
 
-        pub fn obtener_cuenta_grupo(&self, grupo_id: &str) -> Result<Option<(String, String)>, String> {
+        pub fn obtener_cuenta_y_moneda_grupo(&self, grupo_id: &str) -> Result<Option<(String, String)>, String> {
             self.asegurar_tablas_entrega7()?;
             let conn = self.abrir()?;
             let mut stmt = conn
