@@ -4,7 +4,7 @@
 
 Proyecto del laboratorio de Ingeniería de Software I (CI-3715) de la Universidad Simón Bolívar, desarrollado por **CompuPapis**.
 
-Cuentas Claras permite crear cuentas personales multimoneda, registrar ingresos, gastos y correcciones, gestionar tasas de cambio y consultar el patrimonio consolidado en el dispositivo, sin registro de usuario ni conexión a internet. Las funcionalidades sociales y de gastos compartidos corresponden a etapas futuras.
+Cuentas Claras permite gestionar cuentas personales multimoneda, movimientos, tasas y patrimonio en el dispositivo sin registro ni conexión. También incorpora usuarios, grupos y gastos compartidos, cuyas partes pueden sincronizarse con el libro personal.
 
 ## Arquitectura y entregas
 
@@ -15,9 +15,10 @@ Cuentas Claras permite crear cuentas personales multimoneda, registrar ingresos,
 - **Entrega 4 (monedas, tasas y patrimonio):** monedas propias, registro, anulación e historial activo de tasas por par, validaciones de fecha/fuente/valor y moneda base predeterminada USD. La consulta de patrimonio usa saldos y tasas a la fecha elegida, aplica tasas directas o inversas sin cruces y redondea el total una sola vez. Si falta una tasa, muestra los subtotales y el par pendiente sin devolver un total consolidado. Los eventos se conservan en SQLite local.
 - **Entrega 5 (usuarios):** Búsqueda de usuarios por nombre, consultas por correo e ID y pruebas para revisar que no se repitan nombres ni correos.
 - **Entrega 6 (amistades):** Tablas y consultas para mandar, aceptar y rechazar solicitudes de amistad, evitar solicitudes repetidas, ver los amigos y eliminar amistades.
+- **Entrega 7 (sincronización de gastos grupales):** descarga incremental de partes mediante `GET /cambios`, aplicación idempotente en cuentas personales elegidas por el usuario y conservación de partes pendientes. Los gastos registrados sin conexión se guardan en una cola y se reenvían con una clave de idempotencia; el libro personal permanece en el dispositivo. Ver [ADR 012](docs/adr/012-sincronizacion-libro-grupal.md) y [ADR 013](docs/adr/013-cola-gastos-idempotencia.md).
 - **Servidor:** PostgreSQL + Neon para funcionalidades sociales. Las cuentas, movimientos y saldos personales permanecen en SQLite local y no se envían al servidor.
 
-El flujo financiero es `Next.js → invoke() → Tauri/Rust → dominio → SQLite`. Axum no participa en él. Las decisiones arquitectónicas están en [docs/adr](docs/adr/README.md).
+El libro personal sigue el flujo `Next.js → invoke() → Tauri/Rust → dominio → SQLite`. La sincronización de gastos grupales consulta la API Axum y aplica localmente las partes recibidas; no envía cuentas ni saldos personales. Las decisiones arquitectónicas están en [docs/adr](docs/adr/README.md).
 
 ## Instalación
 
