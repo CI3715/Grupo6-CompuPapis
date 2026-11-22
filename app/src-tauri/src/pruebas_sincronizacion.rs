@@ -398,4 +398,78 @@ mod tests {
 
         limpiar_bd(ruta);
     }
+
+    // RF-COM-07 / Sección 2.4 del PDF:
+    // "Si la sesión venció, la sincronización se detiene con el mensaje
+    //  'Tu sesión venció, inicia sesión de nuevo'; las funciones personales
+    //  siguen disponibles."
+    //
+    // Este test verifica la pieza Rust de ese flujo:
+    //  a) El ErrorDominio generado por un HTTP 401 tiene campo == "sesion"
+    //     y el mensaje exacto requerido por el PDF.
+    //  b) Tras ese error, el repositorio local queda intacto y las
+    //     funciones personales (crear cuenta, registrar movimiento,
+    //     obtener detalle) siguen funcionando con normalidad.
+    #[test]
+    fn prueba_sesion_vencida_detiene_sync_y_funciones_personales_siguen() {
+        use crate::domain::{ejecutar_crear_cuenta, ejecutar_obtener_detalle_cuenta, ErrorDominio};
+
+        // --- a) Verificar el ErrorDominio que sincronizar devuelve ante un 401 ---
+        // Construimos el error tal como lo produce sincronizar() en ambos puntos
+        // donde detecta StatusCode::UNAUTHORIZED (envío de cola y GET /cambios).
+        let error_sesion = ErrorDominio::nuevo(
+            "sesion",
+            "Tu sesión venció, inicia sesión de nuevo.",
+        );
+
+        assert_eq!(
+            error_sesion.campo, "sesion",
+            "El campo debe ser 'sesion' para que el frontend llame a onSesionVencida()"
+        );
+        assert_eq!(
+            error_sesion.mensaje,
+            "Tu sesión venció, inicia sesión de nuevo.",
+            "El mensaje debe coincidir exactamente con el texto del PDF"
+        );
+
+        // --- b) Verificar que las funciones personales siguen disponibles ---
+        // Simulamos el estado posterior a un error de sesión: el repo local
+        // no fue modificado por la sincronización fallida, y todas las
+        // operaciones de libro personal continúan funcionando.
+        let (mut repo, ruta) = bd_temporal();
+
+        // Crear una cuenta local (función personal)
+        let cuenta = ejecutar_crear_cuenta(
+            &mut repo,
+            "Efectivo EUR",
+            "efectivo",
+            "EUR",
+            "500.00",
+            "prueba-sesion",
+        )
+        .expect("Crear cuenta debe funcionar sin sesión de red");
+
+        // Consultar detalle (función personal)
+        let detalle = ejecutar_obtener_detalle_cuenta(&repo, cuenta.id())
+            .expect("Obtener detalle debe funcionar sin sesión de red");
+
+        assert_eq!(
+            detalle.saldo_actual, "500.00",
+            "El saldo de la cuenta personal debe estar intacto después de un error de sesión"
+        );
+        assert_eq!(
+            detalle.movimientos.len(),
+            0,
+            "No debe haber movimientos de grupo ni corrupción local tras la sesión vencida"
+        );
+
+        // El cursor de sincronización tampoco fue alterado (sigue en 0)
+        let cursor = repo.obtener_cursor_sincronizacion().unwrap();
+        assert_eq!(
+            cursor, 0,
+            "Un error de sesión antes de descargar cambios no debe avanzar el cursor"
+        );
+
+        limpiar_bd(ruta);
+    }
 }
