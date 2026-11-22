@@ -31,7 +31,7 @@ impl State {
 
     pub fn con_modo_demostracion(mut self, habilitado: bool) -> Self {
         if habilitado {
-            self.duracion_sesion = Duration::minutes(1);
+            self.duracion_sesion = Duration::minutes(10);
         }
         self
     }
@@ -527,7 +527,7 @@ mod tests {
         let normal = State::new(pool.clone(), "secreto de prueba".into());
         let demostracion = State::new(pool, "secreto de prueba".into()).con_modo_demostracion(true);
         assert_eq!(normal.duracion_sesion, Duration::minutes(60));
-        assert_eq!(demostracion.duracion_sesion, Duration::minutes(1));
+        assert_eq!(demostracion.duracion_sesion, Duration::minutes(10));
     }
 
     #[test]
