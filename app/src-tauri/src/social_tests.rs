@@ -11,7 +11,6 @@ fn payload_no_incluye_datos_del_libro_personal() {
 }
 
 #[tokio::test]
-#[ignore = "requiere permiso para abrir un puerto local de prueba"]
 async fn comandos_y_adaptador_http_cubren_operaciones_y_errores() {
     use crate::{autenticacion::SesionLocal, sqlite_repo::RepositorioSqlite};
     use axum::{

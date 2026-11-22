@@ -31,8 +31,8 @@ La aplicación mantiene el libro disponible sin conexión y puede reprocesar pá
 
 El código conserva además una implementación local alternativa de persistencia de la entrega 7 con tablas propias. Los comandos de la interfaz usan el repositorio y las tablas `cuentas_grupos`, `pendientes_aplicar` y `estado_sincronizacion`; la consolidación de ambas implementaciones no se da por realizada en esta decisión.
 
-La prueba del adaptador social utiliza un servidor HTTP temporal en localhost. Está marcada como ignorada por defecto porque necesita permiso para abrir un puerto; desde `app/src-tauri` se ejecuta con:
+La prueba del adaptador social utiliza un servidor HTTP temporal en localhost, en un puerto libre asignado por el sistema. Se incluye en la suite normal y requiere permiso para abrir un puerto; desde `app/src-tauri` se puede ejecutar individualmente con:
 
 ```bash
-cargo test --lib comandos_y_adaptador_http_cubren_operaciones_y_errores -- --ignored
+cargo test --lib comandos_y_adaptador_http_cubren_operaciones_y_errores
 ```
