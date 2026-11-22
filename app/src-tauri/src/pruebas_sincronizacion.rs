@@ -18,6 +18,132 @@ mod tests {
     }
 
     #[test]
+    fn usuarios_aislan_cursores_cuentas_pendientes_y_cola() {
+        let (mut repo, ruta) = bd_temporal();
+        let cuenta =
+            ejecutar_crear_cuenta(&mut repo, "Efectivo", "efectivo", "USD", "100.00", "test")
+                .unwrap();
+        let mut ana = repo.para_usuario(&Uuid::new_v4().to_string()).unwrap();
+        let mut beto = repo.para_usuario(&Uuid::new_v4().to_string()).unwrap();
+        ana.guardar_moneda_grupo("grupo", "USD").unwrap();
+        ana.elegir_cuenta_grupo_verificada("grupo", cuenta.id())
+            .unwrap();
+        ana.encolar_gasto("clave-ana", "grupo", "Cena", "10", "{}")
+            .unwrap();
+        let evento = EventoCambioRecibido {
+            id: "pendiente-ana".into(),
+            cursor: 12,
+            tipo: "gasto_grupo".into(),
+            grupo_id: "otro-grupo".into(),
+            grupo_nombre: "Viaje".into(),
+            gasto_id: "hotel".into(),
+            concepto: "Hotel".into(),
+            fecha: "2026-11-20".into(),
+            moneda: "USD".into(),
+            monto_parte: "10.00".into(),
+            incluye_centimos_redondeo: false,
+        };
+        ana.aplicar_lote_cambios(12, vec![evento]).unwrap();
+        assert_eq!(ana.obtener_cursor_sincronizacion().unwrap(), 12);
+        assert_eq!(beto.obtener_cursor_sincronizacion().unwrap(), 0);
+        assert!(beto.obtener_cuenta_grupo("grupo").unwrap().is_none());
+        assert!(beto.obtener_moneda_grupo("grupo").unwrap().is_none());
+        assert!(beto.listar_cola_gastos().unwrap().is_empty());
+        assert_eq!(ana.listar_pendientes_aplicar().unwrap().len(), 1);
+        assert!(beto.listar_pendientes_aplicar().unwrap().is_empty());
+        beto.encolar_gasto("clave-beto", "grupo", "Taxi", "2", "{}")
+            .unwrap();
+        assert_eq!(ana.listar_cola_gastos().unwrap()[0].clave, "clave-ana");
+        assert_eq!(beto.listar_cola_gastos().unwrap()[0].clave, "clave-beto");
+        limpiar_bd(ruta);
+    }
+
+    #[test]
+    fn estado_legacy_sin_dueno_se_conserva_y_no_se_atribuye() {
+        let (mut repo, ruta) = bd_temporal();
+        repo.encolar_gasto("legacy", "grupo", "Cena", "10", "{}")
+            .unwrap();
+        let usuario = Uuid::new_v4().to_string();
+        let err = match repo.para_usuario(&usuario) {
+            Ok(_) => panic!("No se debe atribuir una cola sin dueño"),
+            Err(err) => err,
+        };
+        assert!(err.contains("sin usuario identificado"));
+        assert_eq!(repo.listar_cola_gastos().unwrap()[0].clave, "legacy");
+        repo.vincular_datos_anteriores(&usuario).unwrap();
+        assert!(repo.listar_cola_gastos().unwrap().is_empty());
+        assert_eq!(
+            repo.para_usuario(&usuario)
+                .unwrap()
+                .listar_cola_gastos()
+                .unwrap()[0]
+                .clave,
+            "legacy"
+        );
+        assert!(
+            repo.para_usuario(&Uuid::new_v4().to_string())
+                .unwrap()
+                .listar_cola_gastos()
+                .unwrap()
+                .is_empty()
+        );
+        limpiar_bd(ruta);
+    }
+
+    #[test]
+    fn vinculacion_no_sobrescribe_estado_existente() {
+        let (mut repo, ruta) = bd_temporal();
+        let usuario = Uuid::new_v4().to_string();
+        let mut propio = repo.para_usuario(&usuario).unwrap();
+        propio
+            .encolar_gasto("propio", "grupo", "Taxi", "2", "{}")
+            .unwrap();
+        repo.guardar_moneda_grupo("grupo", "USD").unwrap();
+        repo.encolar_gasto("legacy", "grupo", "Cena", "10", "{}")
+            .unwrap();
+        assert!(repo.vincular_datos_anteriores(&usuario).is_err());
+        assert_eq!(repo.listar_cola_gastos().unwrap()[0].clave, "legacy");
+        assert_eq!(
+            repo.obtener_moneda_grupo("grupo").unwrap().as_deref(),
+            Some("USD")
+        );
+        assert!(propio.obtener_moneda_grupo("grupo").unwrap().is_none());
+        assert_eq!(propio.listar_cola_gastos().unwrap()[0].clave, "propio");
+        limpiar_bd(ruta);
+    }
+
+    #[test]
+    fn parte_cero_se_aplica_y_no_impide_el_lote() {
+        let (mut repo, ruta) = bd_temporal();
+        let cuenta =
+            ejecutar_crear_cuenta(&mut repo, "Efectivo", "efectivo", "USD", "100.00", "test")
+                .unwrap();
+        repo.guardar_moneda_grupo("grupo", "USD").unwrap();
+        repo.elegir_cuenta_grupo_verificada("grupo", cuenta.id())
+            .unwrap();
+        let evento = EventoCambioRecibido {
+            id: "cero".into(),
+            cursor: 1,
+            tipo: "gasto_grupo".into(),
+            grupo_id: "grupo".into(),
+            grupo_nombre: "Viaje".into(),
+            gasto_id: "gasto".into(),
+            concepto: "Cena".into(),
+            fecha: "2026-11-20".into(),
+            moneda: "USD".into(),
+            monto_parte: "0.00".into(),
+            incluye_centimos_redondeo: false,
+        };
+        assert_eq!(repo.aplicar_lote_cambios(1, vec![evento]).unwrap(), 1);
+        let detalle = ejecutar_obtener_detalle_cuenta(&repo, cuenta.id()).unwrap();
+        assert_eq!(detalle.saldo_actual, "100.00");
+        assert_eq!(detalle.movimientos.len(), 1);
+        assert!(detalle.movimientos[0].es_gasto_de_grupo);
+        assert_eq!(repo.obtener_cursor_sincronizacion().unwrap(), 1);
+        limpiar_bd(ruta);
+    }
+
+    #[test]
     fn eleccion_usa_moneda_del_grupo_guardada_y_no_cambia_movimientos_anteriores() {
         let (mut repo, ruta) = bd_temporal();
         let usd =

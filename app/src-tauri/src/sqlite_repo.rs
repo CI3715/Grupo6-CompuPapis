@@ -57,15 +57,17 @@ fn validar_parte(
         .iter()
         .any(|v| v.trim().is_empty())
         || chrono::NaiveDate::parse_from_str(fecha, "%Y-%m-%d").is_err()
-        || rust_decimal::Decimal::from_str(monto).map_or(true, |n| n <= rust_decimal::Decimal::ZERO)
+        || rust_decimal::Decimal::from_str(monto).map_or(true, |n| n < rust_decimal::Decimal::ZERO)
     {
         return Err("La parte del gasto de grupo contiene datos inválidos.".into());
     }
     Ok(())
 }
 
+#[derive(Clone)]
 pub struct RepositorioSqlite {
     ruta_db: PathBuf,
+    usuario: Option<String>,
 }
 
 impl RepositorioSqlite {
@@ -157,11 +159,103 @@ impl RepositorioSqlite {
              END;",
         )
         .map_err(|e| e.to_string())?;
-        Ok(Self { ruta_db })
+        Ok(Self {
+            ruta_db,
+            usuario: None,
+        })
     }
 
     fn abrir(&self) -> Result<Connection, String> {
         Connection::open(&self.ruta_db).map_err(|e| e.to_string())
+    }
+
+    fn sql(&self, texto: &str) -> String {
+        let mut resultado = texto.to_owned();
+        if let Some(usuario) = &self.usuario {
+            for tabla in [
+                "cuentas_grupos",
+                "monedas_grupos",
+                "pendientes_aplicar",
+                "cola_gastos",
+                "estado_sincronizacion",
+            ] {
+                resultado = resultado.replace(tabla, &format!("{tabla}_{usuario}"));
+            }
+        }
+        resultado
+    }
+
+    pub fn para_usuario(&self, usuario_id: &str) -> Result<Self, String> {
+        self.preparar_usuario(usuario_id, false)
+    }
+
+    fn preparar_usuario(&self, usuario_id: &str, permitir_legado: bool) -> Result<Self, String> {
+        let id = uuid::Uuid::parse_str(usuario_id).map_err(|_| "Usuario inválido.".to_string())?;
+        let usuario = id.simple().to_string();
+        let conn = self.abrir()?;
+        let legado: i64 = conn.query_row(
+            "SELECT (SELECT COUNT(*) FROM cuentas_grupos) + (SELECT COUNT(*) FROM monedas_grupos) + (SELECT COUNT(*) FROM pendientes_aplicar) + (SELECT COUNT(*) FROM cola_gastos) + (SELECT COUNT(*) FROM estado_sincronizacion)",
+            [], |row| row.get(0),
+        ).map_err(|e| e.to_string())?;
+        if legado > 0 && !permitir_legado {
+            return Err("Hay datos de sincronización anteriores sin usuario identificado; se conservan y requieren migración antes de continuar.".into());
+        }
+        let repo = Self {
+            ruta_db: self.ruta_db.clone(),
+            usuario: Some(usuario),
+        };
+        for tabla in [
+            "cuentas_grupos",
+            "monedas_grupos",
+            "pendientes_aplicar",
+            "cola_gastos",
+            "estado_sincronizacion",
+        ] {
+            let original: String = conn
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?1",
+                    [tabla],
+                    |row| row.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            let definicion =
+                repo.sql(&original.replacen("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1));
+            conn.execute_batch(&definicion).map_err(|e| e.to_string())?;
+        }
+        Ok(repo)
+    }
+
+    pub fn vincular_datos_anteriores(&self, usuario_id: &str) -> Result<(), String> {
+        let destino = self.preparar_usuario(usuario_id, true)?;
+        let mut conn = self.abrir()?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        for tabla in [
+            "cuentas_grupos",
+            "monedas_grupos",
+            "pendientes_aplicar",
+            "cola_gastos",
+            "estado_sincronizacion",
+        ] {
+            let nombre_destino = destino.sql(tabla);
+            let existentes: i64 = tx
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {nombre_destino}"),
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            if existentes > 0 {
+                return Err("La sesión ya tiene datos de sincronización; no se pueden reemplazar con datos anteriores.".into());
+            }
+            tx.execute(
+                &format!("INSERT INTO {nombre_destino} SELECT * FROM {tabla}"),
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            tx.execute(&format!("DELETE FROM {tabla}"), [])
+                .map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())
     }
 
     pub fn guardar_moneda_grupo(&self, grupo_id: &str, moneda: &str) -> Result<(), String> {
@@ -170,8 +264,10 @@ impl RepositorioSqlite {
         }
         let conn = self.abrir()?;
         conn.execute(
-            "INSERT INTO monedas_grupos (grupo_id, moneda) VALUES (?1, ?2)
+            &self.sql(
+                "INSERT INTO monedas_grupos (grupo_id, moneda) VALUES (?1, ?2)
             ON CONFLICT(grupo_id) DO UPDATE SET moneda = excluded.moneda",
+            ),
             params![grupo_id, moneda],
         )
         .map_err(|e| e.to_string())?;
@@ -182,7 +278,7 @@ impl RepositorioSqlite {
         use rusqlite::OptionalExtension;
         self.abrir()?
             .query_row(
-                "SELECT moneda FROM monedas_grupos WHERE grupo_id = ?1",
+                &self.sql("SELECT moneda FROM monedas_grupos WHERE grupo_id = ?1"),
                 [grupo_id],
                 |row| row.get(0),
             )
@@ -213,7 +309,7 @@ impl RepositorioSqlite {
     pub fn obtener_cuenta_grupo(&self, grupo_id: &str) -> Result<Option<String>, String> {
         let conn = self.abrir()?;
         let mut stmt = conn
-            .prepare("SELECT cuenta_id FROM cuentas_grupos WHERE grupo_id = ?1")
+            .prepare(&self.sql("SELECT cuenta_id FROM cuentas_grupos WHERE grupo_id = ?1"))
             .map_err(|e| e.to_string())?;
         let mut filas = stmt
             .query_map([grupo_id], |row| row.get::<_, String>(0))
@@ -242,15 +338,16 @@ impl RepositorioSqlite {
         let tx = conn.transaction().map_err(|e| e.to_string())?;
 
         tx.execute(
-            "INSERT OR REPLACE INTO cuentas_grupos (grupo_id, cuenta_id) VALUES (?1, ?2)",
+            &self
+                .sql("INSERT OR REPLACE INTO cuentas_grupos (grupo_id, cuenta_id) VALUES (?1, ?2)"),
             params![grupo_id, cuenta_id],
         )
         .map_err(|e| e.to_string())?;
 
         let mut stmt = tx
             .prepare(
-                "SELECT id, gasto_id, grupo_id, grupo_nombre, concepto, fecha, moneda, monto_parte, recibio_residuo
-                 FROM pendientes_aplicar WHERE grupo_id = ?1 ORDER BY rowid ASC",
+                &self.sql("SELECT id, gasto_id, grupo_id, grupo_nombre, concepto, fecha, moneda, monto_parte, recibio_residuo
+                 FROM pendientes_aplicar WHERE grupo_id = ?1 ORDER BY rowid ASC"),
             )
             .map_err(|e| e.to_string())?;
 
@@ -324,7 +421,7 @@ impl RepositorioSqlite {
             .map_err(|e| e.to_string())?;
 
             tx.execute(
-                "DELETE FROM pendientes_aplicar WHERE id = ?1",
+                &self.sql("DELETE FROM pendientes_aplicar WHERE id = ?1"),
                 params![p.id],
             )
             .map_err(|e| e.to_string())?;
@@ -340,8 +437,8 @@ impl RepositorioSqlite {
         let conn = self.abrir()?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, gasto_id, grupo_id, grupo_nombre, concepto, fecha, moneda, monto_parte, recibio_residuo
-                 FROM pendientes_aplicar ORDER BY rowid ASC",
+                &self.sql("SELECT id, gasto_id, grupo_id, grupo_nombre, concepto, fecha, moneda, monto_parte, recibio_residuo
+                 FROM pendientes_aplicar ORDER BY rowid ASC"),
             )
             .map_err(|e| e.to_string())?;
         let filas = stmt
@@ -367,10 +464,10 @@ impl RepositorioSqlite {
     pub fn listar_cola_gastos(&self) -> Result<Vec<GastoEnColaDb>, String> {
         let conn = self.abrir()?;
         let mut stmt = conn
-            .prepare(
+            .prepare(&self.sql(
                 "SELECT clave, grupo_id, concepto, monto, datos_json, estado, motivo, creado_en
                  FROM cola_gastos ORDER BY rowid ASC",
-            )
+            ))
             .map_err(|e| e.to_string())?;
         let filas = stmt
             .query_map([], |row| {
@@ -402,8 +499,8 @@ impl RepositorioSqlite {
         let conn = self.abrir()?;
         let creado_en = Utc::now().to_rfc3339();
         conn.execute(
-            "INSERT OR REPLACE INTO cola_gastos (clave, grupo_id, concepto, monto, datos_json, estado, motivo, creado_en)
-             VALUES (?1, ?2, ?3, ?4, ?5, 'pendiente', NULL, ?6)",
+            &self.sql("INSERT OR REPLACE INTO cola_gastos (clave, grupo_id, concepto, monto, datos_json, estado, motivo, creado_en)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'pendiente', NULL, ?6)"),
             params![clave, grupo_id, concepto, monto, datos_json, creado_en],
         )
         .map_err(|e| e.to_string())?;
@@ -413,7 +510,7 @@ impl RepositorioSqlite {
     pub fn marcar_gasto_rechazado(&mut self, clave: &str, motivo: &str) -> Result<(), String> {
         let conn = self.abrir()?;
         conn.execute(
-            "UPDATE cola_gastos SET estado = 'rechazado', motivo = ?1 WHERE clave = ?2",
+            &self.sql("UPDATE cola_gastos SET estado = 'rechazado', motivo = ?1 WHERE clave = ?2"),
             params![motivo, clave],
         )
         .map_err(|e| e.to_string())?;
@@ -422,15 +519,20 @@ impl RepositorioSqlite {
 
     pub fn eliminar_de_cola(&mut self, clave: &str) -> Result<(), String> {
         let conn = self.abrir()?;
-        conn.execute("DELETE FROM cola_gastos WHERE clave = ?1", params![clave])
-            .map_err(|e| e.to_string())?;
+        conn.execute(
+            &self.sql("DELETE FROM cola_gastos WHERE clave = ?1"),
+            params![clave],
+        )
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
     pub fn obtener_cursor_sincronizacion(&self) -> Result<i64, String> {
         let conn = self.abrir()?;
         let mut stmt = conn
-            .prepare("SELECT valor FROM estado_sincronizacion WHERE clave = 'ultimo_cursor'")
+            .prepare(
+                &self.sql("SELECT valor FROM estado_sincronizacion WHERE clave = 'ultimo_cursor'"),
+            )
             .map_err(|e| e.to_string())?;
         let mut filas = stmt
             .query_map([], |row| row.get::<_, String>(0))
@@ -446,12 +548,12 @@ impl RepositorioSqlite {
     pub fn guardar_cursor_y_fecha(&mut self, nuevo_cursor: i64, fecha: &str) -> Result<(), String> {
         let conn = self.abrir()?;
         conn.execute(
-            "INSERT OR REPLACE INTO estado_sincronizacion (clave, valor) VALUES ('ultimo_cursor', ?1)",
+            &self.sql("INSERT OR REPLACE INTO estado_sincronizacion (clave, valor) VALUES ('ultimo_cursor', ?1)"),
             params![nuevo_cursor.to_string()],
         )
         .map_err(|e| e.to_string())?;
         conn.execute(
-            "INSERT OR REPLACE INTO estado_sincronizacion (clave, valor) VALUES ('ultima_sincronizacion', ?1)",
+            &self.sql("INSERT OR REPLACE INTO estado_sincronizacion (clave, valor) VALUES ('ultima_sincronizacion', ?1)"),
             params![fecha],
         )
         .map_err(|e| e.to_string())?;
@@ -461,7 +563,7 @@ impl RepositorioSqlite {
     pub fn reiniciar_cursor_sincronizacion(&mut self) -> Result<(), String> {
         let conn = self.abrir()?;
         conn.execute(
-            "INSERT OR REPLACE INTO estado_sincronizacion (clave, valor) VALUES ('ultimo_cursor', '0')",
+            &self.sql("INSERT OR REPLACE INTO estado_sincronizacion (clave, valor) VALUES ('ultimo_cursor', '0')"),
             [],
         )
         .map_err(|e| e.to_string())?;
@@ -471,9 +573,9 @@ impl RepositorioSqlite {
     pub fn obtener_ultima_sincronizacion(&self) -> Result<Option<String>, String> {
         let conn = self.abrir()?;
         let mut stmt = conn
-            .prepare(
+            .prepare(&self.sql(
                 "SELECT valor FROM estado_sincronizacion WHERE clave = 'ultima_sincronizacion'",
-            )
+            ))
             .map_err(|e| e.to_string())?;
         let mut filas = stmt
             .query_map([], |row| row.get::<_, String>(0))
@@ -487,7 +589,7 @@ impl RepositorioSqlite {
 
     pub fn registrar_sincronizacion_exitosa(&self) -> Result<(), String> {
         self.abrir()?.execute(
-            "INSERT OR REPLACE INTO estado_sincronizacion (clave, valor) VALUES ('ultima_sincronizacion', ?1)",
+            &self.sql("INSERT OR REPLACE INTO estado_sincronizacion (clave, valor) VALUES ('ultima_sincronizacion', ?1)"),
             [Utc::now().to_rfc3339()],
         ).map_err(|e| e.to_string())?;
         Ok(())
@@ -503,7 +605,7 @@ impl RepositorioSqlite {
         let tx = conn.transaction().map_err(|e| e.to_string())?;
 
         let mut stmt_cuentas = tx
-            .prepare("SELECT grupo_id, cuenta_id FROM cuentas_grupos")
+            .prepare(&self.sql("SELECT grupo_id, cuenta_id FROM cuentas_grupos"))
             .map_err(|e| e.to_string())?;
         let cuentas_por_grupo: std::collections::HashMap<String, String> = stmt_cuentas
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
@@ -548,13 +650,14 @@ impl RepositorioSqlite {
                 &ev.monto_parte,
             )?;
             tx.execute(
-                "INSERT OR IGNORE INTO monedas_grupos (grupo_id, moneda) VALUES (?1, ?2)",
+                &self
+                    .sql("INSERT OR IGNORE INTO monedas_grupos (grupo_id, moneda) VALUES (?1, ?2)"),
                 params![ev.grupo_id, ev.moneda],
             )
             .map_err(|e| e.to_string())?;
             let moneda_grupo: String = tx
                 .query_row(
-                    "SELECT moneda FROM monedas_grupos WHERE grupo_id = ?1",
+                    &self.sql("SELECT moneda FROM monedas_grupos WHERE grupo_id = ?1"),
                     [&ev.grupo_id],
                     |row| row.get(0),
                 )
@@ -608,7 +711,7 @@ impl RepositorioSqlite {
                 .map_err(|e| e.to_string())?;
 
                 tx.execute(
-                    "DELETE FROM pendientes_aplicar WHERE id = ?1",
+                    &self.sql("DELETE FROM pendientes_aplicar WHERE id = ?1"),
                     params![ev.id],
                 )
                 .map_err(|e| e.to_string())?;
@@ -617,9 +720,9 @@ impl RepositorioSqlite {
                 ya_aplicados.insert(ev.id);
             } else {
                 tx.execute(
-                    "INSERT OR REPLACE INTO pendientes_aplicar
+                    &self.sql("INSERT OR REPLACE INTO pendientes_aplicar
                      (id, gasto_id, grupo_id, grupo_nombre, concepto, fecha, moneda, monto_parte, recibio_residuo)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"),
                     params![
                         ev.id,
                         ev.gasto_id,
@@ -637,7 +740,7 @@ impl RepositorioSqlite {
         }
 
         tx.execute(
-            "INSERT OR REPLACE INTO estado_sincronizacion (clave, valor) VALUES ('ultimo_cursor', ?1)",
+            &self.sql("INSERT OR REPLACE INTO estado_sincronizacion (clave, valor) VALUES ('ultimo_cursor', ?1)"),
             params![nuevo_cursor.to_string()],
         )
         .map_err(|e| e.to_string())?;

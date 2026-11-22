@@ -4,6 +4,11 @@ import VistaGasto from "@/app/VistaGasto";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
 import type { Cuenta, GastoEnCola, PendienteAplicar } from "@/lib/tipos";
+import {
+  claveCacheGrupos,
+  guardarCacheSocial,
+  leerCacheSocial,
+} from "@/lib/social-cache";
 
 type Amigo = {
   id: string;
@@ -75,6 +80,7 @@ const errorTexto = (error: unknown) =>
     : "No se pudo completar la operación.";
 
 export default function PantallaSocial({
+  usuarioId,
   volver,
   sesion,
   iniciarSesion,
@@ -85,6 +91,7 @@ export default function PantallaSocial({
   ultimaSync,
   alCambiarLibro,
 }: {
+  usuarioId: string;
   volver: () => void;
   sesion: boolean;
   iniciarSesion: () => void;
@@ -113,6 +120,10 @@ export default function PantallaSocial({
   const [cuentaGrupo, setCuentaGrupo] = useState("");
   const [pendientes, setPendientes] = useState<PendienteAplicar[]>([]);
   const [cola, setCola] = useState<GastoEnCola[]>([]);
+  const [confirmarDatosAnteriores, setConfirmarDatosAnteriores] =
+    useState(false);
+
+  const claveCache = claveCacheGrupos(usuarioId);
 
   const cargar = useCallback(async () => {
     const [a, g] = await Promise.all([
@@ -121,7 +132,8 @@ export default function PantallaSocial({
     ]);
     setAmistades(a);
     setGrupos(g);
-  }, []);
+    guardarCacheSocial(() => localStorage, claveCache, g);
+  }, [claveCache]);
   useEffect(() => {
     if (!sesion) return;
     let activo = true;
@@ -133,6 +145,7 @@ export default function PantallaSocial({
         if (activo) {
           setAmistades(a);
           setGrupos(g);
+          guardarCacheSocial(() => localStorage, claveCache, g);
         }
       })
       .catch((e: unknown) => {
@@ -144,7 +157,14 @@ export default function PantallaSocial({
             e.campo === "sesion"
           )
             onSesionVencida();
-          else setError(errorTexto(e));
+          else {
+            const guardados = leerCacheSocial<Grupos>(
+              () => localStorage,
+              claveCache,
+            );
+            if (guardados) setGrupos(guardados);
+            setError(errorTexto(e));
+          }
         }
       })
       .finally(() => {
@@ -153,7 +173,7 @@ export default function PantallaSocial({
     return () => {
       activo = false;
     };
-  }, [sesion, onSesionVencida]);
+  }, [sesion, onSesionVencida, claveCache]);
   const cargarLocal = useCallback(async () => {
     const [p, c] = await Promise.all([
       invoke<PendienteAplicar[]>("listar_pendientes_aplicar"),
@@ -165,7 +185,13 @@ export default function PantallaSocial({
   // Se vuelve a leer cada vez que termina una sincronización
   useEffect(() => {
     if (!sesion) return;
-    void cargarLocal().catch(() => undefined);
+    let activo = true;
+    queueMicrotask(() => {
+      if (activo) void cargarLocal().catch(() => undefined);
+    });
+    return () => {
+      activo = false;
+    };
   }, [sesion, ultimaSync, cargarLocal]);
 
   async function ejecutar(accion: () => Promise<void>, mensaje = "") {
@@ -174,7 +200,7 @@ export default function PantallaSocial({
     setAviso("");
     try {
       await accion();
-      setAviso(mensaje);
+      if (mensaje) setAviso(mensaje);
     } catch (e: unknown) {
       if (
         typeof e === "object" &&
@@ -190,7 +216,29 @@ export default function PantallaSocial({
   }
 
   async function abrir(id: string) {
-    setDetalle(await llamar<Detalle>("detalle_grupo", { id }));
+    const claveDetalle = claveCacheGrupos(usuarioId, id);
+    try {
+      const datos = await llamar<Detalle>("detalle_grupo", { id });
+      guardarCacheSocial(() => localStorage, claveDetalle, datos);
+      setDetalle(datos);
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "campo" in error &&
+        error.campo === "sesion"
+      )
+        throw error;
+      const guardado = leerCacheSocial<Detalle>(
+        () => localStorage,
+        claveDetalle,
+      );
+      if (!guardado) throw error;
+      setDetalle(guardado);
+      setAviso(
+        "Mostrando datos guardados del grupo. Los cambios se enviarán al recuperar la conexión.",
+      );
+    }
     setSeleccion("");
     setCuentaGrupo(
       (await invoke<string | null>("obtener_cuenta_grupo", { grupoId: id })) ??
@@ -261,6 +309,37 @@ export default function PantallaSocial({
           {error && (
             <div className="error-alert" role="alert">
               <p>{error}</p>
+              {error.includes("sin usuario identificado") && (
+                <div>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={confirmarDatosAnteriores}
+                      onChange={(e) =>
+                        setConfirmarDatosAnteriores(e.target.checked)
+                      }
+                    />{" "}
+                    Confirmo que los datos anteriores de sincronización
+                    pertenecen a mi usuario actual.
+                  </label>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={!confirmarDatosAnteriores || ocupado}
+                    onClick={() =>
+                      void ejecutar(async () => {
+                        await invoke("vincular_datos_anteriores");
+                        setConfirmarDatosAnteriores(false);
+                        await cargar();
+                        await cargarLocal();
+                        await sincronizar();
+                      }, "Datos anteriores vinculados.")
+                    }
+                  >
+                    Vincular mis datos anteriores
+                  </button>
+                </div>
+              )}
               {!amistades && !grupos && !cargandoInicial && (
                 <button
                   type="button"

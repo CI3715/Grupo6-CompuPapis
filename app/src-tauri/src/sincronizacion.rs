@@ -75,15 +75,51 @@ pub struct RespuestaCambiosServidor {
     pub hay_mas: bool,
 }
 
+fn repo_usuario(state: &AppState, auth: &AuthState) -> Result<RepositorioSqlite, ErrorDominio> {
+    let sesion = auth
+        .sesion_actual()
+        .map_err(|e| ErrorDominio::nuevo(&e.campo, &e.mensaje))?;
+    state
+        .repo
+        .lock()
+        .map_err(|_| ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."))?
+        .para_usuario(&sesion.usuario_id)
+        .map_err(|e| ErrorDominio::nuevo("general", &e))
+}
+
+#[tauri::command]
+pub fn vincular_datos_anteriores(
+    state: State<'_, AppState>,
+    auth: State<'_, AuthState>,
+) -> Result<(), ErrorDominio> {
+    let sesion = auth
+        .sesion_actual()
+        .map_err(|e| ErrorDominio::nuevo(&e.campo, &e.mensaje))?;
+    state
+        .repo
+        .lock()
+        .map_err(|_| ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."))?
+        .vincular_datos_anteriores(&sesion.usuario_id)
+        .map_err(|e| ErrorDominio::nuevo("general", &e))
+}
+
+#[tauri::command]
+pub fn obtener_ultima_sincronizacion(
+    state: State<'_, AppState>,
+    auth: State<'_, AuthState>,
+) -> Result<Option<String>, ErrorDominio> {
+    repo_usuario(&state, &auth)?
+        .obtener_ultima_sincronizacion()
+        .map_err(|e| ErrorDominio::nuevo("general", &e))
+}
+
 #[tauri::command]
 pub fn obtener_cuenta_grupo(
     state: State<'_, AppState>,
+    auth: State<'_, AuthState>,
     grupo_id: String,
 ) -> Result<Option<String>, ErrorDominio> {
-    let repo = state
-        .repo
-        .lock()
-        .map_err(|_| ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."))?;
+    let repo = repo_usuario(&state, &auth)?;
     repo.obtener_cuenta_grupo(&grupo_id)
         .map_err(|e| ErrorDominio::nuevo("general", &e))
 }
@@ -91,13 +127,11 @@ pub fn obtener_cuenta_grupo(
 #[tauri::command]
 pub fn elegir_cuenta_grupo(
     state: State<'_, AppState>,
+    auth: State<'_, AuthState>,
     grupo_id: String,
     cuenta_id: String,
 ) -> Result<(), ErrorDominio> {
-    let mut repo = state
-        .repo
-        .lock()
-        .map_err(|_| ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."))?;
+    let mut repo = repo_usuario(&state, &auth)?;
     repo.elegir_cuenta_grupo_verificada(&grupo_id, &cuenta_id)
         .map_err(|e| ErrorDominio::nuevo("general", &e))?;
     Ok(())
@@ -106,11 +140,9 @@ pub fn elegir_cuenta_grupo(
 #[tauri::command]
 pub fn listar_pendientes_aplicar(
     state: State<'_, AppState>,
+    auth: State<'_, AuthState>,
 ) -> Result<Vec<PendienteAplicar>, ErrorDominio> {
-    let repo = state
-        .repo
-        .lock()
-        .map_err(|_| ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."))?;
+    let repo = repo_usuario(&state, &auth)?;
     let pendientes = repo
         .listar_pendientes_aplicar()
         .map_err(|e| ErrorDominio::nuevo("general", &e))?;
@@ -118,11 +150,11 @@ pub fn listar_pendientes_aplicar(
 }
 
 #[tauri::command]
-pub fn listar_cola_gastos(state: State<'_, AppState>) -> Result<Vec<GastoEnCola>, ErrorDominio> {
-    let repo = state
-        .repo
-        .lock()
-        .map_err(|_| ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."))?;
+pub fn listar_cola_gastos(
+    state: State<'_, AppState>,
+    auth: State<'_, AuthState>,
+) -> Result<Vec<GastoEnCola>, ErrorDominio> {
+    let repo = repo_usuario(&state, &auth)?;
     let cola = repo
         .listar_cola_gastos()
         .map_err(|e| ErrorDominio::nuevo("general", &e))?;
@@ -130,21 +162,22 @@ pub fn listar_cola_gastos(state: State<'_, AppState>) -> Result<Vec<GastoEnCola>
 }
 
 #[tauri::command]
-pub fn descartar_rechazo(state: State<'_, AppState>, clave: String) -> Result<(), ErrorDominio> {
-    let mut repo = state
-        .repo
-        .lock()
-        .map_err(|_| ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."))?;
+pub fn descartar_rechazo(
+    state: State<'_, AppState>,
+    auth: State<'_, AuthState>,
+    clave: String,
+) -> Result<(), ErrorDominio> {
+    let mut repo = repo_usuario(&state, &auth)?;
     repo.eliminar_de_cola(&clave)
         .map_err(|e| ErrorDominio::nuevo("general", &e))
 }
 
 #[tauri::command]
-pub fn reiniciar_cursor(state: State<'_, AppState>) -> Result<(), ErrorDominio> {
-    let mut repo = state
-        .repo
-        .lock()
-        .map_err(|_| ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."))?;
+pub fn reiniciar_cursor(
+    state: State<'_, AppState>,
+    auth: State<'_, AuthState>,
+) -> Result<(), ErrorDominio> {
+    let mut repo = repo_usuario(&state, &auth)?;
     repo.reiniciar_cursor_sincronizacion()
         .map_err(|e| ErrorDominio::nuevo("general", &e))
 }
@@ -155,19 +188,22 @@ pub async fn sincronizar(
     ping: State<'_, PingState>,
     auth: State<'_, AuthState>,
 ) -> Result<ResultadoSync, ErrorDominio> {
-    let token = auth
-        .token
+    let sesion = auth
+        .sesion_actual()
+        .map_err(|e| ErrorDominio::nuevo(&e.campo, &e.mensaje))?;
+    let repo = state
+        .repo
         .lock()
-        .map_err(|_| ErrorDominio::nuevo("general", "No se pudo consultar la sesión."))?
-        .clone()
-        .ok_or_else(|| ErrorDominio::nuevo("sesion", "Inicia sesión para continuar."))?;
+        .map_err(|_| ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."))?
+        .para_usuario(&sesion.usuario_id)
+        .map_err(|e| ErrorDominio::nuevo("general", &e))?;
 
     let cliente = ClienteSocialHttp {
         cliente: &ping.http_client,
         base: &state.server_url,
-        token: &token,
+        token: &sesion.token,
     };
-    sincronizar_con_cliente(&state.repo, &cliente).await
+    sincronizar_con_cliente(&Mutex::new(repo), &cliente).await
 }
 
 pub(crate) async fn sincronizar_con_cliente<C: ClienteSocial>(
@@ -354,6 +390,94 @@ mod pruebas_motor {
     use serde_json::json;
     use std::collections::VecDeque;
     use uuid::Uuid;
+
+    #[test]
+    fn comandos_tauri_respetan_la_sesion_y_el_estado_local() {
+        use crate::autenticacion::SesionLocal;
+        use tauri::Manager;
+        let ruta = std::env::temp_dir().join(format!("comandos-sync-{}.sqlite", Uuid::new_v4()));
+        let mut repo = RepositorioSqlite::inicializar(ruta.clone()).unwrap();
+        let cuenta = crate::domain::ejecutar_crear_cuenta(
+            &mut repo, "Efectivo", "efectivo", "USD", "100.00", "test",
+        )
+        .unwrap();
+        let usuario = Uuid::new_v4().to_string();
+        let mut propio = repo.para_usuario(&usuario).unwrap();
+        propio.guardar_moneda_grupo("grupo", "USD").unwrap();
+        propio
+            .encolar_gasto("clave", "grupo", "Cena", "10.00", "{}")
+            .unwrap();
+        propio.marcar_gasto_rechazado("clave", "rechazo").unwrap();
+        propio.registrar_sincronizacion_exitosa().unwrap();
+        let evento: EventoCambioRecibido = serde_json::from_value(json!({"id":"evento", "cursor":1, "tipo":"gasto_grupo", "grupo_id":"grupo", "grupo_nombre":"Viaje", "gasto_id":"hotel", "concepto":"Hotel", "fecha":"2026-11-20", "moneda":"USD", "monto_parte":"10.00", "incluye_centimos_redondeo":false})).unwrap();
+        propio.aplicar_lote_cambios(1, vec![evento]).unwrap();
+        let app = tauri::test::mock_app();
+        app.manage(AppState {
+            repo: Mutex::new(repo),
+            server_url: String::new(),
+            ruta_token_fallback: ruta.clone(),
+        });
+        app.manage(AuthState {
+            sesion: Mutex::new(Some(SesionLocal {
+                token: "token".into(),
+                usuario_id: usuario,
+            })),
+        });
+        let state = app.state::<AppState>();
+        let auth = app.state::<AuthState>();
+        assert!(
+            obtener_ultima_sincronizacion(state.clone(), auth.clone())
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            obtener_cuenta_grupo(state.clone(), auth.clone(), "grupo".into())
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            listar_pendientes_aplicar(state.clone(), auth.clone()).unwrap()[0].concepto,
+            "Hotel"
+        );
+        elegir_cuenta_grupo(
+            state.clone(),
+            auth.clone(),
+            "grupo".into(),
+            cuenta.id().into(),
+        )
+        .unwrap();
+        assert_eq!(
+            obtener_cuenta_grupo(state.clone(), auth.clone(), "grupo".into())
+                .unwrap()
+                .as_deref(),
+            Some(cuenta.id())
+        );
+        assert!(
+            listar_pendientes_aplicar(state.clone(), auth.clone())
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            listar_cola_gastos(state.clone(), auth.clone()).unwrap()[0]
+                .motivo
+                .as_deref(),
+            Some("rechazo")
+        );
+        descartar_rechazo(state.clone(), auth.clone(), "clave".into()).unwrap();
+        assert!(
+            listar_cola_gastos(state.clone(), auth.clone())
+                .unwrap()
+                .is_empty()
+        );
+        reiniciar_cursor(state.clone(), auth.clone()).unwrap();
+        *auth.sesion.lock().unwrap() = None;
+        assert_eq!(
+            listar_cola_gastos(state, auth).err().unwrap().campo,
+            "sesion"
+        );
+        drop(app);
+        let _ = std::fs::remove_file(ruta);
+    }
 
     struct Fake {
         envios: Mutex<Vec<(String, String, Value)>>,

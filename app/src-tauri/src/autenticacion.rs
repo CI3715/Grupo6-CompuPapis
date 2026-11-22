@@ -2,11 +2,28 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::State;
 
-const SERVER_URL: &str = "http://127.0.0.1:8000";
-
 #[derive(Default)]
 pub struct AuthState {
-    pub(crate) token: Mutex<Option<String>>,
+    pub(crate) sesion: Mutex<Option<SesionLocal>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct SesionLocal {
+    pub token: String,
+    pub usuario_id: String,
+}
+
+impl AuthState {
+    pub(crate) fn sesion_actual(&self) -> Result<SesionLocal, ErrorAuth> {
+        self.sesion
+            .lock()
+            .map_err(|_| ErrorAuth::general("No se pudo consultar la sesión."))?
+            .clone()
+            .ok_or_else(|| ErrorAuth {
+                campo: "sesion".into(),
+                mensaje: "Inicia sesión para continuar.".into(),
+            })
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -94,6 +111,7 @@ pub async fn registrar_usuario(
     correo: String,
     password: String,
     state: State<'_, super::PingState>,
+    app: State<'_, super::AppState>,
 ) -> Result<UsuarioAuth, ErrorAuth> {
     let datos = RegistroAuth {
         nombre_usuario,
@@ -104,7 +122,7 @@ pub async fn registrar_usuario(
     respuesta(
         state
             .http_client
-            .post(format!("{SERVER_URL}/usuarios"))
+            .post(format!("{}/usuarios", app.server_url))
             .json(&datos),
         false,
     )
@@ -117,20 +135,24 @@ pub async fn iniciar_sesion(
     password: String,
     state: State<'_, super::PingState>,
     auth: State<'_, AuthState>,
+    app: State<'_, super::AppState>,
 ) -> Result<SesionAuth, ErrorAuth> {
     let datos = CredencialesAuth { correo, password };
     let sesion: SesionServidor = respuesta(
         state
             .http_client
-            .post(format!("{SERVER_URL}/sesiones"))
+            .post(format!("{}/sesiones", app.server_url))
             .json(&datos),
         false,
     )
     .await?;
     *auth
-        .token
+        .sesion
         .lock()
-        .map_err(|_| ErrorAuth::general("No se pudo guardar la sesión."))? = Some(sesion.token);
+        .map_err(|_| ErrorAuth::general("No se pudo guardar la sesión."))? = Some(SesionLocal {
+        token: sesion.token,
+        usuario_id: sesion.usuario.id.clone(),
+    });
     Ok(SesionAuth {
         usuario: sesion.usuario,
         vencimiento: sesion.vencimiento,
@@ -141,17 +163,13 @@ pub async fn iniciar_sesion(
 pub async fn obtener_perfil(
     state: State<'_, super::PingState>,
     auth: State<'_, AuthState>,
+    app: State<'_, super::AppState>,
 ) -> Result<UsuarioAuth, ErrorAuth> {
-    let token = auth
-        .token
-        .lock()
-        .map_err(|_| ErrorAuth::general("No se pudo consultar la sesión."))?
-        .clone()
-        .ok_or_else(|| ErrorAuth::general("Inicia sesión para consultar tu perfil."))?;
+    let token = auth.sesion_actual()?.token;
     respuesta(
         state
             .http_client
-            .get(format!("{SERVER_URL}/usuarios/yo"))
+            .get(format!("{}/usuarios/yo", app.server_url))
             .bearer_auth(token),
         true,
     )
@@ -161,7 +179,7 @@ pub async fn obtener_perfil(
 #[tauri::command]
 pub fn cerrar_sesion(auth: State<'_, AuthState>) -> Result<(), ErrorAuth> {
     *auth
-        .token
+        .sesion
         .lock()
         .map_err(|_| ErrorAuth::general("No se pudo cerrar la sesión."))? = None;
     Ok(())

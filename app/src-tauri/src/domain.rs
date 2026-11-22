@@ -682,7 +682,7 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                     &d.monto.cantidad().to_string(),
                     &moneda,
                     "monto",
-                    false,
+                    true,
                 )
                 .map_err(|_| error_libro())?
                 .cantidad();

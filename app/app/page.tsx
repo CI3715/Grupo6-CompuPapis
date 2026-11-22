@@ -209,6 +209,7 @@ export default function MisCuentasPage() {
 
   const sync = useSincronizacion({
     sesion: Boolean(usuarioSesion),
+    usuarioId: usuarioSesion?.id ?? null,
     onSesionVencida: marcarSesionVencida,
     onSincronizado: alSincronizar,
   });
@@ -464,6 +465,8 @@ export default function MisCuentasPage() {
   if (pantalla === "social") {
     return conBarra(
       <PantallaSocial
+        key={usuarioSesion?.id ?? "sin-sesion"}
+        usuarioId={usuarioSesion?.id ?? ""}
         volver={() => irAPantalla("cuentas")}
         sesion={Boolean(usuarioSesion)}
         sesionVencida={sesionVencida}

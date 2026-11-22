@@ -60,10 +60,11 @@ export function TopAuthBar({
                   <span className="top-auth-status" role="status">
                     {sincronizacion.sincronizando
                       ? "Sincronizando…"
-                      : sincronizacion.errorSync ||
-                        (sincronizacion.ultimaSync
-                          ? `Última sincronización: ${formatearFechaHora(sincronizacion.ultimaSync)}`
-                          : "Aún sin sincronizar")}
+                      : sincronizacion.ultimaSync
+                        ? `Última sincronización: ${formatearFechaHora(sincronizacion.ultimaSync)}`
+                        : "Aún sin sincronizar"}
+                    {sincronizacion.errorSync &&
+                      ` · ${sincronizacion.errorSync}`}
                   </span>
                   <button
                     type="button"

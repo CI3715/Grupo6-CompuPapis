@@ -99,12 +99,14 @@ pub async fn operacion_social(
     auth: State<'_, AuthState>,
     app_state: State<'_, AppState>,
 ) -> Result<Value, ErrorAuth> {
-    let token = auth
-        .token
+    let sesion = auth.sesion_actual()?;
+    let token = sesion.token;
+    let repo = app_state
+        .repo
         .lock()
-        .map_err(|_| ErrorAuth::general("No se pudo consultar la sesión."))?
-        .clone()
-        .ok_or_else(|| ErrorAuth::general("Inicia sesión para continuar."))?;
+        .map_err(|_| ErrorAuth::general("Error de acceso al almacenamiento."))?
+        .para_usuario(&sesion.usuario_id)
+        .map_err(|e| ErrorAuth::general(&e))?;
     let cliente = &state.http_client;
     let base = &app_state.server_url;
     let id = || -> Result<Uuid, ErrorAuth> {
@@ -121,10 +123,7 @@ pub async fn operacion_social(
         let payload = datos_gasto_grupo(&datos);
 
         let hay_pendientes = {
-            let mut repo = app_state
-                .repo
-                .lock()
-                .map_err(|_| ErrorAuth::general("Error de acceso al almacenamiento."))?;
+            let mut repo = repo.clone();
             let hay_pendientes = repo
                 .listar_cola_gastos()
                 .map_err(|e| ErrorAuth::general(&e))?
@@ -172,19 +171,13 @@ pub async fn operacion_social(
                         .get("mensaje")
                         .and_then(Value::as_str)
                         .unwrap_or("No se pudo completar la operación.");
-                    app_state
-                        .repo
-                        .lock()
-                        .map_err(|_| ErrorAuth::general("Error de acceso al almacenamiento."))?
+                    repo.clone()
                         .marcar_gasto_rechazado(&clave, mensaje)
                         .map_err(|e| ErrorAuth::general(&e))?;
                     return Err(ErrorAuth::general(mensaje));
                 }
                 let body: Value = response.json().await.unwrap_or(json!({}));
-                app_state
-                    .repo
-                    .lock()
-                    .map_err(|_| ErrorAuth::general("Error de acceso al almacenamiento."))?
+                repo.clone()
                     .eliminar_de_cola(&clave)
                     .map_err(|e| ErrorAuth::general(&e))?;
                 return Ok(json!({ "pendiente": false, "datos": body }));
@@ -241,10 +234,6 @@ pub async fn operacion_social(
         .await
         .map_err(|_| ErrorAuth::general("No se pudo leer la respuesta del servidor."))?;
     if accion == "detalle_grupo" || accion == "listar_grupos" {
-        let repo = app_state
-            .repo
-            .lock()
-            .map_err(|_| ErrorAuth::general("Error de acceso al almacenamiento."))?;
         let grupos: Vec<&Value> = if accion == "detalle_grupo" {
             vec![&body]
         } else {
