@@ -1759,4 +1759,449 @@ mod tests {
         let lote_excedido = vec![evento_base; LIMITE_EVENTOS_CAMBIOS + 1];
         assert!(RespuestaCambios::nueva(lote_excedido, 101, true).is_err());
     }
+
+    // Construye una petición GET a /cambios con token Bearer opcional
+    fn peticion_cambios_http(ruta: &str, token: Option<&str>) -> Request<Body> {
+        let mut builder = Request::builder().method("GET").uri(ruta);
+        if let Some(t) = token {
+            builder = builder.header("authorization", format!("Bearer {t}"));
+        }
+        builder
+            .body(Body::empty())
+            .expect("La petición GET de prueba debe construirse")
+    }
+
+    // Comprueba que GET /cambios rechace tokens ausentes, inválidos o vencidos con 401
+    #[tokio::test]
+    async fn get_cambios_rechaza_credenciales_ausentes_invalidas_y_vencidas_con_401() {
+        let secreto = "secreto de prueba con al menos 32 bytes";
+        // Usa conexión diferida porque el rechazo 401 ocurre antes de consultar PostgreSQL
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://test:test@127.0.0.1/test")
+            .expect("El pool diferido debe configurarse");
+        let app = construir_app(auth::State::new(pool, secreto.into()));
+        let ana = id_fijo(1);
+        let token_vencido = firmar_token_prueba(ana, secreto, -5);
+        let token_otro_secreto =
+            firmar_token_prueba(ana, "otro secreto distinto con mas de 32 bytes", 5);
+
+        let casos = [
+            None,
+            Some("token-malformado"),
+            Some(token_otro_secreto.as_str()),
+            Some(token_vencido.as_str()),
+        ];
+
+        for token in casos {
+            let respuesta = app
+                .clone()
+                .oneshot(peticion_cambios_http("/cambios?desde=0", token))
+                .await
+                .expect("La petición de prueba debe ejecutarse");
+
+            assert_eq!(respuesta.status(), StatusCode::UNAUTHORIZED);
+            let bytes = to_bytes(respuesta.into_body(), 65536)
+                .await
+                .expect("El cuerpo de respuesta debe leerse");
+            let json_resp: Value =
+                serde_json::from_slice(&bytes).expect("La respuesta debe ser JSON válido");
+            assert_eq!(
+                json_resp,
+                json!({
+                    "codigo": "no_autorizado",
+                    "mensaje": "Sesión inválida o vencida."
+                })
+            );
+        }
+    }
+
+    // Comprueba que GET /cambios rechace cursores inválidos con código 400
+    #[tokio::test]
+    async fn get_cambios_rechaza_cursor_invalido_con_400() {
+        let secreto = "secreto de prueba con al menos 32 bytes";
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://test:test@127.0.0.1/test")
+            .expect("El pool diferido debe configurarse");
+        let app = construir_app(auth::State::new(pool, secreto.into()));
+        let token_ana = firmar_token_prueba(id_fijo(1), secreto, 10);
+
+        let rutas_invalidas = [
+            "/cambios?desde=",
+            "/cambios?desde=-1",
+            "/cambios?desde=%2B1",
+            "/cambios?desde=abc",
+            "/cambios?desde=12.5",
+            "/cambios?desde=99999999999999999999999",
+        ];
+
+        for ruta in rutas_invalidas {
+            let respuesta = app
+                .clone()
+                .oneshot(peticion_cambios_http(ruta, Some(&token_ana)))
+                .await
+                .expect("La petición de prueba debe ejecutarse");
+
+            assert_eq!(respuesta.status(), StatusCode::BAD_REQUEST);
+            let bytes = to_bytes(respuesta.into_body(), 65536)
+                .await
+                .expect("El cuerpo de respuesta debe leerse");
+            let json_resp: Value =
+                serde_json::from_slice(&bytes).expect("La respuesta debe ser JSON válido");
+            assert_eq!(json_resp["codigo"], "cursor_invalido");
+            assert!(json_resp["mensaje"].is_string());
+        }
+    }
+
+    // Verifica paginación en lotes de cien, consulta vacía y reinicio del cursor
+    #[test]
+    fn construir_respuesta_cambios_pagina_en_lotes_y_maneja_vacio_o_reinicio() {
+        let fecha = NaiveDate::from_ymd_opt(2026, 11, 22).expect("Fecha válida");
+        let grupo_id = id_fijo(800);
+        let todos: Vec<sincronizacion_db::EventoCambioDb> = (1..=105_i64)
+            .map(|posicion| sincronizacion_db::EventoCambioDb {
+                evento: EventoUsuario {
+                    id: id_fijo(8000 + u128::try_from(posicion).expect("Posición positiva")),
+                    posicion,
+                    tipo: String::from(TIPO_EVENTO_GASTO_GRUPO),
+                    gasto_id: id_fijo(9000 + u128::try_from(posicion).expect("Posición positiva")),
+                    grupo_id,
+                    concepto: format!("Gasto {posicion}"),
+                    fecha,
+                    moneda: String::from("USD"),
+                    monto_parte: String::from("5.00"),
+                    recibio_residuo: false,
+                },
+                grupo_nombre: String::from("Viaje a Mérida"),
+            })
+            .collect();
+
+        // Simula el primer lote cuando existen más de cien eventos disponibles
+        let lote_1: Vec<_> = todos.iter().take(101).cloned().collect();
+        let resp_1 = construir_respuesta_cambios(sincronizacion_db::armar_pagina_cambios(lote_1, 0))
+            .expect("La primera página debe construirse");
+        assert_eq!(resp_1.eventos.len(), LIMITE_EVENTOS_CAMBIOS);
+        assert_eq!(resp_1.eventos.first().unwrap().cursor, 1);
+        assert_eq!(resp_1.eventos.last().unwrap().cursor, 100);
+        assert_eq!(resp_1.nuevo_cursor, 100);
+        assert!(resp_1.hay_mas);
+
+        // Simula la segunda página con los cinco eventos restantes
+        let lote_2: Vec<_> = todos
+            .iter()
+            .filter(|e| e.evento.posicion > resp_1.nuevo_cursor)
+            .take(101)
+            .cloned()
+            .collect();
+        let resp_2 = construir_respuesta_cambios(sincronizacion_db::armar_pagina_cambios(
+            lote_2,
+            resp_1.nuevo_cursor,
+        ))
+        .expect("La segunda página debe construirse");
+        assert_eq!(resp_2.eventos.len(), 5);
+        assert_eq!(resp_2.eventos.first().unwrap().cursor, 101);
+        assert_eq!(resp_2.eventos.last().unwrap().cursor, 105);
+        assert_eq!(resp_2.nuevo_cursor, 105);
+        assert!(!resp_2.hay_mas);
+
+        // Simula consulta sin eventos nuevos y reinicio explícito desde cero
+        let resp_vacia = construir_respuesta_cambios(sincronizacion_db::armar_pagina_cambios(
+            Vec::new(),
+            resp_2.nuevo_cursor,
+        ))
+        .expect("La página vacía debe construirse");
+        assert!(resp_vacia.eventos.is_empty());
+        assert_eq!(resp_vacia.nuevo_cursor, 105);
+        assert!(!resp_vacia.hay_mas);
+
+        let lote_reinicio: Vec<_> = todos.iter().take(101).cloned().collect();
+        let resp_reinicio =
+            construir_respuesta_cambios(sincronizacion_db::armar_pagina_cambios(lote_reinicio, 0))
+                .expect("El reinicio desde cero debe construirse");
+        assert_eq!(resp_reinicio, resp_1);
+    }
+
+    // Valida aislamiento INV-17, paginación y reinicio de cursor en GET /cambios
+    #[tokio::test]
+    #[ignore = "requiere PostgreSQL de pruebas"]
+    async fn get_cambios_aislamiento_paginacion_y_reinicio_con_postgres() {
+        let url = std::env::var("E5_TEST_DATABASE_URL").expect("Configura E5_TEST_DATABASE_URL");
+        let pool = db::conectar_y_migrar(&url)
+            .await
+            .expect("La base de pruebas debe conectarse");
+        let secreto = "secreto de prueba con al menos 32 bytes";
+        let app = construir_app(auth::State::new(pool.clone(), secreto.into()));
+
+        let ana = Uuid::new_v4();
+        let beto = Uuid::new_v4();
+        let elena = Uuid::new_v4();
+        let carla = Uuid::new_v4();
+        let diego = Uuid::new_v4();
+        let grupo_compartido = Uuid::new_v4();
+        let grupo_ajeno = Uuid::new_v4();
+        let sufijo = Uuid::new_v4().simple().to_string();
+
+        // Inserta usuarios de prueba para dos grupos aislados
+        for (id, nombre) in [
+            (ana, "ana"),
+            (beto, "beto"),
+            (elena, "elena"),
+            (carla, "carla"),
+            (diego, "diego"),
+        ] {
+            let usuario = format!("{nombre}_{}", &sufijo[..8]);
+            sqlx::query("INSERT INTO usuarios(id,nombre_usuario,nombre_visible,correo,password_hash) VALUES($1,$2,$3,$4,'hash')")
+                .bind(id)
+                .bind(&usuario)
+                .bind(nombre)
+                .bind(format!("{usuario}@example.com"))
+                .execute(&pool)
+                .await
+                .expect("El usuario de prueba debe insertarse");
+        }
+
+        sqlx::query(
+            "INSERT INTO grupos(id,nombre,moneda,creador_id) VALUES($1,'Viaje a Mérida','USD',$2)",
+        )
+        .bind(grupo_compartido)
+        .bind(ana)
+        .execute(&pool)
+        .await
+        .expect("El grupo compartido debe insertarse");
+        for id in [ana, beto, elena] {
+            sqlx::query("INSERT INTO grupo_miembros(grupo_id,usuario_id,estado_invitacion) VALUES($1,$2,'aceptada')")
+                .bind(grupo_compartido)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .expect("La membresía del grupo compartido debe insertarse");
+        }
+
+        sqlx::query(
+            "INSERT INTO grupos(id,nombre,moneda,creador_id) VALUES($1,'Grupo Ajeno','USD',$2)",
+        )
+        .bind(grupo_ajeno)
+        .bind(carla)
+        .execute(&pool)
+        .await
+        .expect("El grupo ajeno debe insertarse");
+        for id in [carla, diego] {
+            sqlx::query("INSERT INTO grupo_miembros(grupo_id,usuario_id,estado_invitacion) VALUES($1,$2,'aceptada')")
+                .bind(grupo_ajeno)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .expect("La membresía del grupo ajeno debe insertarse");
+        }
+
+        let token_ana = firmar_token_prueba(ana, secreto, 10);
+        let token_elena = firmar_token_prueba(elena, secreto, 10);
+        let token_carla = firmar_token_prueba(carla, secreto, 10);
+        let token_vencido = firmar_token_prueba(ana, secreto, -5);
+
+        // Registra 105 gastos en el grupo compartido excluyendo a Elena
+        for numero in 1..=105 {
+            let cuerpo = json!({
+                "concepto": format!("Gasto {numero}"),
+                "monto": "10.00",
+                "fecha": "2026-11-22",
+                "pagado_por": ana,
+                "regla": "iguales",
+                "participantes": [
+                    { "usuario_id": ana },
+                    { "usuario_id": beto }
+                ]
+            })
+            .to_string();
+            let resp = app
+                .clone()
+                .oneshot(peticion_gasto_http(
+                    grupo_compartido,
+                    Some(&token_ana),
+                    None,
+                    &cuerpo,
+                ))
+                .await
+                .expect("El registro de gasto compartido debe ejecutarse");
+            assert_eq!(resp.status(), StatusCode::CREATED);
+        }
+
+        // Registra un gasto en el grupo ajeno para verificar aislamiento
+        let cuerpo_ajeno = json!({
+            "concepto": "Cena ajena",
+            "monto": "20.00",
+            "fecha": "2026-11-22",
+            "pagado_por": carla,
+            "regla": "iguales",
+            "participantes": [
+                { "usuario_id": carla },
+                { "usuario_id": diego }
+            ]
+        })
+        .to_string();
+        let resp_ajeno = app
+            .clone()
+            .oneshot(peticion_gasto_http(
+                grupo_ajeno,
+                Some(&token_carla),
+                None,
+                &cuerpo_ajeno,
+            ))
+            .await
+            .expect("El registro de gasto ajeno debe ejecutarse");
+        assert_eq!(resp_ajeno.status(), StatusCode::CREATED);
+
+        // Verifica rechazo 401 sin token, con token inválido y vencido
+        for token in [None, Some("invalido"), Some(token_vencido.as_str())] {
+            let resp = app
+                .clone()
+                .oneshot(peticion_cambios_http("/cambios?desde=0", token))
+                .await
+                .expect("La petición 401 debe ejecutarse");
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        // Verifica rechazo 400 cuando el cursor desde es inválido
+        for ruta in ["/cambios?desde=-1", "/cambios?desde=abc"] {
+            let resp = app
+                .clone()
+                .oneshot(peticion_cambios_http(ruta, Some(&token_ana)))
+                .await
+                .expect("La petición 400 debe ejecutarse");
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        }
+
+        // Verifica aislamiento INV-17 Elena excluida no recibe eventos
+        let resp_elena = app
+            .clone()
+            .oneshot(peticion_cambios_http("/cambios?desde=0", Some(&token_elena)))
+            .await
+            .expect("La consulta de Elena debe ejecutarse");
+        assert_eq!(resp_elena.status(), StatusCode::OK);
+        let datos_elena: Value = serde_json::from_slice(
+            &to_bytes(resp_elena.into_body(), 65536).await.unwrap(),
+        )
+        .unwrap();
+        assert_eq!(datos_elena["eventos"].as_array().unwrap().len(), 0);
+        assert_eq!(datos_elena["nuevo_cursor"], 0);
+        assert_eq!(datos_elena["hay_mas"], false);
+
+        // Verifica aislamiento INV-17 Carla solo recibe su grupo ajeno
+        let resp_carla = app
+            .clone()
+            .oneshot(peticion_cambios_http("/cambios?desde=0", Some(&token_carla)))
+            .await
+            .expect("La consulta de Carla debe ejecutarse");
+        assert_eq!(resp_carla.status(), StatusCode::OK);
+        let datos_carla: Value = serde_json::from_slice(
+            &to_bytes(resp_carla.into_body(), 65536).await.unwrap(),
+        )
+        .unwrap();
+        let eventos_carla = datos_carla["eventos"].as_array().unwrap();
+        assert_eq!(eventos_carla.len(), 1);
+        assert_eq!(eventos_carla[0]["grupo_id"], grupo_ajeno.to_string());
+        assert_eq!(eventos_carla[0]["grupo_nombre"], "Grupo Ajeno");
+        assert_eq!(datos_carla["nuevo_cursor"], 1);
+        assert_eq!(datos_carla["hay_mas"], false);
+
+        // Comprueba primera página ordenada de cien eventos sin datos ajenos
+        let resp_pag_1 = app
+            .clone()
+            .oneshot(peticion_cambios_http("/cambios?desde=0", Some(&token_ana)))
+            .await
+            .expect("La primera página de Ana debe ejecutarse");
+        assert_eq!(resp_pag_1.status(), StatusCode::OK);
+        let pagina_1: Value = serde_json::from_slice(
+            &to_bytes(resp_pag_1.into_body(), 1024 * 1024).await.unwrap(),
+        )
+        .unwrap();
+        let eventos_1 = pagina_1["eventos"].as_array().unwrap();
+        assert_eq!(eventos_1.len(), LIMITE_EVENTOS_CAMBIOS);
+        assert_eq!(pagina_1["nuevo_cursor"], 100);
+        assert_eq!(pagina_1["hay_mas"], true);
+        for (indice, evento) in eventos_1.iter().enumerate() {
+            let esperado = i64::try_from(indice + 1).expect("El cursor debe caber en i64");
+            assert_eq!(evento["cursor"], esperado);
+            assert_eq!(evento["grupo_id"], grupo_compartido.to_string());
+            assert_eq!(evento["grupo_nombre"], "Viaje a Mérida");
+        }
+
+        // Comprueba segunda página con los cinco eventos restantes
+        let resp_pag_2 = app
+            .clone()
+            .oneshot(peticion_cambios_http(
+                "/cambios?desde=100",
+                Some(&token_ana),
+            ))
+            .await
+            .expect("La segunda página de Ana debe ejecutarse");
+        assert_eq!(resp_pag_2.status(), StatusCode::OK);
+        let pagina_2: Value = serde_json::from_slice(
+            &to_bytes(resp_pag_2.into_body(), 1024 * 1024).await.unwrap(),
+        )
+        .unwrap();
+        let eventos_2 = pagina_2["eventos"].as_array().unwrap();
+        assert_eq!(eventos_2.len(), 5);
+        assert_eq!(pagina_2["nuevo_cursor"], 105);
+        assert_eq!(pagina_2["hay_mas"], false);
+        for (indice, evento) in eventos_2.iter().enumerate() {
+            let esperado = i64::try_from(101 + indice).expect("El cursor debe caber en i64");
+            assert_eq!(evento["cursor"], esperado);
+            assert_eq!(evento["grupo_id"], grupo_compartido.to_string());
+        }
+
+        // Comprueba consulta sin eventos nuevos conservando el cursor
+        let resp_vacia = app
+            .clone()
+            .oneshot(peticion_cambios_http(
+                "/cambios?desde=105",
+                Some(&token_ana),
+            ))
+            .await
+            .expect("La consulta sin novedades debe ejecutarse");
+        assert_eq!(resp_vacia.status(), StatusCode::OK);
+        let pagina_vacia: Value = serde_json::from_slice(
+            &to_bytes(resp_vacia.into_body(), 65536).await.unwrap(),
+        )
+        .unwrap();
+        assert_eq!(pagina_vacia["eventos"].as_array().unwrap().len(), 0);
+        assert_eq!(pagina_vacia["nuevo_cursor"], 105);
+        assert_eq!(pagina_vacia["hay_mas"], false);
+
+        // Comprueba reinicio del cursor a cero y consulta sin parámetro desde
+        let resp_reinicio = app
+            .clone()
+            .oneshot(peticion_cambios_http("/cambios", Some(&token_ana)))
+            .await
+            .expect("El reinicio de cursor debe ejecutarse");
+        assert_eq!(resp_reinicio.status(), StatusCode::OK);
+        let pagina_reinicio: Value = serde_json::from_slice(
+            &to_bytes(resp_reinicio.into_body(), 1024 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(pagina_reinicio["nuevo_cursor"], 100);
+        assert_eq!(pagina_reinicio["hay_mas"], true);
+        assert_eq!(
+            pagina_reinicio["eventos"].as_array().unwrap()[0]["id"],
+            eventos_1[0]["id"]
+        );
+
+        // Limpia los datos de prueba respetando el orden de claves foránea
+        sqlx::query("DELETE FROM eventos_usuario WHERE grupo_id = ANY($1)")
+            .bind(&[grupo_compartido, grupo_ajeno][..])
+            .execute(&pool)
+            .await
+            .expect("Los eventos de prueba deben limpiarse");
+        sqlx::query("DELETE FROM grupos WHERE id = ANY($1)")
+            .bind(&[grupo_compartido, grupo_ajeno][..])
+            .execute(&pool)
+            .await
+            .expect("Los grupos de prueba deben limpiarse");
+        sqlx::query("DELETE FROM usuarios WHERE id = ANY($1)")
+            .bind(&[ana, beto, elena, carla, diego][..])
+            .execute(&pool)
+            .await
+            .expect("Los usuarios de prueba deben limpiarse");
+    }
 }

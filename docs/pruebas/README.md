@@ -410,3 +410,62 @@ Ejecutar desde la raíz del repositorio:
 cargo test --manifest-path server/Cargo.toml
 cargo fmt --manifest-path server/Cargo.toml -- --check
 cargo clippy --manifest-path server/Cargo.toml --all-targets -- -D warnings
+```
+
+### Control de idempotencia HTTP en `POST /grupos/{id}/gastos`
+
+Las pruebas automatizadas del servidor en `server/src/main.rs` y `server/src/gastos_db.rs` validan la lectura de `Idempotency-Key`, la huella determinística del gasto, la atomicidad en base de datos y las respuestas HTTP `201`, `200`, `409`, `404` uniforme, `400` y `401`.
+
+| Archivo / prueba | Qué comprueba | Requiere PostgreSQL |
+| --- | --- | --- |
+| `server/src/main.rs`: `idempotency_key_ausente_devuelve_none` | Permite omitir `Idempotency-Key` devolviendo `None`. | No |
+| `server/src/main.rs`: `idempotency_key_valida_se_extrae_correctamente` | Extrae una clave ASCII gráfica sin alteraciones. | No |
+| `server/src/main.rs`: `idempotency_key_invalida_responde_400` | Rechaza con `400` claves vacías, largas, con espacios, no ASCII o repetidas. | No |
+| `server/src/main.rs`: `precondiciones_mantienen_401_y_404_uniformes` | Verifica respuestas `401` y `404` uniformes en precondiciones. | No |
+| `server/src/main.rs`: `mapeo_resultado_gasto_responde_201_200_y_409` | Verifica el mapeo HTTP para creación (`201`), repetición (`200`) y conflicto (`409`). | No |
+| `server/src/main.rs`: `mapeo_error_gasto_mantiene_404_uniforme_y_400_entrega_6` | Confirma `404` uniforme y errores `400` de validación heredados de la Entrega 6. | No |
+| `server/src/main.rs`: `post_gastos_rechaza_credenciales_ausentes_invalidas_y_vencidas_con_401` | Envía peticiones HTTP al router y verifica `401` sin token, con token inválido y con token vencido. | No |
+| `server/src/gastos_db.rs`: `huella_ignora_formato_json_orden_y_decimales_equivalentes` | Confirma que orden de llaves JSON, espacios y decimales equivalentes producen la misma huella. | No |
+| `server/src/gastos_db.rs`: `huella_detecta_modificaciones_reales_para_conflicto_409` | Comprueba que modificar cualquier dato del gasto cambia la huella para disparar `409`. | No |
+| `server/src/gastos_db.rs`: `idempotencia_atomica_conflicto_y_concurrencia` | Valida rollback en errores, reintentos, conflicto y dos envíos concurrentes con la misma clave. | Sí (`E5_TEST_DATABASE_URL`) |
+| `server/src/main.rs`: `post_gastos_idempotencia_http_201_200_409_404_400_y_401` | Verifica extremo a extremo en `POST /grupos/{id}/gastos` los códigos `201`, `200`, `409`, `404` uniforme, `400` y `401` sin duplicar gastos ni eventos. | Sí (`E5_TEST_DATABASE_URL`) |
+
+Ejecutar las comprobaciones unitarias, de formato y de linter desde `server/`:
+
+```bash
+cargo test
+cargo fmt --check
+cargo clippy -- -D warnings
+```
+
+Para ejecutar también las pruebas HTTP y de base de datos contra PostgreSQL de pruebas (con `E5_TEST_DATABASE_URL` configurada), desde `server/`:
+
+```bash
+cargo test post_gastos_idempotencia_http_201_200_409_404_400_y_401 -- --ignored
+cargo test gastos_db::tests::idempotencia_atomica_conflicto_y_concurrencia -- --ignored
+```
+
+### Consulta paginada de eventos en `GET /cambios`
+
+Las pruebas automatizadas del servidor en `server/src/main.rs` y `server/src/sincronizacion_db.rs` validan la autenticación JWT (`401`), la validación del cursor `desde` (`400`), el aislamiento de eventos por usuario (**INV-17**), la ausencia de datos del libro personal (**INV-16**), la paginación ordenada en lotes de máximo 100 eventos, las consultas sin eventos nuevos y el reinicio del cursor a cero.
+
+| Archivo / prueba | Qué comprueba | Requiere PostgreSQL |
+| --- | --- | --- |
+| `server/src/main.rs`: `validar_cursor_desde_acepta_omitido_cero_y_positivos` | Acepta cursor omitido (como `0`), cero y enteros positivos válidos. | No |
+| `server/src/main.rs`: `validar_cursor_desde_rechaza_valores_invalidos_con_400` | Rechaza con `400` cursores vacíos, negativos, con signo, decimales, textuales o fuera de rango. | No |
+| `server/src/main.rs`: `respuesta_cambios_serializa_campos_openapi_sin_libro_personal` | Verifica el contrato JSON de `RespuestaCambios` y confirma ausencia de campos personales (**INV-16**). | No |
+| `server/src/main.rs`: `respuesta_cambios_rechaza_cursor_invalido_o_lote_excedido` | Impide construir respuestas con posiciones no positivas, cursor negativo o más de 100 eventos. | No |
+| `server/src/main.rs`: `get_cambios_rechaza_credenciales_ausentes_invalidas_y_vencidas_con_401` | Envía peticiones HTTP a `GET /cambios` y verifica `401` sin token, con token inválido y con token vencido. | No |
+| `server/src/main.rs`: `get_cambios_rechaza_cursor_invalido_con_400` | Envía peticiones HTTP autenticadas con cursores inválidos y verifica respuesta `400` (`cursor_invalido`). | No |
+| `server/src/main.rs`: `construir_respuesta_cambios_pagina_en_lotes_y_maneja_vacio_o_reinicio` | Comprueba el armado de lotes de 100 con `hay_mas`, segunda página final, consulta vacía y reinicio desde cero. | No |
+| `server/src/sincronizacion_db.rs`: `paginacion_vacia_conserva_cursor_recibido` | Confirma que un lote vacío mantiene `nuevo_cursor` igual al cursor recibido con `hay_mas = false`. | No |
+| `server/src/sincronizacion_db.rs`: `paginacion_con_cien_eventos_no_marca_hay_mas` | Verifica que exactamente 100 eventos devuelvan `hay_mas = false` y cursor `100`. | No |
+| `server/src/sincronizacion_db.rs`: `paginacion_con_mas_de_cien_recorta_y_marca_hay_mas` | Verifica el recorte a 100 eventos cuando llegan 101 filas, actualizando `nuevo_cursor` con `hay_mas = true`. | No |
+| `server/src/main.rs`: `get_cambios_aislamiento_paginacion_y_reinicio_con_postgres` | Comprueba extremo a extremo en `GET /cambios` los códigos `401`/`400`, el aislamiento **INV-17** (excluido y grupo ajeno), la paginación ordenada de 105 eventos, la consulta sin novedades y el reinicio a cero. | Sí (`E5_TEST_DATABASE_URL`) |
+
+Ejecutar las pruebas unitarias, formato y linter desde la raíz del repositorio:
+
+```bash
+cargo fmt --manifest-path server/Cargo.toml -- --check
+cargo clippy --manifest-path server/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path server/Cargo.toml
