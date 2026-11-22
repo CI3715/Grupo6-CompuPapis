@@ -156,6 +156,29 @@ pub struct LoteCambios {
     pub hay_mas: bool,
 }
 
+// Fila de un evento compartido de gasto grupal almacenado por usuario
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EventoUsuario {
+    pub id: Uuid,
+    pub posicion: i64,
+    pub tipo: String,
+    pub gasto_id: Uuid,
+    pub grupo_id: Uuid,
+    pub concepto: String,
+    pub fecha: NaiveDate,
+    pub moneda: String,
+    pub monto_parte: String,
+    pub recibio_residuo: bool,
+}
+
+// Lote paginado de eventos leídos de PostgreSQL con cursor e indicador de continuidad
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LoteCambios {
+    pub eventos: Vec<EventoUsuario>,
+    pub cursor: i64,
+    pub hay_mas: bool,
+}
+
 pub async fn consultar_cambios(
     pool: &PgPool,
     usuario_id: Uuid,
@@ -231,4 +254,185 @@ pub async fn consultar_cambios(
         cursor,
         hay_mas,
     })
+}
+
+// Límite máximo de eventos devueltos por lote de sincronización
+#[allow(dead_code)]
+pub const LIMITE_LOTE_CAMBIOS: usize = 100;
+
+// Cantidad consultada en SQL para detectar si existen más páginas
+#[allow(dead_code)]
+const LIMITE_CONSULTA_CAMBIOS: i64 = 101;
+
+// Fila devuelta por PostgreSQL al consultar eventos con grupo
+type FilaCambioDb = (
+    Uuid,
+    i64,
+    String,
+    Uuid,
+    Uuid,
+    String,
+    String,
+    NaiveDate,
+    String,
+    String,
+    bool,
+);
+
+// Evento compartido de un usuario acompañado del nombre de su grupo
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EventoCambioDb {
+    pub evento: EventoUsuario,
+    pub grupo_nombre: String,
+}
+
+// Página de eventos ordenados de un usuario con cursor y continuidad
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PaginaCambiosDb {
+    pub eventos: Vec<EventoCambioDb>,
+    pub nuevo_cursor: i64,
+    pub hay_mas: bool,
+}
+
+// Recorta hasta cien eventos, calcula el nuevo cursor e indica continuidad
+#[allow(dead_code)]
+pub fn armar_pagina_cambios(
+    mut eventos: Vec<EventoCambioDb>,
+    cursor_desde: i64,
+) -> PaginaCambiosDb {
+    let hay_mas = eventos.len() > LIMITE_LOTE_CAMBIOS;
+    if hay_mas {
+        // Recorta el elemento extra usado solo para detectar continuidad.
+        eventos.truncate(LIMITE_LOTE_CAMBIOS);
+    }
+
+    // Conserva el cursor recibido cuando no existen eventos nuevos
+    let nuevo_cursor = eventos
+        .last()
+        .map_or(cursor_desde, |item| item.evento.posicion);
+
+    PaginaCambiosDb {
+        eventos,
+        nuevo_cursor,
+        hay_mas,
+    }
+}
+
+// Consulta en orden hasta cien eventos nuevos exclusivos del usuario autenticado
+#[allow(dead_code)]
+pub async fn consultar_cambios_paginados(
+    pool: &PgPool,
+    usuario_id: Uuid,
+    desde: i64,
+) -> Result<PaginaCambiosDb, sqlx::Error> {
+    // Filtra por usuario y cursor para aislar eventos según INV-17
+    let filas: Vec<FilaCambioDb> = sqlx::query_as(
+        "SELECT e.id, e.posicion, e.tipo, e.gasto_id, e.grupo_id, gr.nombre,
+                e.concepto, e.fecha, e.moneda, e.monto_parte::text, e.recibio_residuo
+         FROM eventos_usuario e
+         JOIN grupos gr ON gr.id = e.grupo_id
+         WHERE e.usuario_id = $1 AND e.posicion > $2
+         ORDER BY e.posicion ASC
+         LIMIT $3",
+    )
+    .bind(usuario_id)
+    .bind(desde)
+    .bind(LIMITE_CONSULTA_CAMBIOS)
+    .fetch_all(pool)
+    .await?;
+
+    let eventos = filas
+        .into_iter()
+        .map(
+            |(
+                id,
+                posicion,
+                tipo,
+                gasto_id,
+                grupo_id,
+                grupo_nombre,
+                concepto,
+                fecha,
+                moneda,
+                monto_parte,
+                recibio_residuo,
+            )| EventoCambioDb {
+                evento: EventoUsuario {
+                    id,
+                    posicion,
+                    tipo,
+                    gasto_id,
+                    grupo_id,
+                    concepto,
+                    fecha,
+                    moneda,
+                    monto_parte,
+                    recibio_residuo,
+                },
+                grupo_nombre,
+            },
+        )
+        .collect();
+
+    Ok(armar_pagina_cambios(eventos, desde))
+}
+
+// Pruebas unitarias de paginación, recorte y cálculo de cursor
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Crea un evento de prueba en la posición indicada
+    fn evento_prueba(posicion: i64) -> EventoCambioDb {
+        EventoCambioDb {
+            evento: EventoUsuario {
+                id: Uuid::new_v4(),
+                posicion,
+                tipo: String::from("gasto_grupo"),
+                gasto_id: Uuid::new_v4(),
+                grupo_id: Uuid::new_v4(),
+                concepto: String::from("Hotel"),
+                fecha: NaiveDate::from_ymd_opt(2026, 11, 22).expect("Fecha válida"),
+                moneda: String::from("USD"),
+                monto_parte: String::from("33.33"),
+                recibio_residuo: false,
+            },
+            grupo_nombre: String::from("Viaje a Mérida"),
+        }
+    }
+
+    // Verifica que una consulta vacía conserve el cursor recibido
+    #[test]
+    fn paginacion_vacia_conserva_cursor_recibido() {
+        let pagina = armar_pagina_cambios(Vec::new(), 15);
+        assert!(pagina.eventos.is_empty());
+        assert_eq!(pagina.nuevo_cursor, 15);
+        assert!(!pagina.hay_mas);
+    }
+
+    // Comprueba que cien eventos exactos no marquen páginas adicionales
+    #[test]
+    fn paginacion_con_cien_eventos_no_marca_hay_mas() {
+        let eventos: Vec<EventoCambioDb> = (1..=100_i64).map(evento_prueba).collect();
+        let pagina = armar_pagina_cambios(eventos, 0);
+
+        assert_eq!(pagina.eventos.len(), 100);
+        assert_eq!(pagina.nuevo_cursor, 100);
+        assert!(!pagina.hay_mas);
+    }
+
+    // Comprueba recorte a cien eventos y actualización correcta del cursor
+    #[test]
+    fn paginacion_con_mas_de_cien_recorta_y_marca_hay_mas() {
+        let eventos: Vec<EventoCambioDb> = (11..=111_i64).map(evento_prueba).collect();
+        let pagina = armar_pagina_cambios(eventos, 10);
+
+        assert_eq!(pagina.eventos.len(), 100);
+        assert_eq!(pagina.eventos.first().unwrap().evento.posicion, 11);
+        assert_eq!(pagina.eventos.last().unwrap().evento.posicion, 110);
+        assert_eq!(pagina.nuevo_cursor, 110);
+        assert!(pagina.hay_mas);
+    }
 }
