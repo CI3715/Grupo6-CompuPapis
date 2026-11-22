@@ -134,29 +134,6 @@ pub async fn guardar_clave(
 }
 
 // Fila de un evento compartido de gasto grupal almacenado por usuario
-#[derive(Serialize)]
-pub struct EventoUsuario {
-    pub id: Uuid,
-    pub posicion: i64,
-    pub tipo: String,
-    pub gasto_id: Uuid,
-    pub grupo_id: Uuid,
-    pub concepto: String,
-    pub fecha: NaiveDate,
-    pub moneda: String,
-    pub monto_parte: String,
-    pub recibio_residuo: bool,
-}
-
-// Lote paginado de eventos leídos de PostgreSQL con cursor e indicador de continuidad
-#[derive(Serialize)]
-pub struct LoteCambios {
-    pub eventos: Vec<EventoUsuario>,
-    pub cursor: i64,
-    pub hay_mas: bool,
-}
-
-// Fila de un evento compartido de gasto grupal almacenado por usuario
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct EventoUsuario {
     pub id: Uuid,
