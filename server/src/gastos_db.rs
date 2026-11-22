@@ -59,6 +59,98 @@ pub struct Balance {
     pub balance: String,
 }
 
+// Representación canónica de un gasto para detectar conflictos de idempotencia
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HuellaGasto(String);
+
+// Participante normalizado para construir una huella determinística de gasto
+#[allow(dead_code)]
+#[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
+struct ParticipanteCanonico {
+    usuario_id: Uuid,
+    valor: Option<String>,
+}
+
+// Estructura canónica ordenada con los campos relevantes del gasto
+#[allow(dead_code)]
+#[derive(Serialize)]
+struct GastoCanonico<'a> {
+    grupo_id: Uuid,
+    pagado_por: Uuid,
+    concepto: &'a str,
+    monto: String,
+    fecha: String,
+    regla: &'static str,
+    participantes: Vec<ParticipanteCanonico>,
+}
+
+// Normaliza textos decimales a dos dígitos o conserva el texto limpio
+#[allow(dead_code)]
+fn normalizar_decimal(texto: &str) -> String {
+    let limpio = texto.trim();
+    // Unifica equivalentes decimales como 100 y 100.00 en formato canónico.
+    match division::centesimas(limpio) {
+        Ok(valor) => division::formato(valor),
+        Err(_) => limpio.to_owned(),
+    }
+}
+
+#[allow(dead_code)]
+impl HuellaGasto {
+    // Construye la huella canónica y determinística a partir de un gasto
+    pub fn desde_gasto(datos: &GastoNuevo) -> Self {
+        let regla = match datos.regla {
+            Regla::Iguales => "iguales",
+            Regla::Porcentajes => "porcentajes",
+            Regla::MontosFijos => "montos_fijos",
+        };
+
+        let mut participantes: Vec<ParticipanteCanonico> = datos
+            .participantes
+            .iter()
+            .map(|p| ParticipanteCanonico {
+                usuario_id: p.usuario_id,
+                valor: p.valor.as_deref().map(normalizar_decimal),
+            })
+            .collect();
+
+        // Ordena participantes para ignorar diferencias de posición en el JSON
+        participantes.sort();
+
+        let canonico = GastoCanonico {
+            grupo_id: datos.grupo_id,
+            pagado_por: datos.pagado_por,
+            concepto: datos.concepto.trim(),
+            monto: normalizar_decimal(&datos.monto),
+            fecha: datos.fecha.to_string(),
+            regla,
+            participantes,
+        };
+
+        let serializado = serde_json::to_string(&canonico)
+            .expect("La serialización canónica del gasto no debe fallar");
+        Self(serializado)
+    }
+
+    // Devuelve la reperesentación textual lista para guardar en base de datos
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    // Comprueba si la guella coincide exactamente con los datos previamente
+    pub fn coincide_con(&self, datos_guardados: &str) -> bool {
+        self.0 == datos_guardados
+    }
+}
+
+// Genera la huella determinística del gasto para detectar reintentos distintos
+#[allow(dead_code)]
+pub fn calcular_huella_gasto(datos: &GastoNuevo) -> HuellaGasto {
+    HuellaGasto::desde_gasto(datos)
+}
+
+
 pub async fn registrar(
     pool: &PgPool,
     solicitante: Uuid,
@@ -225,6 +317,265 @@ pub async fn consultar(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
+
+    // Modelo temporal para comprobar independencia del orden de llaves JSON
+    #[derive(Deserialize)]
+    struct ParticipanteJsonPrueba {
+        usuario_id: Uuid,
+        valor: Option<String>,
+    }
+
+    // Solicitud temporal para deserializar cuerpos JSON con formatos distintos
+    #[derive(Deserialize)]
+    struct GastoJsonPrueba {
+        concepto: String,
+        monto: String,
+        fecha: NaiveDate,
+        pagado_por: Uuid,
+        regla: Regla,
+        participantes: Vec<ParticipanteJsonPrueba>,
+    }
+
+    // Convierte un JSON de gasto en GastoNuevo para pruebas unitarias
+    fn gasto_desde_json(grupo_id: Uuid, json_crudo: &str) -> GastoNuevo {
+        let q: GastoJsonPrueba =
+            serde_json::from_str(json_crudo).expect("El JSON de prueba debe ser válido");
+        GastoNuevo {
+            grupo_id,
+            pagado_por: q.pagado_por,
+            concepto: q.concepto,
+            monto: q.monto,
+            fecha: q.fecha,
+            regla: q.regla,
+            participantes: q
+                .participantes
+                .into_iter()
+                .map(|p| ParticipanteNuevo {
+                    usuario_id: p.usuario_id,
+                    valor: p.valor,
+                })
+                .collect(),
+        }
+    }
+
+    // Verifica que reintentos equivalentes con distinto formato produzcan la misma huella
+    #[test]
+    fn huella_ignora_formato_json_orden_y_decimales_equivalentes() {
+        let grupo = Uuid::from_u128(10);
+        let ana = Uuid::from_u128(1);
+        let beto = Uuid::from_u128(2);
+
+        let json_a = format!(
+            r#"{{
+                "concepto": "Cena",
+                "monto": "60.00",
+                "fecha": "2026-11-22",
+                "pagado_por": "{ana}",
+                "regla": "porcentajes",
+                "participantes": [
+                    {{"usuario_id": "{ana}", "valor": "50.00"}},
+                    {{"usuario_id": "{beto}", "valor": "50.00"}}
+                ]
+            }}"#
+        );
+        let json_b = format!(
+            r#"{{"participantes":[{{"valor":"50","usuario_id":"{beto}"}},{{"usuario_id":"{ana}","valor":"50.0"}}],"regla":"porcentajes","pagado_por":"{ana}","fecha":"2026-11-22","monto":"60","concepto":"  Cena  "}}"#
+        );
+
+        let huella_a = calcular_huella_gasto(&gasto_desde_json(grupo, &json_a));
+        let huella_b = calcular_huella_gasto(&gasto_desde_json(grupo, &json_b));
+
+        assert_eq!(huella_a, huella_b);
+        assert!(huella_a.coincide_con(huella_b.as_str()));
+    }
+
+    // Comprueba que cualquier cambio real en el gasto produzca una huella distinta
+    #[test]
+    fn huella_detecta_modificaciones_reales_para_conflicto_409() {
+        let grupo = Uuid::from_u128(10);
+        let otro_grupo = Uuid::from_u128(11);
+        let ana = Uuid::from_u128(1);
+        let beto = Uuid::from_u128(2);
+        let carla = Uuid::from_u128(3);
+        let fecha = NaiveDate::from_ymd_opt(2026, 11, 22).expect("Fecha válida");
+        let otra_fecha = NaiveDate::from_ymd_opt(2026, 11, 23).expect("Fecha válida");
+
+        let base = GastoNuevo {
+            grupo_id: grupo,
+            pagado_por: ana,
+            concepto: "Hotel".into(),
+            monto: "100.00".into(),
+            fecha,
+            regla: Regla::Porcentajes,
+            participantes: vec![
+                ParticipanteNuevo {
+                    usuario_id: ana,
+                    valor: Some("50.00".into()),
+                },
+                ParticipanteNuevo {
+                    usuario_id: beto,
+                    valor: Some("50.00".into()),
+                },
+            ],
+        };
+        let huella_base = calcular_huella_gasto(&base);
+
+        let variantes = [
+            GastoNuevo {
+                grupo_id: otro_grupo,
+                pagado_por: ana,
+                concepto: "Hotel".into(),
+                monto: "100.00".into(),
+                fecha,
+                regla: Regla::Porcentajes,
+                participantes: vec![
+                    ParticipanteNuevo {
+                        usuario_id: ana,
+                        valor: Some("50.00".into()),
+                    },
+                    ParticipanteNuevo {
+                        usuario_id: beto,
+                        valor: Some("50.00".into()),
+                    },
+                ],
+            },
+            GastoNuevo {
+                grupo_id: grupo,
+                pagado_por: beto,
+                concepto: "Hotel".into(),
+                monto: "100.00".into(),
+                fecha,
+                regla: Regla::Porcentajes,
+                participantes: vec![
+                    ParticipanteNuevo {
+                        usuario_id: ana,
+                        valor: Some("50.00".into()),
+                    },
+                    ParticipanteNuevo {
+                        usuario_id: beto,
+                        valor: Some("50.00".into()),
+                    },
+                ],
+            },
+            GastoNuevo {
+                grupo_id: grupo,
+                pagado_por: ana,
+                concepto: "Cena".into(),
+                monto: "100.00".into(),
+                fecha,
+                regla: Regla::Porcentajes,
+                participantes: vec![
+                    ParticipanteNuevo {
+                        usuario_id: ana,
+                        valor: Some("50.00".into()),
+                    },
+                    ParticipanteNuevo {
+                        usuario_id: beto,
+                        valor: Some("50.00".into()),
+                    },
+                ],
+            },
+            GastoNuevo {
+                grupo_id: grupo,
+                pagado_por: ana,
+                concepto: "Hotel".into(),
+                monto: "100.01".into(),
+                fecha,
+                regla: Regla::Porcentajes,
+                participantes: vec![
+                    ParticipanteNuevo {
+                        usuario_id: ana,
+                        valor: Some("50.00".into()),
+                    },
+                    ParticipanteNuevo {
+                        usuario_id: beto,
+                        valor: Some("50.00".into()),
+                    },
+                ],
+            },
+            GastoNuevo {
+                grupo_id: grupo,
+                pagado_por: ana,
+                concepto: "Hotel".into(),
+                monto: "100.00".into(),
+                fecha: otra_fecha,
+                regla: Regla::Porcentajes,
+                participantes: vec![
+                    ParticipanteNuevo {
+                        usuario_id: ana,
+                        valor: Some("50.00".into()),
+                    },
+                    ParticipanteNuevo {
+                        usuario_id: beto,
+                        valor: Some("50.00".into()),
+                    },
+                ],
+            },
+            GastoNuevo {
+                grupo_id: grupo,
+                pagado_por: ana,
+                concepto: "Hotel".into(),
+                monto: "100.00".into(),
+                fecha,
+                regla: Regla::MontosFijos,
+                participantes: vec![
+                    ParticipanteNuevo {
+                        usuario_id: ana,
+                        valor: Some("50.00".into()),
+                    },
+                    ParticipanteNuevo {
+                        usuario_id: beto,
+                        valor: Some("50.00".into()),
+                    },
+                ],
+            },
+            GastoNuevo {
+                grupo_id: grupo,
+                pagado_por: ana,
+                concepto: "Hotel".into(),
+                monto: "100.00".into(),
+                fecha,
+                regla: Regla::Porcentajes,
+                participantes: vec![
+                    ParticipanteNuevo {
+                        usuario_id: ana,
+                        valor: Some("60.00".into()),
+                    },
+                    ParticipanteNuevo {
+                        usuario_id: beto,
+                        valor: Some("40.00".into()),
+                    },
+                ],
+            },
+            GastoNuevo {
+                grupo_id: grupo,
+                pagado_por: ana,
+                concepto: "Hotel".into(),
+                monto: "100.00".into(),
+                fecha,
+                regla: Regla::Porcentajes,
+                participantes: vec![
+                    ParticipanteNuevo {
+                        usuario_id: ana,
+                        valor: Some("50.00".into()),
+                    },
+                    ParticipanteNuevo {
+                        usuario_id: carla,
+                        valor: Some("50.00".into()),
+                    },
+                ],
+            },
+        ];
+
+        for variante in &variantes {
+            let huella_variante = calcular_huella_gasto(variante);
+            assert_ne!(huella_base, huella_variante);
+            assert!(!huella_base.coincide_con(huella_variante.as_str()));
+        }
+    }
+
+
     #[tokio::test]
     #[ignore = "requiere PostgreSQL aislado de pruebas"]
     async fn migracion_conserva_gastos_anteriores_sin_inventar_residuos() {
