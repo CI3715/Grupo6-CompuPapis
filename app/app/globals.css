@@ -417,7 +417,7 @@ select.form-control {
 /* Layout Principal */
 .app-wrapper {
   display: flex;
-  height: 100vh;
+  height: 100%;
   width: 100%;
   overflow: hidden;
   transition: all 0.3s ease;

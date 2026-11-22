@@ -1,5 +1,5 @@
 use crate::{
-    PingState,
+    AppState, PingState,
     autenticacion::{AuthState, ErrorAuth},
 };
 use serde_json::{Value, json};
@@ -12,6 +12,7 @@ pub async fn operacion_social(
     datos: Value,
     state: State<'_, PingState>,
     auth: State<'_, AuthState>,
+    app_state: State<'_, AppState>,
 ) -> Result<Value, ErrorAuth> {
     let token = auth
         .token
@@ -28,6 +29,68 @@ pub async fn operacion_social(
             .and_then(|v| Uuid::parse_str(v).ok())
             .ok_or_else(|| ErrorAuth::general("Identificador inválido."))
     };
+
+    if accion == "registrar_gasto" {
+        let grupo_id = id()?;
+        let clave = Uuid::new_v4().to_string();
+        let payload = json!({
+            "concepto": datos.get("concepto"),
+            "monto": datos.get("monto"),
+            "fecha": datos.get("fecha"),
+            "pagado_por": datos.get("pagado_por"),
+            "regla": datos.get("regla"),
+            "participantes": datos.get("participantes"),
+        });
+
+        let resp = cliente
+            .post(format!("{base}/grupos/{grupo_id}/gastos"))
+            .bearer_auth(token)
+            .header("Idempotency-Key", &clave)
+            .json(&payload)
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await;
+
+        match resp {
+            Ok(response) => {
+                if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+                    return Err(ErrorAuth {
+                        campo: "sesion".into(),
+                        mensaje: "Tu sesión venció, inicia sesión de nuevo.".into(),
+                    });
+                }
+                if !response.status().is_success() {
+                    let body = response.json::<Value>().await.unwrap_or_default();
+                    return Err(ErrorAuth::general(
+                        body.get("mensaje")
+                            .and_then(Value::as_str)
+                            .unwrap_or("No se pudo completar la operación."),
+                    ));
+                }
+                let body: Value = response.json().await.unwrap_or(json!({}));
+                return Ok(json!({ "pendiente": false, "datos": body }));
+            }
+            Err(_) => {
+                let concepto = datos.get("concepto").and_then(Value::as_str).unwrap_or("");
+                let monto = datos.get("monto").and_then(Value::as_str).unwrap_or("");
+                let mut repo = app_state
+                    .repo
+                    .lock()
+                    .map_err(|_| ErrorAuth::general("Error de acceso al almacenamiento."))?;
+                repo.encolar_gasto(
+                    &clave,
+                    &grupo_id.to_string(),
+                    concepto,
+                    monto,
+                    &payload.to_string(),
+                )
+                .map_err(|e| ErrorAuth::general(&e))?;
+
+                return Ok(json!({ "pendiente": true }));
+            }
+        }
+    }
+
     let request = match accion.as_str() {
         "buscar_usuario" => cliente.get(format!("{base}/usuarios")).query(&[("usuario", datos.get("usuario").and_then(Value::as_str).unwrap_or(""))]),
         "listar_amistades" => cliente.get(format!("{base}/amistades")),

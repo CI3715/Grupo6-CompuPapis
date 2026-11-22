@@ -24,13 +24,14 @@ export default function VistaGasto({
     pagado_por: string;
     regla: ReglaDivision;
     participantes: { usuario_id: string; valor: string | null }[];
-  }) => Promise<void>;
+  }) => Promise<{ pendiente?: boolean }>;
 }) {
   const [monto, setMonto] = useState("");
   const [guardando, setGuardando] = useState(false);
   const envioEnCurso = useRef(false);
   const [errorServidor, setErrorServidor] = useState("");
   const [exito, setExito] = useState(false);
+  const [pendienteEnvio, setPendienteEnvio] = useState(false);
   const [concepto, setConcepto] = useState("");
   const [fecha, setFecha] = useState("");
   const [pagador, setPagador] = useState("");
@@ -193,7 +194,9 @@ export default function VistaGasto({
       )}
       {exito && (
         <p className="social-notice" role="status">
-          Gasto registrado.
+          {pendienteEnvio
+            ? "Gasto guardado: pendiente de envío. Se enviará cuando vuelva la conexión."
+            : "Gasto registrado."}
         </p>
       )}
       <button
@@ -212,6 +215,7 @@ export default function VistaGasto({
           setGuardando(true);
           setErrorServidor("");
           setExito(false);
+          setPendienteEnvio(false);
           void registrar({
             concepto: concepto.trim(),
             monto,
@@ -223,12 +227,13 @@ export default function VistaGasto({
               valor: regla === "iguales" ? null : (valores[usuario_id] ?? ""),
             })),
           })
-            .then(() => {
+            .then((resultado) => {
               setMonto("");
               setConcepto("");
               setParticipantes([]);
               setValores({});
               setExito(true);
+              setPendienteEnvio(resultado.pendiente === true);
             })
             .catch((e: unknown) =>
               setErrorServidor(
