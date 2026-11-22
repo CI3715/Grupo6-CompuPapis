@@ -1,3 +1,6 @@
+//! sincronizacion_db.rs: acceso a PostgreSQL para eventos de sincronización y claves de idempotencia.
+//! Usado para consultar lotes incrementales y evitar duplicados.
+
 use chrono::NaiveDate;
 use serde::Serialize;
 use sqlx::PgPool;
@@ -130,6 +133,7 @@ pub async fn guardar_clave(
     Ok(())
 }
 
+// Fila de un evento compartido de gasto grupal almacenado por usuario
 #[derive(Serialize)]
 pub struct EventoUsuario {
     pub id: Uuid,
@@ -144,6 +148,7 @@ pub struct EventoUsuario {
     pub recibio_residuo: bool,
 }
 
+// Lote paginado de eventos leídos de PostgreSQL con cursor e indicador de continuidad
 #[derive(Serialize)]
 pub struct LoteCambios {
     pub eventos: Vec<EventoUsuario>,
