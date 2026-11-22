@@ -1087,22 +1087,16 @@ pub fn ejecutar_corregir_movimiento<R: RepositorioEventos>(
             )
         })?;
 
-    if cta.movimientos.iter().any(|mov| {
-        mov.id == movimiento_id
-            && mov
-                .nota
-                .as_deref()
-                .unwrap_or("")
-                .starts_with("[gasto-grupo]")
-    }) {
-        return Err(ErrorDominio::nuevo(
-            "movimiento",
-            "Los movimientos originados por gastos de grupo no se pueden corregir desde el libro.",
-        ));
-    }
+    let es_gasto_grupo = cta.gastos_de_grupo.contains(movimiento_id)
+        || cta
+            .movimientos
+            .iter()
+            .find(|m| m.id == movimiento_id)
+            .and_then(|m| m.nota.as_deref())
+            .unwrap_or("")
+            .starts_with("[gasto-grupo]");
 
-    // RF-COM-10: Los gastos de grupo no se pueden editar ni corregir desde el libro
-    if cta.gastos_de_grupo.contains(movimiento_id) {
+    if es_gasto_grupo {
         return Err(ErrorDominio::nuevo(
             "movimiento",
             "Los gastos de grupo no se pueden editar ni corregir desde el libro.",
