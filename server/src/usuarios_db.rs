@@ -13,7 +13,7 @@ pub async fn buscar_usuario_por_nombre(
 ) -> Result<Option<UsuarioBuscado>, sqlx::Error> {
     // Para el usuario por su nombre
     let datos = sqlx::query(
-        "SELECT id, nombre_usuario, nombre_visible FROM usuarios WHERE nombre_usuario=$1"
+        "SELECT id, nombre_usuario, nombre_visible FROM usuarios WHERE nombre_usuario=$1",
     )
     .bind(nombre)
     .fetch_optional(pool)
@@ -54,7 +54,7 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO usuarios (id, nombre_usuario, nombre_visible, correo, password_hash)
-             VALUES ($1, $2, $3, $4, $5)"
+             VALUES ($1, $2, $3, $4, $5)",
         )
         .bind(id)
         .bind(&nombre)
@@ -98,8 +98,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requiere PostgreSQL de pruebas"]
     async fn guardar_consultar_y_revisar_usuarios() -> Result<(), sqlx::Error> {
-        let url = std::env::var("E5_TEST_DATABASE_URL")
-            .expect("Falta E5_TEST_DATABASE_URL");
+        let url = std::env::var("E5_TEST_DATABASE_URL").expect("Falta E5_TEST_DATABASE_URL");
 
         let pool = PgPool::connect(&url).await?;
 
@@ -117,7 +116,8 @@ mod tests {
         let nombre = format!("u{}", &id.simple().to_string()[..20]);
         let correo = format!("{nombre}@example.com");
 
-        let insertar = "INSERT INTO usuarios (id, nombre_usuario, nombre_visible, correo, password_hash)
+        let insertar =
+            "INSERT INTO usuarios (id, nombre_usuario, nombre_visible, correo, password_hash)
                         VALUES ($1, $2, $3, $4, $5)";
 
         sqlx::query(insertar)
@@ -129,21 +129,19 @@ mod tests {
             .execute(&pool)
             .await?;
 
-        let encontrado: Uuid = sqlx::query_scalar(
-            "SELECT id FROM usuarios WHERE lower(correo) = lower($1)"
-        )
-        .bind(correo.to_uppercase())
-        .fetch_one(&pool)
-        .await?;
+        let encontrado: Uuid =
+            sqlx::query_scalar("SELECT id FROM usuarios WHERE lower(correo) = lower($1)")
+                .bind(correo.to_uppercase())
+                .fetch_one(&pool)
+                .await?;
 
         assert_eq!(encontrado, id);
 
-        let encontrado: String = sqlx::query_scalar(
-            "SELECT nombre_usuario FROM usuarios WHERE id = $1"
-        )
-        .bind(id)
-        .fetch_one(&pool)
-        .await?;
+        let encontrado: String =
+            sqlx::query_scalar("SELECT nombre_usuario FROM usuarios WHERE id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await?;
 
         assert_eq!(encontrado, nombre);
 
@@ -180,12 +178,11 @@ mod tests {
 
         let pool = PgPool::connect(&url).await?;
 
-        let guardado: String = sqlx::query_scalar(
-            "SELECT nombre_usuario FROM usuarios WHERE id = $1"
-        )
-        .bind(id)
-        .fetch_one(&pool)
-        .await?;
+        let guardado: String =
+            sqlx::query_scalar("SELECT nombre_usuario FROM usuarios WHERE id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await?;
 
         assert_eq!(guardado, nombre);
 

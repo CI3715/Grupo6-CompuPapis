@@ -12,6 +12,7 @@ Este directorio registra decisiones arquitectónicas de Cuentas Claras. Cada ADR
 - [ADR 008: eventos e historial de tasas](008-tasas-eventos-e-historial.md)
 - [ADR 009: patrimonio histórico y precisión decimal](009-patrimonio-historico-precision.md)
 - [ADR 010: identidad en el servidor y sesión en Tauri](010-autenticacion-servidor-tauri.md)
+- [ADR 011: gastos compartidos y división exacta](011-gastos-compartidos-exactos.md)
 
 ## Documentación técnica complementaria
 

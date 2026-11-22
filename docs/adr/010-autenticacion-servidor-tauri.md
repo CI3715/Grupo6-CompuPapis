@@ -24,4 +24,4 @@ La aplicación necesita registro, inicio de sesión y consulta de perfil sin tra
 
 ## Consecuencias
 
-El servidor debe estar disponible para autenticar y consultar el perfil, mientras el libro personal conserva su funcionamiento local. Los comandos y adaptadores están implementados; las pantallas y la validación completa desde la ventana Tauri requieren trabajo adicional. La sesión en memoria no sobrevive a un reinicio. Ver [OpenAPI](../../openapi.yaml), `server/src/auth.rs` y `app/src-tauri/src/autenticacion.rs`.
+El servidor debe estar disponible para autenticar y consultar el perfil, mientras el libro personal conserva su funcionamiento local. Los comandos, adaptadores y pantallas están implementados; la validación completa desde la ventana Tauri requiere comprobación manual. La sesión en memoria no sobrevive a un reinicio. Ver [OpenAPI](../../openapi.yaml), `server/src/auth.rs` y `app/src-tauri/src/autenticacion.rs`.

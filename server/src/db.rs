@@ -15,17 +15,16 @@ pub async fn ejecutar_migraciones(pool: &PgPool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-//prueba
 #[cfg(test)]
 mod tests {
     use super::*;
     use uuid::Uuid;
 
     #[tokio::test]
+    #[ignore = "requiere PostgreSQL de pruebas"]
     async fn migraciones_funcionan_en_bd_nueva_y_con_datos_existentes() {
-        let Ok(url) = std::env::var("E5_TEST_DATABASE_URL") else {
-            return;
-        };
+        let url = std::env::var("E5_TEST_DATABASE_URL")
+            .expect("Configura E5_TEST_DATABASE_URL con una base de pruebas");
 
         let pool = conectar_y_migrar(&url)
             .await

@@ -64,7 +64,7 @@ export interface DetalleCuenta {
 }
 
 // --- Entrega 4 ---
-export type Pantalla = "cuentas" | "patrimonio" | "tasas";
+export type Pantalla = "cuentas" | "patrimonio" | "tasas" | "social";
 
 export interface Tasa {
   id: string;
