@@ -500,6 +500,138 @@ pub async fn registrar_gasto_http(
     Ok(mapear_resultado_gasto_http(resultado))
 }
 
+// Límite máximo de eventos devueltos en cada lote de GET /cambios
+#[allow(dead_code)]
+pub const LIMITE_EVENTOS_CAMBIOS: usize = 100;
+
+// Parámetros de consulta HTTP recibidos en GET /cambios
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub struct ParametrosCambios {
+    pub desde: Option<String>,
+}
+
+// Errores de validación al interpretar el cursor de consulta desde
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ErrorCursorCambios {
+    // Cursor vacío, negativo, no numérico o fuera de rango
+    CursorInvalido(&'static str),
+}
+
+#[allow(dead_code)]
+impl ErrorCursorCambios {
+    // Traduce el error del cursor a una respuesta HTTP 400 en JSON
+    pub fn a_respuesta_http(&self) -> (StatusCode, Json<Value>) {
+        match self {
+            Self::CursorInvalido(mensaje) => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "codigo": "cursor_invalido",
+                    "mensaje": mensaje
+                })),
+            ),
+        }
+    }
+}
+
+// Valida el parámetro desde y devuelve un cursor no negativo o error
+#[allow(dead_code)]
+pub fn validar_cursor_desde(desde: Option<&str>) -> Result<i64, ErrorCursorCambios> {
+    // Si se omite el parámetro, la sincronización inicia desde cero
+    let Some(texto) = desde else {
+        return Ok(0);
+    };
+
+    // Exige dígitos ASCII para rechazar negativos, signos, espacios o texto
+    if texto.is_empty() || !texto.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(ErrorCursorCambios::CursorInvalido(
+            "El cursor desde debe ser un entero mayor o igual a cero.",
+        ));
+    }
+
+    texto.parse::<i64>().map_err(|_| {
+        ErrorCursorCambios::CursorInvalido("El cursor desde excede el rango permitido.")
+    })
+}
+
+// Evento compartido en JSON con la parte del gasto sin datos personales
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EventoCambioRespuesta {
+    pub id: Uuid,
+    pub cursor: i64,
+    pub tipo: String,
+    pub grupo_id: Uuid,
+    pub grupo_nombre: String,
+    pub gasto_id: Uuid,
+    pub concepto: String,
+    pub fecha: NaiveDate,
+    pub moneda: String,
+    pub monto_parte: String,
+    pub incluye_centimos_redondeo: bool,
+}
+
+#[allow(dead_code)]
+impl EventoCambioRespuesta {
+    // Convierte una fila de base de datos en un evento HTTP validado
+    pub fn desde_evento_db(
+        evento: EventoUsuario,
+        grupo_nombre: String,
+    ) -> Result<Self, &'static str> {
+        // Conserva la regla de posición positiva definida en eventos_usuario
+        if evento.posicion <= 0 {
+            return Err("El cursor del evento debe ser mayor que cero");
+        }
+
+        Ok(Self {
+            id: evento.id,
+            cursor: evento.posicion,
+            tipo: evento.tipo,
+            grupo_id: evento.grupo_id,
+            grupo_nombre,
+            gasto_id: evento.gasto_id,
+            concepto: evento.concepto,
+            fecha: evento.fecha,
+            moneda: evento.moneda,
+            monto_parte: evento.monto_parte,
+            incluye_centimos_redondeo: evento.recibio_residuo,
+        })
+    }
+}
+
+// Respuesta JSON paginada de GET /cambios con eventos, nuevo cursor y continuidad
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RespuestaCambios {
+    pub eventos: Vec<EventoCambioRespuesta>,
+    pub nuevo_cursor: i64,
+    pub hay_mas: bool,
+}
+
+#[allow(dead_code)]
+impl RespuestaCambios {
+    // Construye una respuesta paginada validando cursor no negativo y límite del lote
+    pub fn nueva(
+        eventos: Vec<EventoCambioRespuesta>,
+        nuevo_cursor: i64,
+        hay_mas: bool,
+    ) -> Result<Self, &'static str> {
+        if nuevo_cursor < 0 {
+            return Err("El nuevo cursor no puede ser negativo");
+        }
+        if eventos.len() > LIMITE_EVENTOS_CAMBIOS {
+            return Err("El lote supera el máximo de 100 eventos");
+        }
+
+        Ok(Self {
+            eventos,
+            nuevo_cursor,
+            hay_mas,
+        })
+    }
+}
+
 // Construye el enrutador HTTP principal con todas las rutas del servidor
 pub fn construir_app(estado: auth::State) -> Router {
     Router::new()
@@ -1449,5 +1581,121 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+    }
+
+    // Verifica que un cursor omitido, cero o positivo sea aceptado
+    #[test]
+    fn validar_cursor_desde_acepta_omitido_cero_y_positivos() {
+        assert_eq!(validar_cursor_desde(None), Ok(0));
+        assert_eq!(validar_cursor_desde(Some("0")), Ok(0));
+        assert_eq!(validar_cursor_desde(Some("42")), Ok(42));
+        assert_eq!(
+            validar_cursor_desde(Some(&i64::MAX.to_string())),
+            Ok(i64::MAX)
+        );
+    }
+
+    // Comprueba rechazo 400 ante cursores negativos, vacíos, textuales o fuera de rango
+    #[test]
+    fn validar_cursor_desde_rechaza_valores_invalidos_con_400() {
+        let casos_invalidos = [
+            "",
+            " ",
+            "-1",
+            "+1",
+            "abc",
+            "12.5",
+            "1 2",
+            "99999999999999999999999",
+        ];
+
+        for valor in casos_invalidos {
+            let error = validar_cursor_desde(Some(valor))
+                .expect_err("Un cursor mal formado debe rechazarse");
+            let (codigo, cuerpo) = error.a_respuesta_http();
+            assert_eq!(codigo, StatusCode::BAD_REQUEST);
+            assert_eq!(cuerpo.0["codigo"], "cursor_invalido");
+            assert!(cuerpo.0["mensaje"].is_string());
+        }
+    }
+
+    // Verifica el contrato JSON de RespuestaCambios y la ausencia de datos personales
+    #[test]
+    fn respuesta_cambios_serializa_campos_openapi_sin_libro_personal() {
+        let evento_db = EventoUsuario {
+            id: id_fijo(700),
+            posicion: 1,
+            tipo: String::from(TIPO_EVENTO_GASTO_GRUPO),
+            gasto_id: id_fijo(701),
+            grupo_id: id_fijo(702),
+            concepto: String::from("Hotel"),
+            fecha: NaiveDate::from_ymd_opt(2026, 11, 22).expect("Fecha válida"),
+            moneda: String::from("USD"),
+            monto_parte: String::from("33.33"),
+            recibio_residuo: false,
+        };
+
+        let evento_http =
+            EventoCambioRespuesta::desde_evento_db(evento_db, String::from("Viaje a Mérida"))
+                .expect("El evento válido debe convertirse");
+        let respuesta = RespuestaCambios::nueva(vec![evento_http], 1, false)
+            .expect("La respuesta paginada debe construirse");
+
+        let json_resp =
+            serde_json::to_value(&respuesta).expect("La respuesta debe serializarse a JSON");
+        assert_eq!(json_resp["nuevo_cursor"], 1);
+        assert_eq!(json_resp["hay_mas"], false);
+
+        let objeto_evento = json_resp["eventos"][0]
+            .as_object()
+            .expect("Cada evento debe ser un objeto JSON");
+        assert_eq!(objeto_evento.len(), 11);
+        assert_eq!(objeto_evento["cursor"], 1);
+        assert_eq!(objeto_evento["grupo_nombre"], "Viaje a Mérida");
+        assert_eq!(objeto_evento["monto_parte"], "33.33");
+        assert_eq!(objeto_evento["incluye_centimos_redondeo"], false);
+
+        // Confirma INV-16 verificando que no existan campos del libro personal
+        for campo_privado in ["cuenta_id", "cuenta", "saldo", "movimientos", "usuario_id"] {
+            assert!(!objeto_evento.contains_key(campo_privado));
+        }
+    }
+
+    // Rechaza eventos con posición no positiva y lotes mayores a cien elementos
+    #[test]
+    fn respuesta_cambios_rechaza_cursor_invalido_o_lote_excedido() {
+        let evento_invalido = EventoUsuario {
+            id: id_fijo(710),
+            posicion: 0,
+            tipo: String::from(TIPO_EVENTO_GASTO_GRUPO),
+            gasto_id: id_fijo(711),
+            grupo_id: id_fijo(712),
+            concepto: String::from("Cena"),
+            fecha: NaiveDate::from_ymd_opt(2026, 11, 22).expect("Fecha válida"),
+            moneda: String::from("USD"),
+            monto_parte: String::from("15.00"),
+            recibio_residuo: false,
+        };
+        assert!(
+            EventoCambioRespuesta::desde_evento_db(evento_invalido, String::from("Viaje")).is_err()
+        );
+
+        assert!(RespuestaCambios::nueva(vec![], -1, false).is_err());
+
+        let evento_base = EventoCambioRespuesta {
+            id: id_fijo(720),
+            cursor: 1,
+            tipo: String::from(TIPO_EVENTO_GASTO_GRUPO),
+            grupo_id: id_fijo(721),
+            grupo_nombre: String::from("Viaje"),
+            gasto_id: id_fijo(722),
+            concepto: String::from("Café"),
+            fecha: NaiveDate::from_ymd_opt(2026, 11, 22).expect("Fecha válida"),
+            moneda: String::from("USD"),
+            monto_parte: String::from("2.00"),
+            incluye_centimos_redondeo: false,
+        };
+        let lote_excedido = vec![evento_base; LIMITE_EVENTOS_CAMBIOS + 1];
+        assert!(RespuestaCambios::nueva(lote_excedido, 101, true).is_err());
     }
 }
