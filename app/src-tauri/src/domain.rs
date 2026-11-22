@@ -1015,6 +1015,20 @@ pub fn ejecutar_corregir_movimiento<R: RepositorioEventos>(
             )
         })?;
 
+    if let Some(mov_vista) = cta.movimientos.iter().find(|m| m.id == movimiento_id) {
+        if mov_vista
+            .nota
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("[gasto-grupo]")
+        {
+            return Err(ErrorDominio::nuevo(
+                "movimiento",
+                "Los movimientos originados por gastos de grupo no se pueden corregir desde el libro.",
+            ));
+        }
+    }    
+
     // El monto correcto puede ser 0 (para anular un movimiento que no debió existir) o positivo
     let moneda = buscar_moneda_en(&cta.moneda, &proyeccion.monedas)?;
     let monto_correcto = Monto::desde_str_con_moneda(monto_correcto_str, &moneda, "monto", true)?;
