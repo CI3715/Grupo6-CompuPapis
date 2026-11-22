@@ -24,9 +24,9 @@ use std::collections::HashSet;
 use axum::http::{HeaderMap, StatusCode};
 use serde_json::{Value, json};
 
-use crate::gastos_db::ErrorGasto;
+use crate::gastos_db::{ErrorGasto, GastoNuevo, ResultadoRegistroGasto};
 
-use sqlx::{Postgres, Transaction};
+use sqlx::{PgPool, Postgres, Transaction};
 
 #[derive(Serialize)]
 struct PingResponse {
@@ -393,6 +393,22 @@ pub async fn validar_precondiciones_gasto(
         usuario_id,
         clave_idempotencia,
     })
+}
+
+// Ejecuta el registro atómico del gasto aplicando la clave validada
+#[allow(dead_code)]
+pub async fn registrar_gasto_idempotente(
+    pool: &PgPool,
+    precondiciones: &PrecondicionesGasto,
+    datos: GastoNuevo,
+) -> Result<ResultadoRegistroGasto, ErrorGasto> {
+    let clave = precondiciones
+        .clave_idempotencia
+        .as_ref()
+        .map(ClaveIdempotencia::as_str);
+
+    // Delega la reserva de clave, inserción y eventos en una sola transacción
+    gastos_db::registrar_con_idempotencia(pool, precondiciones.usuario_id, datos, clave).await
 }
 
 #[tokio::main]
