@@ -12,21 +12,22 @@ pub mod sincronizacion_db;
 mod social;
 pub mod usuarios_db;
 
-use axum::{Json, Router, routing::get};
+use axum::{
+    Json, Router,
+    extract::{Path, State as AxumState, rejection::JsonRejection},
+    http::{HeaderMap, StatusCode},
+    routing::get,
+};
 use chrono::NaiveDate;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use sqlx::{PgPool, Postgres, Transaction};
+use std::collections::HashSet;
 use uuid::Uuid;
 
+use crate::division::Regla;
+use crate::gastos_db::{ErrorGasto, GastoNuevo, ParticipanteNuevo, ResultadoRegistroGasto};
 use crate::sincronizacion_db::EventoUsuario;
-
-use std::collections::HashSet;
-
-use axum::http::{HeaderMap, StatusCode};
-use serde_json::{Value, json};
-
-use crate::gastos_db::{ErrorGasto, GastoNuevo, ResultadoRegistroGasto};
-
-use sqlx::{PgPool, Postgres, Transaction};
 
 #[derive(Serialize)]
 struct PingResponse {
@@ -216,12 +217,9 @@ pub async fn emitir_eventos_gasto(
     gasto_id: Uuid,
 ) -> Result<Vec<Uuid>, ErrorGasto> {
     // Verifica membresía y excluye no participantes antes de escribir en base de datos
-    let destinatarios = filtrar_destinatarios_evento(
-        solicitante_id,
-        miembros_activos,
-        participantes_gasto,
-    )
-    .map_err(ErrorDestinatarios::a_error_gasto)?;
+    let destinatarios =
+        filtrar_destinatarios_evento(solicitante_id, miembros_activos, participantes_gasto)
+            .map_err(ErrorDestinatarios::a_error_gasto)?;
     // Delega el INSERT con UUID y cursor creciente, propagando errores SQLx
     sincronizacion_db::guardar_eventos_gasto(tx, gasto_id).await?;
 
@@ -238,19 +236,15 @@ async fn ping() -> Json<PingResponse> {
 }
 
 // Nombre estándar del encabezado HTTP para claves de idempotencia
-#[allow(dead_code)]
 pub const ENCABEZADO_IDEMPOTENCY_KEY: &str = "idempotency-key";
 
 // Límite máximo de bytes permitidos para una clave de idempotencia
-#[allow(dead_code)]
 pub const LONGITUD_MAXIMA_CLAVE_IDEMPOTENCIA: usize = 128;
 
 // Mensaje uniforme para ocultar si un grupo existe o falta membresía
-#[allow(dead_code)]
 const MENSAJE_GRUPO_NO_ENCONTRADO: &str = "Grupo no encontrado.";
 
 // Clave de idempotencia HTTP para evitar gastos duplicados
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaveIdempotencia(String);
 
@@ -287,7 +281,6 @@ impl ClaveIdempotencia {
 }
 
 // Resultado validado de sesion, acceso al grupo y clave opcional
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrecondicionesGasto {
     pub usuario_id: Uuid,
@@ -295,7 +288,6 @@ pub struct PrecondicionesGasto {
 }
 
 // Errores de precondiciones HTTP al registrrar un gasto de grupo
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ErrorPrecondicionGasto {
     // Sesión ausente, inválida o expirada
@@ -308,7 +300,6 @@ pub enum ErrorPrecondicionGasto {
     ErrorInterno,
 }
 
-#[allow(dead_code)]
 impl ErrorPrecondicionGasto {
     // Traduce el error a código HTTP y se representa en JSON
     pub fn a_respuesta_http(&self) -> (StatusCode, Json<Value>) {
@@ -333,7 +324,6 @@ impl ErrorPrecondicionGasto {
 }
 
 // Extrae y valida el encabezado Idempotency-Key opcional desde la petición
-#[allow(dead_code)]
 pub fn extraer_clave_idempotencia(
     headers: &HeaderMap,
 ) -> Result<Option<ClaveIdempotencia>, ErrorPrecondicionGasto> {
@@ -357,7 +347,6 @@ pub fn extraer_clave_idempotencia(
 }
 
 // Verifica membresía aceptada y devuelve 404 uniforme si no existe acceso
-#[allow(dead_code)]
 pub fn validar_acceso_grupo(es_miembro_aceptado: bool) -> Result<(), ErrorPrecondicionGasto> {
     if es_miembro_aceptado {
         Ok(())
@@ -367,7 +356,6 @@ pub fn validar_acceso_grupo(es_miembro_aceptado: bool) -> Result<(), ErrorPrecon
 }
 
 // Comprueba sesión, membresía uniforme del grupo y encabezado de idempotencia
-#[allow(dead_code)]
 pub async fn validar_precondiciones_gasto(
     estado: &auth::State,
     headers: &HeaderMap,
@@ -396,7 +384,6 @@ pub async fn validar_precondiciones_gasto(
 }
 
 // Ejecuta el registro atómico del gasto aplicando la clave validada
-#[allow(dead_code)]
 pub async fn registrar_gasto_idempotente(
     pool: &PgPool,
     precondiciones: &PrecondicionesGasto,
@@ -411,6 +398,117 @@ pub async fn registrar_gasto_idempotente(
     gastos_db::registrar_con_idempotencia(pool, precondiciones.usuario_id, datos, clave).await
 }
 
+// Mensjae uniforme cuando se reutiliza una clave con datos distintos
+const MENSAJE_CONFLICTO_IDEMPOTENCIA: &str = "Clave Idempotency-Key ya usada con datos distintos.";
+
+// Participante recibido en el cuerpo JSON para registrar un gasto
+#[derive(Deserialize)]
+pub struct SolicitudParticipanteGasto {
+    pub usuario_id: Uuid,
+    pub valor: Option<String>,
+}
+
+// Solicitud HTTP para crear un gasto compartido en un grupo
+#[derive(Deserialize)]
+pub struct SolicitudRegistrarGasto {
+    pub concepto: String,
+    pub monto: String,
+    pub fecha: NaiveDate,
+    pub pagado_por: Uuid,
+    pub regla: Regla,
+    pub participantes: Vec<SolicitudParticipanteGasto>,
+}
+
+impl SolicitudRegistrarGasto {
+    // Convierte la solicitud HTTP en un gasto listo para persistir
+    fn a_gasto_nuevo(self, grupo_id: Uuid) -> GastoNuevo {
+        GastoNuevo {
+            grupo_id,
+            pagado_por: self.pagado_por,
+            concepto: self.concepto,
+            monto: self.monto,
+            fecha: self.fecha,
+            regla: self.regla,
+            participantes: self
+                .participantes
+                .into_iter()
+                .map(|p| ParticipanteNuevo {
+                    usuario_id: p.usuario_id,
+                    valor: p.valor,
+                })
+                .collect(),
+        }
+    }
+}
+
+// Traduce el resultado de persistencia a 201, 200 o 409
+pub fn mapear_resultado_gasto_http(resultado: ResultadoRegistroGasto) -> (StatusCode, Json<Value>) {
+    match resultado {
+        ResultadoRegistroGasto::Creado(gasto) => (StatusCode::CREATED, Json(json!(gasto))),
+        ResultadoRegistroGasto::Existente(gasto) => (StatusCode::OK, Json(json!(gasto))),
+        ResultadoRegistroGasto::ConflictoIdempotencia => (
+            StatusCode::CONFLICT,
+            Json(json!({ "mensaje": MENSAJE_CONFLICTO_IDEMPOTENCIA })),
+        ),
+    }
+}
+
+// Traduce errores de dominio o base de datos a respuestas HTTP
+pub fn mapear_error_gasto_http(error: ErrorGasto) -> (StatusCode, Json<Value>) {
+    match error {
+        ErrorGasto::SinAcceso => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "mensaje": MENSAJE_GRUPO_NO_ENCONTRADO })),
+        ),
+        ErrorGasto::Invalido(mensaje) => {
+            (StatusCode::BAD_REQUEST, Json(json!({ "mensaje": mensaje })))
+        }
+        ErrorGasto::Base(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "mensaje": "No se pudo completar la operación." })),
+        ),
+    }
+}
+
+// Procesa POST /grupos/{id}/gastos aplicando idempotencia y códigos HTTP requeridos
+pub async fn registrar_gasto_http(
+    AxumState(estado): AxumState<auth::State>,
+    headers: HeaderMap,
+    Path(grupo_id): Path<Uuid>,
+    cuerpo: Result<Json<SolicitudRegistrarGasto>, JsonRejection>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    // Valida sesión (401), membresía uniforme (404) y formato de clave (400).
+    let precondiciones = validar_precondiciones_gasto(&estado, &headers, grupo_id)
+        .await
+        .map_err(|error| error.a_respuesta_http())?;
+
+    let Json(solicitud) = cuerpo.map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "mensaje": "Datos de gasto inválidos." })),
+        )
+    })?;
+
+    let resultado = registrar_gasto_idempotente(
+        &estado.pool,
+        &precondiciones,
+        solicitud.a_gasto_nuevo(grupo_id),
+    )
+    .await
+    .map_err(mapear_error_gasto_http)?;
+
+    Ok(mapear_resultado_gasto_http(resultado))
+}
+
+// Construye el enrutador HTTP principal con todas las rutas del servidor
+pub fn construir_app(estado: auth::State) -> Router {
+    Router::new()
+        .route("/ping", get(ping))
+        .merge(grupos::routes(estado.clone()))
+        .merge(social::routes(estado.clone()))
+        .merge(auth::routes(estado))
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database_url = std::env::var("DATABASE_URL").map_err(|_| "Falta DATABASE_URL")?;
@@ -423,11 +521,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let modo_demostracion = std::env::var("TOKEN_DEMO_1_MINUTO").as_deref() == Ok("1");
     let estado = auth::State::new(pool, secret).con_modo_demostracion(modo_demostracion);
-    let app = Router::new()
-        .route("/ping", get(ping))
-        .merge(grupos::routes(estado.clone()))
-        .merge(social::routes(estado.clone()))
-        .merge(auth::routes(estado));
+    let app = construir_app(estado);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8000").await?;
     println!("Servidor activo en http://127.0.0.1:8000");
@@ -439,8 +533,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use axum::http::{HeaderName, HeaderValue};
+    use std::collections::HashMap;
 
     // Crea un UUID determinista para identificar entidades en pruebas
     fn id_fijo(valor: u128) -> Uuid {
@@ -915,7 +1009,10 @@ mod tests {
     fn precondiciones_mantienen_401_y_404_uniformes() {
         let (codigo_401, cuerpo_401) = ErrorPrecondicionGasto::NoAutorizado.a_respuesta_http();
         assert_eq!(codigo_401, StatusCode::UNAUTHORIZED);
-        assert_eq!(cuerpo_401.0, json!({ "mensaje": "Sesión inválida o vencida." }));
+        assert_eq!(
+            cuerpo_401.0,
+            json!({ "mensaje": "Sesión inválida o vencida." })
+        );
 
         let error_acceso = validar_acceso_grupo(false)
             .expect_err("La falta de membresía o grupo debe fallar con 404");
@@ -923,5 +1020,69 @@ mod tests {
         assert_eq!(codigo_404, StatusCode::NOT_FOUND);
         assert_eq!(cuerpo_404.0, json!({ "mensaje": "Grupo no encontrado." }));
         assert_eq!(validar_acceso_grupo(true), Ok(()));
+    }
+
+    use crate::gastos_db::{GastoGuardado, ParteGuardada};
+
+    // Comprueba el mapeo HTTP para creación 201, repetición 200 y conflicto 409
+    #[test]
+    fn mapeo_resultado_gasto_responde_201_200_y_409() {
+        let gasto_id = id_fijo(500);
+        let ana = id_fijo(1);
+        let gasto = GastoGuardado {
+            id: gasto_id,
+            pagado_por: ana,
+            concepto: String::from("Cena"),
+            monto: String::from("60.00"),
+            fecha: String::from("2026-11-22"),
+            regla: Some(String::from("iguales")),
+            partes: vec![ParteGuardada {
+                usuario_id: ana,
+                nombre_usuario: String::from("ana"),
+                monto: String::from("60.00"),
+                recibio_residuo: Some(false),
+            }],
+        };
+
+        let (codigo_201, cuerpo_201) =
+            mapear_resultado_gasto_http(ResultadoRegistroGasto::Creado(gasto));
+        assert_eq!(codigo_201, StatusCode::CREATED);
+        assert_eq!(cuerpo_201.0["id"], gasto_id.to_string());
+        assert_eq!(cuerpo_201.0["monto"], "60.00");
+
+        let gasto_repetido = GastoGuardado {
+            id: gasto_id,
+            pagado_por: ana,
+            concepto: String::from("Cena"),
+            monto: String::from("60.00"),
+            fecha: String::from("2026-11-22"),
+            regla: Some(String::from("iguales")),
+            partes: vec![],
+        };
+        let (codigo_200, cuerpo_200) =
+            mapear_resultado_gasto_http(ResultadoRegistroGasto::Existente(gasto_repetido));
+        assert_eq!(codigo_200, StatusCode::OK);
+        assert_eq!(cuerpo_200.0["id"], gasto_id.to_string());
+
+        let (codigo_409, cuerpo_409) =
+            mapear_resultado_gasto_http(ResultadoRegistroGasto::ConflictoIdempotencia);
+        assert_eq!(codigo_409, StatusCode::CONFLICT);
+        assert_eq!(
+            cuerpo_409.0,
+            json!({ "mensaje": MENSAJE_CONFLICTO_IDEMPOTENCIA })
+        );
+    }
+
+    // Comprueba el mapeo de errores 404 uniforme y 400 de validación
+    #[test]
+    fn mapeo_error_gasto_mantiene_404_uniforme_y_400_entrega_6() {
+        let (codigo_404, cuerpo_404) = mapear_error_gasto_http(ErrorGasto::SinAcceso);
+        assert_eq!(codigo_404, StatusCode::NOT_FOUND);
+        assert_eq!(cuerpo_404.0, json!({ "mensaje": "Grupo no encontrado." }));
+
+        let (codigo_400, cuerpo_400) =
+            mapear_error_gasto_http(ErrorGasto::Invalido(String::from("faltan 5.00")));
+        assert_eq!(codigo_400, StatusCode::BAD_REQUEST);
+        assert_eq!(cuerpo_400.0, json!({ "mensaje": "faltan 5.00" }));
     }
 }
