@@ -1,8 +1,9 @@
 //! Persistencia de gastos compartidos; el acceso se comprueba en cada operación.
 use crate::division::{self, Participante, Regla};
+use crate::sincronizacion_db::{self, ResultadoClave};
 use chrono::NaiveDate;
 use serde::Serialize;
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, Postgres, Row, Transaction};
 use std::collections::HashSet;
 use uuid::Uuid;
 
@@ -59,11 +60,104 @@ pub struct Balance {
     pub balance: String,
 }
 
-pub async fn registrar(
+// Desenlace del registro de un gasto con control de idempotencia
+#[derive(Debug)]
+pub enum ResultadoRegistroGasto {
+    // Gasto recién creado y persistido junto con su clave opcional
+    Creado(GastoGuardado),
+    // Gasto previamente registrado recuperado por coincidencia exacta de clave
+    Existente(GastoGuardado),
+    // Clave ya procesada anteriormente con grupo o datos distintos
+    ConflictoIdempotencia,
+}
+
+// Recupera un gasto existente y sus partes ordenadas dentro de la transacción
+async fn cargar_gasto_por_id(
+    tx: &mut Transaction<'_, Postgres>,
+    grupo_id: Uuid,
+    gasto_id: Uuid,
+) -> Result<GastoGuardado, ErrorGasto> {
+    let fila = sqlx::query(
+        "SELECT id,pagado_por,concepto,monto::text AS monto,(fecha_gasto AT TIME ZONE 'UTC')::date::text AS fecha,regla_division FROM gastos WHERE id=$1 AND grupo_id=$2",
+    )
+    .bind(gasto_id)
+    .bind(grupo_id)
+    .fetch_one(&mut **tx)
+    .await?;
+
+    let partes_rows = sqlx::query(
+        "SELECT p.usuario_id,u.nombre_usuario,p.monto_parte::text AS monto,p.recibio_residuo FROM gasto_participantes p JOIN usuarios u ON u.id=p.usuario_id WHERE p.gasto_id=$1 ORDER BY u.nombre_usuario,p.usuario_id",
+    )
+    .bind(gasto_id)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    let partes = partes_rows
+        .into_iter()
+        .map(|r| ParteGuardada {
+            usuario_id: r.get("usuario_id"),
+            nombre_usuario: r.get("nombre_usuario"),
+            monto: r.get("monto"),
+            recibio_residuo: r.get("recibio_residuo"),
+        })
+        .collect();
+
+    Ok(GastoGuardado {
+        id: fila.get("id"),
+        pagado_por: fila.get("pagado_por"),
+        concepto: fila.get("concepto"),
+        monto: fila.get("monto"),
+        fecha: fila.get("fecha"),
+        regla: fila.get("regla_division"),
+        partes,
+    })
+}
+
+// Registra un gasto con idempotencia atómica o recupera el gasto existente
+pub async fn registrar_con_idempotencia(
     pool: &PgPool,
     solicitante: Uuid,
     datos: GastoNuevo,
-) -> Result<GastoGuardado, ErrorGasto> {
+    clave_idempotencia: Option<&str>,
+) -> Result<ResultadoRegistroGasto, ErrorGasto> {
+    let mut tx = pool.begin().await?;
+    // Bloquea membresías antes de consultar claves para responder 404 uniforme
+    let miembros = sqlx::query("SELECT m.usuario_id, u.nombre_usuario FROM grupo_miembros m JOIN usuarios u ON u.id=m.usuario_id WHERE m.grupo_id=$1 AND m.estado_invitacion='aceptada' FOR SHARE OF m")
+        .bind(datos.grupo_id)
+        .fetch_all(&mut *tx)
+        .await?;
+    let nombres: std::collections::HashMap<Uuid, String> = miembros
+        .into_iter()
+        .map(|r| (r.get("usuario_id"), r.get("nombre_usuario")))
+        .collect();
+    if !nombres.contains_key(&solicitante) {
+        return Err(ErrorGasto::SinAcceso);
+    }
+
+    if let Some(clave) = clave_idempotencia {
+        let huella = calcular_huella_gasto(&datos);
+        // Reserva o inspecciona la clave dentro de la misma transacción
+        match sincronizacion_db::revisar_clave(
+            &mut tx,
+            solicitante,
+            clave,
+            datos.grupo_id,
+            huella.as_str(),
+        )
+        .await?
+        {
+            ResultadoClave::Nueva => {}
+            ResultadoClave::YaExiste(gasto_id) => {
+                let existente = cargar_gasto_por_id(&mut tx, datos.grupo_id, gasto_id).await?;
+                tx.commit().await?;
+                return Ok(ResultadoRegistroGasto::Existente(existente));
+            }
+            ResultadoClave::DatosDistintos => {
+                return Ok(ResultadoRegistroGasto::ConflictoIdempotencia);
+            }
+        }
+    }
+
     if datos.concepto.trim().is_empty() {
         return Err(ErrorGasto::Invalido("El concepto es obligatorio.".into()));
     }
@@ -77,17 +171,6 @@ pub async fn registrar(
         return Err(ErrorGasto::Invalido(
             "Selecciona participantes únicos.".into(),
         ));
-    }
-    let mut tx = pool.begin().await?;
-    // Bloquea las membresías durante la validación y escritura de las partes.
-    let miembros = sqlx::query("SELECT m.usuario_id, u.nombre_usuario FROM grupo_miembros m JOIN usuarios u ON u.id=m.usuario_id WHERE m.grupo_id=$1 AND m.estado_invitacion='aceptada' FOR SHARE OF m")
-        .bind(datos.grupo_id).fetch_all(&mut *tx).await?;
-    let nombres: std::collections::HashMap<Uuid, String> = miembros
-        .into_iter()
-        .map(|r| (r.get("usuario_id"), r.get("nombre_usuario")))
-        .collect();
-    if !nombres.contains_key(&solicitante) {
-        return Err(ErrorGasto::SinAcceso);
     }
     if !nombres.contains_key(&datos.pagado_por) {
         return Err(ErrorGasto::Invalido(
@@ -117,11 +200,24 @@ pub async fn registrar(
     };
     let id = Uuid::new_v4();
     sqlx::query("INSERT INTO gastos(id,grupo_id,pagado_por,concepto,monto,fecha_gasto,regla_division) VALUES ($1,$2,$3,$4,$5::text::numeric,$6::date::timestamp AT TIME ZONE 'UTC',$7)")
-        .bind(id).bind(datos.grupo_id).bind(datos.pagado_por).bind(datos.concepto.trim()).bind(&datos.monto).bind(datos.fecha).bind(regla).execute(&mut *tx).await?;
+        .bind(id)
+        .bind(datos.grupo_id)
+        .bind(datos.pagado_por)
+        .bind(datos.concepto.trim())
+        .bind(&datos.monto)
+        .bind(datos.fecha)
+        .bind(regla)
+        .execute(&mut *tx)
+        .await?;
     let mut guardadas = Vec::with_capacity(partes.len());
     for parte in partes {
         sqlx::query("INSERT INTO gasto_participantes(gasto_id,usuario_id,monto_parte,recibio_residuo) VALUES($1,$2,$3::text::numeric,$4)")
-            .bind(id).bind(parte.usuario_id).bind(&parte.monto).bind(parte.recibio_residuo).execute(&mut *tx).await?;
+            .bind(id)
+            .bind(parte.usuario_id)
+            .bind(&parte.monto)
+            .bind(parte.recibio_residuo)
+            .execute(&mut *tx)
+            .await?;
         guardadas.push(ParteGuardada {
             usuario_id: parte.usuario_id,
             nombre_usuario: nombres[&parte.usuario_id].clone(),
@@ -129,8 +225,24 @@ pub async fn registrar(
             recibio_residuo: Some(parte.recibio_residuo),
         });
     }
+    // Reúne miembros activos y participantes del gasto para emitir cambios
+    let miembros_activos: HashSet<Uuid> = nombres.keys().copied().collect();
+    let participantes_gasto: Vec<Uuid> = guardadas.iter().map(|p| p.usuario_id).collect();
+    // Emite eventos en la misma transacción para revertir todo si falla.
+    crate::emitir_eventos_gasto(
+        &mut tx,
+        solicitante,
+        &miembros_activos,
+        &participantes_gasto,
+        id,
+    )
+    .await?;
+    if let Some(clave) = clave_idempotencia {
+        // Vincula la clave reservada con el gasto antes de confirmar
+        sincronizacion_db::guardar_clave(&mut tx, solicitante, clave, id).await?;
+    }
     tx.commit().await?;
-    Ok(GastoGuardado {
+    Ok(ResultadoRegistroGasto::Creado(GastoGuardado {
         id,
         pagado_por: datos.pagado_por,
         concepto: datos.concepto.trim().into(),
@@ -138,10 +250,114 @@ pub async fn registrar(
         fecha: datos.fecha.to_string(),
         regla: Some(regla.into()),
         partes: guardadas,
-    })
+    }))
 }
 
-/// Lectura en una transacción de instantánea coherente para gastos y balances.
+// Registra un gasto compartido sin clave de idempotencia
+pub async fn registrar(
+    pool: &PgPool,
+    solicitante: Uuid,
+    datos: GastoNuevo,
+) -> Result<GastoGuardado, ErrorGasto> {
+    match registrar_con_idempotencia(pool, solicitante, datos, None).await? {
+        ResultadoRegistroGasto::Creado(gasto) => Ok(gasto),
+        ResultadoRegistroGasto::Existente(_) | ResultadoRegistroGasto::ConflictoIdempotencia => {
+            unreachable!("Sin clave de idempotencia siempre se crea un gasto nuevo")
+        }
+    }
+}
+
+// Representación canónica de un gasto para detectar conflictos de idempotencia
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HuellaGasto(String);
+
+// Participante normalizado para construir una huella determinística de gasto
+#[allow(dead_code)]
+#[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
+struct ParticipanteCanonico {
+    usuario_id: Uuid,
+    valor: Option<String>,
+}
+
+// Estructura canónica ordenada con los campos relevantes del gasto
+#[allow(dead_code)]
+#[derive(Serialize)]
+struct GastoCanonico<'a> {
+    grupo_id: Uuid,
+    pagado_por: Uuid,
+    concepto: &'a str,
+    monto: String,
+    fecha: String,
+    regla: &'static str,
+    participantes: Vec<ParticipanteCanonico>,
+}
+
+// Normaliza textos decimales a dos dígitos o conserva el texto limpio
+#[allow(dead_code)]
+fn normalizar_decimal(texto: &str) -> String {
+    let limpio = texto.trim();
+    // Unifica equivalentes decimales como 100 y 100.00 en formato canónico.
+    match division::centesimas(limpio) {
+        Ok(valor) => division::formato(valor),
+        Err(_) => limpio.to_owned(),
+    }
+}
+
+#[allow(dead_code)]
+impl HuellaGasto {
+    // Construye la huella canónica y determinística a partir de un gasto
+    pub fn desde_gasto(datos: &GastoNuevo) -> Self {
+        let regla = match datos.regla {
+            Regla::Iguales => "iguales",
+            Regla::Porcentajes => "porcentajes",
+            Regla::MontosFijos => "montos_fijos",
+        };
+
+        let mut participantes: Vec<ParticipanteCanonico> = datos
+            .participantes
+            .iter()
+            .map(|p| ParticipanteCanonico {
+                usuario_id: p.usuario_id,
+                valor: p.valor.as_deref().map(normalizar_decimal),
+            })
+            .collect();
+
+        // Ordena participantes para ignorar diferencias de posición en el JSON
+        participantes.sort();
+
+        let canonico = GastoCanonico {
+            grupo_id: datos.grupo_id,
+            pagado_por: datos.pagado_por,
+            concepto: datos.concepto.trim(),
+            monto: normalizar_decimal(&datos.monto),
+            fecha: datos.fecha.to_string(),
+            regla,
+            participantes,
+        };
+
+        let serializado = serde_json::to_string(&canonico)
+            .expect("La serialización canónica del gasto no debe fallar");
+        Self(serializado)
+    }
+
+    // Devuelve la reperesentación textual lista para guardar en base de datos
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    // Comprueba si la guella coincide exactamente con los datos previamente
+    pub fn coincide_con(&self, datos_guardados: &str) -> bool {
+        self.0 == datos_guardados
+    }
+}
+
+// Genera la huella determinística del gasto para detectar reintentos distintos
+pub fn calcular_huella_gasto(datos: &GastoNuevo) -> HuellaGasto {
+    HuellaGasto::desde_gasto(datos)
+}
+
+/// Lectura en una transacción de instantánea coherente para gastos y balances
 pub async fn consultar(
     pool: &PgPool,
     solicitante: Uuid,
@@ -213,6 +429,264 @@ pub async fn consultar(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
+
+    // Modelo temporal para comprobar independencia del orden de llaves JSON
+    #[derive(Deserialize)]
+    struct ParticipanteJsonPrueba {
+        usuario_id: Uuid,
+        valor: Option<String>,
+    }
+
+    // Solicitud temporal para deserializar cuerpos JSON con formatos distintos
+    #[derive(Deserialize)]
+    struct GastoJsonPrueba {
+        concepto: String,
+        monto: String,
+        fecha: NaiveDate,
+        pagado_por: Uuid,
+        regla: Regla,
+        participantes: Vec<ParticipanteJsonPrueba>,
+    }
+
+    // Convierte un JSON de gasto en GastoNuevo para pruebas unitarias
+    fn gasto_desde_json(grupo_id: Uuid, json_crudo: &str) -> GastoNuevo {
+        let q: GastoJsonPrueba =
+            serde_json::from_str(json_crudo).expect("El JSON de prueba debe ser válido");
+        GastoNuevo {
+            grupo_id,
+            pagado_por: q.pagado_por,
+            concepto: q.concepto,
+            monto: q.monto,
+            fecha: q.fecha,
+            regla: q.regla,
+            participantes: q
+                .participantes
+                .into_iter()
+                .map(|p| ParticipanteNuevo {
+                    usuario_id: p.usuario_id,
+                    valor: p.valor,
+                })
+                .collect(),
+        }
+    }
+
+    // Verifica que reintentos equivalentes con distinto formato produzcan la misma huella
+    #[test]
+    fn huella_ignora_formato_json_orden_y_decimales_equivalentes() {
+        let grupo = Uuid::from_u128(10);
+        let ana = Uuid::from_u128(1);
+        let beto = Uuid::from_u128(2);
+
+        let json_a = format!(
+            r#"{{
+                "concepto": "Cena",
+                "monto": "60.00",
+                "fecha": "2026-11-22",
+                "pagado_por": "{ana}",
+                "regla": "porcentajes",
+                "participantes": [
+                    {{"usuario_id": "{ana}", "valor": "50.00"}},
+                    {{"usuario_id": "{beto}", "valor": "50.00"}}
+                ]
+            }}"#
+        );
+        let json_b = format!(
+            r#"{{"participantes":[{{"valor":"50","usuario_id":"{beto}"}},{{"usuario_id":"{ana}","valor":"50.0"}}],"regla":"porcentajes","pagado_por":"{ana}","fecha":"2026-11-22","monto":"60","concepto":"  Cena  "}}"#
+        );
+
+        let huella_a = calcular_huella_gasto(&gasto_desde_json(grupo, &json_a));
+        let huella_b = calcular_huella_gasto(&gasto_desde_json(grupo, &json_b));
+
+        assert_eq!(huella_a, huella_b);
+        assert!(huella_a.coincide_con(huella_b.as_str()));
+    }
+
+    // Comprueba que cualquier cambio real en el gasto produzca una huella distinta
+    #[test]
+    fn huella_detecta_modificaciones_reales_para_conflicto_409() {
+        let grupo = Uuid::from_u128(10);
+        let otro_grupo = Uuid::from_u128(11);
+        let ana = Uuid::from_u128(1);
+        let beto = Uuid::from_u128(2);
+        let carla = Uuid::from_u128(3);
+        let fecha = NaiveDate::from_ymd_opt(2026, 11, 22).expect("Fecha válida");
+        let otra_fecha = NaiveDate::from_ymd_opt(2026, 11, 23).expect("Fecha válida");
+
+        let base = GastoNuevo {
+            grupo_id: grupo,
+            pagado_por: ana,
+            concepto: "Hotel".into(),
+            monto: "100.00".into(),
+            fecha,
+            regla: Regla::Porcentajes,
+            participantes: vec![
+                ParticipanteNuevo {
+                    usuario_id: ana,
+                    valor: Some("50.00".into()),
+                },
+                ParticipanteNuevo {
+                    usuario_id: beto,
+                    valor: Some("50.00".into()),
+                },
+            ],
+        };
+        let huella_base = calcular_huella_gasto(&base);
+
+        let variantes = [
+            GastoNuevo {
+                grupo_id: otro_grupo,
+                pagado_por: ana,
+                concepto: "Hotel".into(),
+                monto: "100.00".into(),
+                fecha,
+                regla: Regla::Porcentajes,
+                participantes: vec![
+                    ParticipanteNuevo {
+                        usuario_id: ana,
+                        valor: Some("50.00".into()),
+                    },
+                    ParticipanteNuevo {
+                        usuario_id: beto,
+                        valor: Some("50.00".into()),
+                    },
+                ],
+            },
+            GastoNuevo {
+                grupo_id: grupo,
+                pagado_por: beto,
+                concepto: "Hotel".into(),
+                monto: "100.00".into(),
+                fecha,
+                regla: Regla::Porcentajes,
+                participantes: vec![
+                    ParticipanteNuevo {
+                        usuario_id: ana,
+                        valor: Some("50.00".into()),
+                    },
+                    ParticipanteNuevo {
+                        usuario_id: beto,
+                        valor: Some("50.00".into()),
+                    },
+                ],
+            },
+            GastoNuevo {
+                grupo_id: grupo,
+                pagado_por: ana,
+                concepto: "Cena".into(),
+                monto: "100.00".into(),
+                fecha,
+                regla: Regla::Porcentajes,
+                participantes: vec![
+                    ParticipanteNuevo {
+                        usuario_id: ana,
+                        valor: Some("50.00".into()),
+                    },
+                    ParticipanteNuevo {
+                        usuario_id: beto,
+                        valor: Some("50.00".into()),
+                    },
+                ],
+            },
+            GastoNuevo {
+                grupo_id: grupo,
+                pagado_por: ana,
+                concepto: "Hotel".into(),
+                monto: "100.01".into(),
+                fecha,
+                regla: Regla::Porcentajes,
+                participantes: vec![
+                    ParticipanteNuevo {
+                        usuario_id: ana,
+                        valor: Some("50.00".into()),
+                    },
+                    ParticipanteNuevo {
+                        usuario_id: beto,
+                        valor: Some("50.00".into()),
+                    },
+                ],
+            },
+            GastoNuevo {
+                grupo_id: grupo,
+                pagado_por: ana,
+                concepto: "Hotel".into(),
+                monto: "100.00".into(),
+                fecha: otra_fecha,
+                regla: Regla::Porcentajes,
+                participantes: vec![
+                    ParticipanteNuevo {
+                        usuario_id: ana,
+                        valor: Some("50.00".into()),
+                    },
+                    ParticipanteNuevo {
+                        usuario_id: beto,
+                        valor: Some("50.00".into()),
+                    },
+                ],
+            },
+            GastoNuevo {
+                grupo_id: grupo,
+                pagado_por: ana,
+                concepto: "Hotel".into(),
+                monto: "100.00".into(),
+                fecha,
+                regla: Regla::MontosFijos,
+                participantes: vec![
+                    ParticipanteNuevo {
+                        usuario_id: ana,
+                        valor: Some("50.00".into()),
+                    },
+                    ParticipanteNuevo {
+                        usuario_id: beto,
+                        valor: Some("50.00".into()),
+                    },
+                ],
+            },
+            GastoNuevo {
+                grupo_id: grupo,
+                pagado_por: ana,
+                concepto: "Hotel".into(),
+                monto: "100.00".into(),
+                fecha,
+                regla: Regla::Porcentajes,
+                participantes: vec![
+                    ParticipanteNuevo {
+                        usuario_id: ana,
+                        valor: Some("60.00".into()),
+                    },
+                    ParticipanteNuevo {
+                        usuario_id: beto,
+                        valor: Some("40.00".into()),
+                    },
+                ],
+            },
+            GastoNuevo {
+                grupo_id: grupo,
+                pagado_por: ana,
+                concepto: "Hotel".into(),
+                monto: "100.00".into(),
+                fecha,
+                regla: Regla::Porcentajes,
+                participantes: vec![
+                    ParticipanteNuevo {
+                        usuario_id: ana,
+                        valor: Some("50.00".into()),
+                    },
+                    ParticipanteNuevo {
+                        usuario_id: carla,
+                        valor: Some("50.00".into()),
+                    },
+                ],
+            },
+        ];
+
+        for variante in &variantes {
+            let huella_variante = calcular_huella_gasto(variante);
+            assert_ne!(huella_base, huella_variante);
+            assert!(!huella_base.coincide_con(huella_variante.as_str()));
+        }
+    }
+
     #[tokio::test]
     #[ignore = "requiere PostgreSQL aislado de pruebas"]
     async fn migracion_conserva_gastos_anteriores_sin_inventar_residuos() {
@@ -447,6 +921,176 @@ mod tests {
             .unwrap();
         sqlx::query("DELETE FROM usuarios WHERE id=ANY($1)")
             .bind(&[ana, beto, carla, ajeno][..])
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    // Valida idempotencia, conflicto 409, rollback y concurrencia sobre claves_gastos
+    #[tokio::test]
+    #[ignore = "requiere PostgreSQL aislado de pruebas"]
+    async fn idempotencia_atomica_conflicto_y_concurrencia() {
+        let url = std::env::var("E5_TEST_DATABASE_URL").expect("Configura E5_TEST_DATABASE_URL");
+        let pool = crate::db::conectar_y_migrar(&url).await.unwrap();
+        let ana = Uuid::new_v4();
+        let beto = Uuid::new_v4();
+        let grupo = Uuid::new_v4();
+        let sufijo = Uuid::new_v4().simple().to_string();
+
+        for (id, nombre) in [(ana, "ana"), (beto, "beto")] {
+            let usuario = format!("{nombre}_{}", &sufijo[..8]);
+            sqlx::query("INSERT INTO usuarios(id,nombre_usuario,nombre_visible,correo,password_hash) VALUES($1,$2,$3,$4,'hash')")
+                .bind(id)
+                .bind(&usuario)
+                .bind(nombre)
+                .bind(format!("{usuario}@example.com"))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query("INSERT INTO grupos(id,nombre,moneda,creador_id) VALUES($1,'Viaje','USD',$2)")
+            .bind(grupo)
+            .bind(ana)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for id in [ana, beto] {
+            sqlx::query("INSERT INTO grupo_miembros(grupo_id,usuario_id,estado_invitacion) VALUES($1,$2,'aceptada')")
+                .bind(grupo)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        let fecha = NaiveDate::from_ymd_opt(2026, 11, 22).unwrap();
+        let clave_seq = format!("clave-seq-{}", Uuid::new_v4());
+
+        let crear_datos = |monto: &str, invertir_participantes: bool| {
+            let mut participantes = vec![
+                ParticipanteNuevo {
+                    usuario_id: ana,
+                    valor: None,
+                },
+                ParticipanteNuevo {
+                    usuario_id: beto,
+                    valor: None,
+                },
+            ];
+            if invertir_participantes {
+                participantes.reverse();
+            }
+            GastoNuevo {
+                grupo_id: grupo,
+                pagado_por: ana,
+                concepto: "Hotel".into(),
+                monto: monto.into(),
+                fecha,
+                regla: Regla::Iguales,
+                participantes,
+            }
+        };
+
+        // Comprueba rollback de clave cuando el gasto falla validación de negocio
+        let invalido =
+            registrar_con_idempotencia(&pool, ana, crear_datos("0.00", false), Some(&clave_seq))
+                .await;
+        assert!(matches!(invalido, Err(ErrorGasto::Invalido(_))));
+
+        // Primer intento válido crea el gasto y registra la clave
+        let primero = match registrar_con_idempotencia(
+            &pool,
+            ana,
+            crear_datos("100.00", false),
+            Some(&clave_seq),
+        )
+        .await
+        .unwrap()
+        {
+            ResultadoRegistroGasto::Creado(gasto) => gasto,
+            otro => panic!("Se esperaba Creado y llegó {otro:?}"),
+        };
+
+        // Reintento equivalente recupera el mismo gasto sin duplicar registros
+        let repetido = match registrar_con_idempotencia(
+            &pool,
+            ana,
+            crear_datos("100", true),
+            Some(&clave_seq),
+        )
+        .await
+        .unwrap()
+        {
+            ResultadoRegistroGasto::Existente(gasto) => gasto,
+            otro => panic!("Se esperaba Existente y llegó {otro:?}"),
+        };
+        assert_eq!(repetido.id, primero.id);
+        assert_eq!(repetido.monto, "100.00");
+        assert_eq!(repetido.partes.len(), 2);
+
+        // Misma clave con monto distinto dispara conflicto de idempotencia
+        let conflicto =
+            registrar_con_idempotencia(&pool, ana, crear_datos("120.00", false), Some(&clave_seq))
+                .await
+                .unwrap();
+        assert!(matches!(
+            conflicto,
+            ResultadoRegistroGasto::ConflictoIdempotencia
+        ));
+
+        // Dos reintentos concurrentes con la misma clave crean exactamente un gasto
+        let clave_conc = format!("clave-conc-{}", Uuid::new_v4());
+        let (res_a, res_b) = tokio::join!(
+            registrar_con_idempotencia(&pool, ana, crear_datos("60.00", false), Some(&clave_conc)),
+            registrar_con_idempotencia(&pool, ana, crear_datos("60.00", true), Some(&clave_conc)),
+        );
+        let (id_a, creado_a) = match res_a.unwrap() {
+            ResultadoRegistroGasto::Creado(g) => (g.id, true),
+            ResultadoRegistroGasto::Existente(g) => (g.id, false),
+            ResultadoRegistroGasto::ConflictoIdempotencia => panic!("Conflicto inesperado"),
+        };
+        let (id_b, creado_b) = match res_b.unwrap() {
+            ResultadoRegistroGasto::Creado(g) => (g.id, true),
+            ResultadoRegistroGasto::Existente(g) => (g.id, false),
+            ResultadoRegistroGasto::ConflictoIdempotencia => panic!("Conflicto inesperado"),
+        };
+        assert_eq!(id_a, id_b);
+        assert_ne!(creado_a, creado_b);
+
+        let total_gastos: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM gastos WHERE grupo_id = $1")
+                .bind(grupo)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(total_gastos, 2);
+
+        let total_eventos: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM eventos_usuario WHERE grupo_id = $1")
+                .bind(grupo)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(total_eventos, 4);
+
+        // Limpia primero tablas con referencias a gastos y grupos
+        sqlx::query("DELETE FROM claves_gastos WHERE usuario_id = $1")
+            .bind(ana)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM eventos_usuario WHERE grupo_id = $1")
+            .bind(grupo)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM grupos WHERE id = $1")
+            .bind(grupo)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM usuarios WHERE id = ANY($1)")
+            .bind(&[ana, beto][..])
             .execute(&pool)
             .await
             .unwrap();

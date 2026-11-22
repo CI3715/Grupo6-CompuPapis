@@ -136,6 +136,12 @@ export default function PantallaPatrimonio({ onVolver, onIr }: PropsPantalla) {
   const obtenerSimbolo = (cod: string) =>
     monedas.find((m) => m.codigo === cod)?.simbolo ?? cod;
 
+  // Decimales de la moneda; undefined mientras el catálogo no ha cargado.
+  const decimalesDe = (cod: string) => {
+    const d = monedas.find((m) => m.codigo === cod)?.decimales;
+    return d === undefined ? undefined : Number(d);
+  };
+
   const filas: FilaPatrimonio[] = patrimonio?.filas ?? [];
   const subtotales: SubtotalPatrimonio[] = patrimonio?.subtotales ?? [];
 
@@ -163,7 +169,13 @@ export default function PantallaPatrimonio({ onVolver, onIr }: PropsPantalla) {
     if (moneda === base)
       return formatearMontoLocal(monto, obtenerSimbolo(base));
     if (enBase === null || enBase === undefined) return "—";
-    return formatearMontoLocal(enBase, obtenerSimbolo(base));
+    // enBase llega exacto desde el dominio: se redondea solo al mostrarlo.
+    return formatearMontoLocal(
+      enBase,
+      obtenerSimbolo(base),
+      false,
+      decimalesDe(base),
+    );
   };
 
   return (

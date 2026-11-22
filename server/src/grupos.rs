@@ -1,12 +1,11 @@
 use crate::{
     amistades_db,
     auth::{self, State},
-    division::Regla,
-    gastos_db::{self, ErrorGasto, GastoNuevo, ParticipanteNuevo},
+    gastos_db::{self, ErrorGasto},
 };
 use axum::{
     Json, Router,
-    extract::{Path, State as AxumState, rejection::JsonRejection},
+    extract::{Path, State as AxumState},
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
@@ -152,63 +151,6 @@ async fn responder(
     }
     Ok(Json(json!({"grupo_id":g,"estado":estado})))
 }
-#[derive(Deserialize)]
-struct ParticipanteGasto {
-    usuario_id: Uuid,
-    valor: Option<String>,
-}
-#[derive(Deserialize)]
-struct RegistrarGasto {
-    concepto: String,
-    monto: String,
-    fecha: chrono::NaiveDate,
-    pagado_por: Uuid,
-    regla: Regla,
-    participantes: Vec<ParticipanteGasto>,
-}
-fn error_gasto(e: ErrorGasto) -> (StatusCode, Json<Value>) {
-    match e {
-        ErrorGasto::SinAcceso => oculto(),
-        ErrorGasto::Invalido(m) => error(StatusCode::BAD_REQUEST, &m),
-        ErrorGasto::Base(_) => error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "No se pudo completar la operación.",
-        ),
-    }
-}
-async fn registrar_gasto(
-    AxumState(s): AxumState<State>,
-    h: HeaderMap,
-    Path(g): Path<Uuid>,
-    body: Result<Json<RegistrarGasto>, JsonRejection>,
-) -> Api<(StatusCode, Json<Value>)> {
-    let u = user(&h, &s)?;
-    miembro(&s, g, u).await?;
-    let Json(q) = body.map_err(|_| error(StatusCode::BAD_REQUEST, "Datos de gasto inválidos."))?;
-    let gasto = gastos_db::registrar(
-        &s.pool,
-        u,
-        GastoNuevo {
-            grupo_id: g,
-            pagado_por: q.pagado_por,
-            concepto: q.concepto,
-            monto: q.monto,
-            fecha: q.fecha,
-            regla: q.regla,
-            participantes: q
-                .participantes
-                .into_iter()
-                .map(|p| ParticipanteNuevo {
-                    usuario_id: p.usuario_id,
-                    valor: p.valor,
-                })
-                .collect(),
-        },
-    )
-    .await
-    .map_err(error_gasto)?;
-    Ok((StatusCode::CREATED, Json(json!(gasto))))
-}
 async fn detalle(
     AxumState(s): AxumState<State>,
     h: HeaderMap,
@@ -240,7 +182,8 @@ pub fn routes(s: State) -> Router {
     Router::new()
         .route("/grupos", post(crear).get(listar))
         .route("/grupos/{id}", get(detalle))
-        .route("/grupos/{id}/gastos", post(registrar_gasto))
+        // Delega el registro de gastos al handler con control de idempotencia.
+        .route("/grupos/{id}/gastos", post(crate::registrar_gasto_http))
         .route("/grupos/{id}/miembros", post(invitar))
         .route("/grupos/{id}/miembros/yo/respuesta", post(responder))
         .with_state(s)
