@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import PantallaPatrimonio from "@/app/patrimonio";
 import PantallaSocial from "@/app/social";
 import PantallaTasas from "@/app/tasas";
-import { useSincronizacion } from "@/app/sincronizacion"
+import { useSincronizacion } from "@/app/sincronizacion";
 import { formatearMontoLocal } from "@/lib/money";
 import type {
   Categoria,
@@ -461,7 +461,7 @@ export default function MisCuentasPage() {
     </div>
   );
 
-    if (pantalla === "social") {
+  if (pantalla === "social") {
     return conBarra(
       <PantallaSocial
         volver={() => irAPantalla("cuentas")}
@@ -498,23 +498,22 @@ export default function MisCuentasPage() {
 
   // --- RENDER ---
   return (
-    <div
-      style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
       {barraSesion}
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-      {vistaAuth !== "ninguna" ? (
-        <AuthScreens
-          vista={vistaAuth}
-          usuario={usuarioSesion}
-          onCambiarVista={setVistaAuth}
-          onAutenticado={(u) => {
-            setUsuarioSesion(u);
-            setSesionVencida(false);
-          }}
-          onCerrarSesion={manejarCerrarSesion}
-          onSesionVencida={marcarSesionVencida}
-        />
-      ) : null}
+        {vistaAuth !== "ninguna" ? (
+          <AuthScreens
+            vista={vistaAuth}
+            usuario={usuarioSesion}
+            onCambiarVista={setVistaAuth}
+            onAutenticado={(u) => {
+              setUsuarioSesion(u);
+              setSesionVencida(false);
+            }}
+            onCerrarSesion={manejarCerrarSesion}
+            onSesionVencida={marcarSesionVencida}
+          />
+        ) : null}
 
         <div
           className={`app-wrapper ${cuentaSeleccionadaId ? "layout-split" : "layout-single"}`}
@@ -719,8 +718,9 @@ export default function MisCuentasPage() {
                     Todavía no tienes cuentas registradas
                   </p>
                   <p className="empty-description">
-                    Crea tu primera cuenta de efectivo, banco o billetera digital
-                    para empezar a llevar el control en este dispositivo.
+                    Crea tu primera cuenta de efectivo, banco o billetera
+                    digital para empezar a llevar el control en este
+                    dispositivo.
                   </p>
                   <button
                     onClick={() => setMostrarFormulario(true)}
@@ -935,7 +935,11 @@ export default function MisCuentasPage() {
                         </span>
                       </div>
                       <div
-                        style={{ display: "flex", gap: "8px", marginTop: "10px" }}
+                        style={{
+                          display: "flex",
+                          gap: "8px",
+                          marginTop: "10px",
+                        }}
                       >
                         <button
                           type="button"
@@ -1042,7 +1046,9 @@ export default function MisCuentasPage() {
                         </div>
                         <select
                           value={categoriaMovimiento}
-                          onChange={(e) => setCategoriaMovimiento(e.target.value)}
+                          onChange={(e) =>
+                            setCategoriaMovimiento(e.target.value)
+                          }
                           className={`form-control ${errorMovimiento?.campo === "categoria" ? "input-error" : ""}`}
                         >
                           <option value="">Seleccione categoría...</option>
@@ -1217,8 +1223,9 @@ export default function MisCuentasPage() {
                               )}
                             </div>
                             <p className="account-meta">
-                              Fecha: {mov.fecha} {mov.nota ? `• ${mov.nota}` : ""}{" "}
-                              • ID: #{mov.id.slice(0, 8)}
+                              Fecha: {mov.fecha}{" "}
+                              {mov.nota ? `• ${mov.nota}` : ""} • ID: #
+                              {mov.id.slice(0, 8)}
                             </p>
                           </div>
 

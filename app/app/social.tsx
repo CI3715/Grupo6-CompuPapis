@@ -154,7 +154,7 @@ export default function PantallaSocial({
       activo = false;
     };
   }, [sesion, onSesionVencida]);
-    const cargarLocal = useCallback(async () => {
+  const cargarLocal = useCallback(async () => {
     const [p, c] = await Promise.all([
       invoke<PendienteAplicar[]>("listar_pendientes_aplicar"),
       invoke<GastoEnCola[]>("listar_cola_gastos"),
@@ -286,7 +286,7 @@ export default function PantallaSocial({
                 cuenta donde aplicarlas. Abre el grupo y elige una cuenta: se
                 aplicarán en cuanto la elijas.
               </p>
-                            {pendientes.map((p) => (
+              {pendientes.map((p) => (
                 <div className="social-row" key={p.id}>
                   <div>
                     <strong>
@@ -602,12 +602,12 @@ export default function PantallaSocial({
                   </form>
                 </section>
               )}
-              <section className="form-card" >
+              <section className="form-card">
                 <h2 className="form-title">Cuenta para mis partes</h2>
                 <p className="social-muted">
                   Tus partes de los gastos de este grupo se aplicarán en la
-                  cuenta que elijas. Solo se ofrecen cuentas en {detalle.moneda}.
-                  Si la cambias, afecta solo a las partes que lleguen después.
+                  cuenta que elijas. Solo se ofrecen cuentas en {detalle.moneda}
+                  . Si la cambias, afecta solo a las partes que lleguen después.
                 </p>
                 <label className="form-label" htmlFor="cuenta-grupo">
                   Cuenta
@@ -667,9 +667,12 @@ export default function PantallaSocial({
                   void sincronizar();
                   if (!resultado.pendiente) {
                     try {
-                      const actualizado = await llamar<Detalle>("detalle_grupo", {
-                        id: detalle.id,
-                      });
+                      const actualizado = await llamar<Detalle>(
+                        "detalle_grupo",
+                        {
+                          id: detalle.id,
+                        },
+                      );
                       setDetalle((actual) =>
                         actual?.id === detalle.id ? actualizado : actual,
                       );

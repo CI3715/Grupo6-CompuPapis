@@ -18,6 +18,96 @@ mod tests {
     }
 
     #[test]
+    fn eleccion_usa_moneda_del_grupo_guardada_y_no_cambia_movimientos_anteriores() {
+        let (mut repo, ruta) = bd_temporal();
+        let usd =
+            ejecutar_crear_cuenta(&mut repo, "USD", "efectivo", "USD", "100.00", "test").unwrap();
+        let eur =
+            ejecutar_crear_cuenta(&mut repo, "EUR", "efectivo", "EUR", "100.00", "test").unwrap();
+        let otra =
+            ejecutar_crear_cuenta(&mut repo, "Otra", "efectivo", "USD", "100.00", "test").unwrap();
+        assert!(
+            repo.elegir_cuenta_grupo_verificada("grupo", usd.id())
+                .is_err()
+        );
+        repo.guardar_moneda_grupo("grupo", "USD").unwrap();
+        assert!(
+            repo.elegir_cuenta_grupo_verificada("grupo", eur.id())
+                .is_err()
+        );
+        assert!(
+            repo.elegir_cuenta_grupo_verificada("grupo", "inexistente")
+                .is_err()
+        );
+        repo.elegir_cuenta_grupo_verificada("grupo", usd.id())
+            .unwrap();
+        let evento = EventoCambioRecibido {
+            id: "uno".into(),
+            cursor: 1,
+            tipo: "gasto_grupo".into(),
+            grupo_id: "grupo".into(),
+            grupo_nombre: "Viaje".into(),
+            gasto_id: "hotel".into(),
+            concepto: "Hotel".into(),
+            fecha: "2026-11-20".into(),
+            moneda: "USD".into(),
+            monto_parte: "10.00".into(),
+            incluye_centimos_redondeo: false,
+        };
+        repo.aplicar_lote_cambios(1, vec![evento]).unwrap();
+        repo.elegir_cuenta_grupo_verificada("grupo", otra.id())
+            .unwrap();
+        assert_eq!(
+            ejecutar_obtener_detalle_cuenta(&repo, usd.id())
+                .unwrap()
+                .saldo_actual,
+            "90.00"
+        );
+        assert_eq!(
+            ejecutar_obtener_detalle_cuenta(&repo, otra.id())
+                .unwrap()
+                .saldo_actual,
+            "100.00"
+        );
+        limpiar_bd(ruta);
+    }
+
+    #[test]
+    fn duplicados_en_el_mismo_lote_y_moneda_incompatible_no_corrompen_el_libro() {
+        let (mut repo, ruta) = bd_temporal();
+        let cuenta =
+            ejecutar_crear_cuenta(&mut repo, "Efectivo", "efectivo", "USD", "200.00", "prueba")
+                .unwrap();
+        assert!(repo.elegir_cuenta_grupo("grupo", "inexistente").is_err());
+        repo.elegir_cuenta_grupo("grupo", cuenta.id()).unwrap();
+        let mut evento = EventoCambioRecibido {
+            id: "evento".into(),
+            cursor: 1,
+            tipo: "gasto_grupo".into(),
+            grupo_id: "grupo".into(),
+            grupo_nombre: "Viaje".into(),
+            gasto_id: "hotel".into(),
+            concepto: "Hotel".into(),
+            fecha: "2026-11-20".into(),
+            moneda: "EUR".into(),
+            monto_parte: "10.00".into(),
+            incluye_centimos_redondeo: false,
+        };
+        assert!(repo.aplicar_lote_cambios(1, vec![evento.clone()]).is_err());
+        assert_eq!(repo.obtener_cursor_sincronizacion().unwrap(), 0);
+        evento.moneda = "USD".into();
+        assert_eq!(
+            repo.aplicar_lote_cambios(1, vec![evento.clone(), evento])
+                .unwrap(),
+            1
+        );
+        let detalle = ejecutar_obtener_detalle_cuenta(&repo, cuenta.id()).unwrap();
+        assert_eq!(detalle.saldo_actual, "190.00");
+        assert_eq!(detalle.movimientos.len(), 1);
+        limpiar_bd(ruta);
+    }
+
+    #[test]
     fn prueba_idempotencia_mismo_lote_aplicado_dos_veces() {
         let (mut repo, ruta) = bd_temporal();
         let cuenta = ejecutar_crear_cuenta(
@@ -56,7 +146,7 @@ mod tests {
         let detalle_1 = ejecutar_obtener_detalle_cuenta(&repo, cuenta.id()).unwrap();
         assert_eq!(detalle_1.saldo_actual, "166.67");
         assert_eq!(detalle_1.movimientos.len(), 1);
-        assert_eq!(detalle_1.movimientos[0].es_gasto_de_grupo, true);
+        assert!(detalle_1.movimientos[0].es_gasto_de_grupo);
         assert_eq!(detalle_1.movimientos[0].categoria, "Viaje a Mérida · Hotel");
 
         // Segunda aplicación del mismo lote (o cursor reiniciado)
@@ -205,7 +295,9 @@ mod tests {
         assert_eq!(detalle_antes.movimientos.len(), 0);
 
         // El usuario elige su cuenta para el grupo
-        let aplicados_al_elegir = repo.elegir_cuenta_grupo(&grupo_id, cuenta.id()).unwrap();
+        let aplicados_al_elegir = repo
+            .elegir_cuenta_grupo_verificada(&grupo_id, cuenta.id())
+            .unwrap();
         assert_eq!(aplicados_al_elegir, 1);
 
         // Ya no hay pendientes
@@ -216,7 +308,7 @@ mod tests {
         let detalle_despues = ejecutar_obtener_detalle_cuenta(&repo, cuenta.id()).unwrap();
         assert_eq!(detalle_despues.saldo_actual, "166.67");
         assert_eq!(detalle_despues.movimientos.len(), 1);
-        assert_eq!(detalle_despues.movimientos[0].es_gasto_de_grupo, true);
+        assert!(detalle_despues.movimientos[0].es_gasto_de_grupo);
 
         limpiar_bd(ruta);
     }
@@ -308,11 +400,8 @@ mod tests {
         repo.eliminar_de_cola(&clave_1).unwrap();
 
         // Simular que el segundo gasto fue rechazado por el servidor (ej. ya no es miembro)
-        repo.marcar_gasto_rechazado(
-            &clave_2,
-            "No perteneces a este grupo o fue archivado.",
-        )
-        .unwrap();
+        repo.marcar_gasto_rechazado(&clave_2, "No perteneces a este grupo o fue archivado.")
+            .unwrap();
 
         let cola_actualizada = repo.listar_cola_gastos().unwrap();
         assert_eq!(cola_actualizada.len(), 1);
@@ -412,23 +501,20 @@ mod tests {
     //     obtener detalle) siguen funcionando con normalidad.
     #[test]
     fn prueba_sesion_vencida_detiene_sync_y_funciones_personales_siguen() {
-        use crate::domain::{ejecutar_crear_cuenta, ejecutar_obtener_detalle_cuenta, ErrorDominio};
+        use crate::domain::{ErrorDominio, ejecutar_crear_cuenta, ejecutar_obtener_detalle_cuenta};
 
         // --- a) Verificar el ErrorDominio que sincronizar devuelve ante un 401 ---
         // Construimos el error tal como lo produce sincronizar() en ambos puntos
         // donde detecta StatusCode::UNAUTHORIZED (envío de cola y GET /cambios).
-        let error_sesion = ErrorDominio::nuevo(
-            "sesion",
-            "Tu sesión venció, inicia sesión de nuevo.",
-        );
+        let error_sesion =
+            ErrorDominio::nuevo("sesion", "Tu sesión venció, inicia sesión de nuevo.");
 
         assert_eq!(
             error_sesion.campo, "sesion",
             "El campo debe ser 'sesion' para que el frontend llame a onSesionVencida()"
         );
         assert_eq!(
-            error_sesion.mensaje,
-            "Tu sesión venció, inicia sesión de nuevo.",
+            error_sesion.mensaje, "Tu sesión venció, inicia sesión de nuevo.",
             "El mensaje debe coincidir exactamente con el texto del PDF"
         );
 

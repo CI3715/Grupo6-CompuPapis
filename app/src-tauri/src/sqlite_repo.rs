@@ -44,6 +44,26 @@ pub struct EventoCambioRecibido {
     pub incluye_centimos_redondeo: bool,
 }
 
+fn validar_parte(
+    id: &str,
+    grupo: &str,
+    gasto: &str,
+    concepto: &str,
+    fecha: &str,
+    monto: &str,
+) -> Result<(), String> {
+    use std::str::FromStr;
+    if [id, grupo, gasto, concepto]
+        .iter()
+        .any(|v| v.trim().is_empty())
+        || chrono::NaiveDate::parse_from_str(fecha, "%Y-%m-%d").is_err()
+        || rust_decimal::Decimal::from_str(monto).map_or(true, |n| n <= rust_decimal::Decimal::ZERO)
+    {
+        return Err("La parte del gasto de grupo contiene datos inválidos.".into());
+    }
+    Ok(())
+}
+
 pub struct RepositorioSqlite {
     ruta_db: PathBuf,
 }
@@ -71,6 +91,14 @@ impl RepositorioSqlite {
                 grupo_id TEXT PRIMARY KEY,
                 cuenta_id TEXT NOT NULL
             )",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS monedas_grupos (
+            grupo_id TEXT PRIMARY KEY, moneda TEXT NOT NULL
+        )",
             [],
         )
         .map_err(|e| e.to_string())?;
@@ -136,6 +164,52 @@ impl RepositorioSqlite {
         Connection::open(&self.ruta_db).map_err(|e| e.to_string())
     }
 
+    pub fn guardar_moneda_grupo(&self, grupo_id: &str, moneda: &str) -> Result<(), String> {
+        if grupo_id.trim().is_empty() || moneda.trim().is_empty() {
+            return Err("Los datos del grupo son inválidos.".into());
+        }
+        let conn = self.abrir()?;
+        conn.execute(
+            "INSERT INTO monedas_grupos (grupo_id, moneda) VALUES (?1, ?2)
+            ON CONFLICT(grupo_id) DO UPDATE SET moneda = excluded.moneda",
+            params![grupo_id, moneda],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn obtener_moneda_grupo(&self, grupo_id: &str) -> Result<Option<String>, String> {
+        use rusqlite::OptionalExtension;
+        self.abrir()?
+            .query_row(
+                "SELECT moneda FROM monedas_grupos WHERE grupo_id = ?1",
+                [grupo_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn elegir_cuenta_grupo_verificada(
+        &mut self,
+        grupo_id: &str,
+        cuenta_id: &str,
+    ) -> Result<usize, String> {
+        let moneda = self
+            .obtener_moneda_grupo(grupo_id)?
+            .ok_or("Actualiza los datos del grupo antes de elegir una cuenta.")?;
+        let cuentas = crate::domain::ejecutar_listar_cuentas(self).map_err(|e| e.mensaje)?;
+        let cuenta = cuentas
+            .cuentas
+            .iter()
+            .find(|c| c.id() == cuenta_id)
+            .ok_or("La cuenta personal no existe o no está activa.")?;
+        if cuenta.moneda() != moneda {
+            return Err("La moneda de la cuenta no coincide con la del grupo.".into());
+        }
+        self.elegir_cuenta_grupo(grupo_id, cuenta_id)
+    }
+
     pub fn obtener_cuenta_grupo(&self, grupo_id: &str) -> Result<Option<String>, String> {
         let conn = self.abrir()?;
         let mut stmt = conn
@@ -157,6 +231,13 @@ impl RepositorioSqlite {
         cuenta_id: &str,
     ) -> Result<usize, String> {
         use std::str::FromStr;
+        let cuentas = crate::domain::ejecutar_listar_cuentas(self).map_err(|e| e.mensaje)?;
+        let cuenta = cuentas
+            .cuentas
+            .iter()
+            .find(|c| c.id() == cuenta_id)
+            .ok_or("La cuenta personal no existe o no está activa.")?;
+        let moneda_cuenta = cuenta.moneda();
         let mut conn = self.abrir()?;
         let tx = conn.transaction().map_err(|e| e.to_string())?;
 
@@ -192,11 +273,23 @@ impl RepositorioSqlite {
             .map_err(|e| e.to_string())?;
         drop(stmt);
 
+        if pendientes.iter().any(|p| p.moneda != moneda_cuenta) {
+            return Err("La moneda de la cuenta no coincide con la del grupo.".into());
+        }
+
         let mut aplicados = 0;
         let ahora = Utc::now();
         for p in pendientes {
-            let cant = rust_decimal::Decimal::from_str(&p.monto_parte)
-                .map_err(|e| e.to_string())?;
+            validar_parte(
+                &p.id,
+                &p.grupo_id,
+                &p.gasto_id,
+                &p.concepto,
+                &p.fecha,
+                &p.monto_parte,
+            )?;
+            let cant =
+                rust_decimal::Decimal::from_str(&p.monto_parte).map_err(|e| e.to_string())?;
             let datos = crate::domain::DatosGastoDeGrupoAplicado {
                 movimiento_id: uuid::Uuid::new_v4().to_string(),
                 cuenta_id: cuenta_id.to_string(),
@@ -230,8 +323,11 @@ impl RepositorioSqlite {
             )
             .map_err(|e| e.to_string())?;
 
-            tx.execute("DELETE FROM pendientes_aplicar WHERE id = ?1", params![p.id])
-                .map_err(|e| e.to_string())?;
+            tx.execute(
+                "DELETE FROM pendientes_aplicar WHERE id = ?1",
+                params![p.id],
+            )
+            .map_err(|e| e.to_string())?;
 
             aplicados += 1;
         }
@@ -263,7 +359,9 @@ impl RepositorioSqlite {
                 })
             })
             .map_err(|e| e.to_string())?;
-        filas.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+        filas
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     }
 
     pub fn listar_cola_gastos(&self) -> Result<Vec<GastoEnColaDb>, String> {
@@ -288,7 +386,9 @@ impl RepositorioSqlite {
                 })
             })
             .map_err(|e| e.to_string())?;
-        filas.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+        filas
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     }
 
     pub fn encolar_gasto(
@@ -371,7 +471,9 @@ impl RepositorioSqlite {
     pub fn obtener_ultima_sincronizacion(&self) -> Result<Option<String>, String> {
         let conn = self.abrir()?;
         let mut stmt = conn
-            .prepare("SELECT valor FROM estado_sincronizacion WHERE clave = 'ultima_sincronizacion'")
+            .prepare(
+                "SELECT valor FROM estado_sincronizacion WHERE clave = 'ultima_sincronizacion'",
+            )
             .map_err(|e| e.to_string())?;
         let mut filas = stmt
             .query_map([], |row| row.get::<_, String>(0))
@@ -381,6 +483,14 @@ impl RepositorioSqlite {
         } else {
             Ok(None)
         }
+    }
+
+    pub fn registrar_sincronizacion_exitosa(&self) -> Result<(), String> {
+        self.abrir()?.execute(
+            "INSERT OR REPLACE INTO estado_sincronizacion (clave, valor) VALUES ('ultima_sincronizacion', ?1)",
+            [Utc::now().to_rfc3339()],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     pub fn aplicar_lote_cambios(
@@ -408,12 +518,14 @@ impl RepositorioSqlite {
                  FROM eventos_libro WHERE tipo = 'GastoDeGrupoAplicado'",
             )
             .map_err(|e| e.to_string())?;
-        let ya_aplicados: std::collections::HashSet<String> = stmt_aplicados
+        let mut ya_aplicados: std::collections::HashSet<String> = stmt_aplicados
             .query_map([], |row| row.get::<_, Option<String>>(0))
             .map_err(|e| e.to_string())?
             .filter_map(|r| r.ok().flatten())
             .collect();
         drop(stmt_aplicados);
+
+        let cuentas = crate::domain::ejecutar_listar_cuentas(self).map_err(|e| e.mensaje)?;
 
         let mut aplicados = 0;
         let ahora = Utc::now();
@@ -427,9 +539,41 @@ impl RepositorioSqlite {
                 continue;
             }
 
+            validar_parte(
+                &ev.id,
+                &ev.grupo_id,
+                &ev.gasto_id,
+                &ev.concepto,
+                &ev.fecha,
+                &ev.monto_parte,
+            )?;
+            tx.execute(
+                "INSERT OR IGNORE INTO monedas_grupos (grupo_id, moneda) VALUES (?1, ?2)",
+                params![ev.grupo_id, ev.moneda],
+            )
+            .map_err(|e| e.to_string())?;
+            let moneda_grupo: String = tx
+                .query_row(
+                    "SELECT moneda FROM monedas_grupos WHERE grupo_id = ?1",
+                    [&ev.grupo_id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            if moneda_grupo != ev.moneda {
+                return Err("La moneda recibida no coincide con la del grupo.".into());
+            }
+
             if let Some(cuenta_id) = cuentas_por_grupo.get(&ev.grupo_id) {
-                let cant = rust_decimal::Decimal::from_str(&ev.monto_parte)
-                    .map_err(|e| e.to_string())?;
+                let cuenta = cuentas
+                    .cuentas
+                    .iter()
+                    .find(|c| c.id() == cuenta_id)
+                    .ok_or("La cuenta personal no existe o no está activa.")?;
+                if cuenta.moneda() != ev.moneda {
+                    return Err("La moneda de la cuenta no coincide con la del grupo.".into());
+                }
+                let cant =
+                    rust_decimal::Decimal::from_str(&ev.monto_parte).map_err(|e| e.to_string())?;
                 let datos = crate::domain::DatosGastoDeGrupoAplicado {
                     movimiento_id: uuid::Uuid::new_v4().to_string(),
                     cuenta_id: cuenta_id.clone(),
@@ -438,8 +582,7 @@ impl RepositorioSqlite {
                     gasto_id: ev.gasto_id.clone(),
                     concepto: format!("{} · {}", ev.grupo_nombre, ev.concepto),
                     fecha: ev.fecha.clone(),
-                    monto: crate::domain::Monto::nuevo(cant, &ev.moneda)
-                        .map_err(|e| e.mensaje)?,
+                    monto: crate::domain::Monto::nuevo(cant, &ev.moneda).map_err(|e| e.mensaje)?,
                     incluye_centimos_redondeo: ev.incluye_centimos_redondeo,
                 };
 
@@ -471,6 +614,7 @@ impl RepositorioSqlite {
                 .map_err(|e| e.to_string())?;
 
                 aplicados += 1;
+                ya_aplicados.insert(ev.id);
             } else {
                 tx.execute(
                     "INSERT OR REPLACE INTO pendientes_aplicar
@@ -495,12 +639,6 @@ impl RepositorioSqlite {
         tx.execute(
             "INSERT OR REPLACE INTO estado_sincronizacion (clave, valor) VALUES ('ultimo_cursor', ?1)",
             params![nuevo_cursor.to_string()],
-        )
-        .map_err(|e| e.to_string())?;
-
-        tx.execute(
-            "INSERT OR REPLACE INTO estado_sincronizacion (clave, valor) VALUES ('ultima_sincronizacion', ?1)",
-            params![ahora.to_rfc3339()],
         )
         .map_err(|e| e.to_string())?;
 
@@ -822,7 +960,8 @@ pub mod entrega7_local {
             return Ok(false);
         }
 
-        let (evento, movimiento_id) = construir_evento_gasto_grupo(parte, cuenta_id, dispositivo_id)?;
+        let (evento, movimiento_id) =
+            construir_evento_gasto_grupo(parte, cuenta_id, dispositivo_id)?;
 
         tx.execute(
             "INSERT OR IGNORE INTO eventos_libro (id, tipo, momento_registro, dispositivo_origen, datos_json)
@@ -1249,8 +1388,7 @@ pub mod entrega7_local {
         use crate::domain::ejecutar_crear_cuenta;
 
         fn crear_repo_temporal() -> (RepositorioSqlite, PathBuf) {
-            let ruta =
-                std::env::temp_dir().join(format!("e7_prueba_{}.db", uuid::Uuid::new_v4()));
+            let ruta = std::env::temp_dir().join(format!("e7_prueba_{}.db", uuid::Uuid::new_v4()));
             let repo = RepositorioSqlite::inicializar(ruta.clone()).unwrap();
             (repo, ruta)
         }

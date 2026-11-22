@@ -690,7 +690,12 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
                 cta.gastos = sumar_exacto(cta.gastos, cant)?;
                 cta.originales.insert(
                     d.movimiento_id.clone(),
-                    (TipoMovimiento::Gasto, cant, d.concepto.clone(), d.fecha.clone()),
+                    (
+                        TipoMovimiento::Gasto,
+                        cant,
+                        d.concepto.clone(),
+                        d.fecha.clone(),
+                    ),
                 );
                 cta.gastos_de_grupo.insert(d.movimiento_id.clone());
                 eventos_servidor_aplicados.insert(d.evento_servidor_id.clone());
@@ -1082,18 +1087,18 @@ pub fn ejecutar_corregir_movimiento<R: RepositorioEventos>(
             )
         })?;
 
-    if let Some(mov_vista) = cta.movimientos.iter().find(|m| m.id == movimiento_id) {
-        if mov_vista
-            .nota
-            .as_deref()
-            .unwrap_or("")
-            .starts_with("[gasto-grupo]")
-        {
-            return Err(ErrorDominio::nuevo(
-                "movimiento",
-                "Los movimientos originados por gastos de grupo no se pueden corregir desde el libro.",
-            ));
-        }
+    if cta.movimientos.iter().any(|mov| {
+        mov.id == movimiento_id
+            && mov
+                .nota
+                .as_deref()
+                .unwrap_or("")
+                .starts_with("[gasto-grupo]")
+    }) {
+        return Err(ErrorDominio::nuevo(
+            "movimiento",
+            "Los movimientos originados por gastos de grupo no se pueden corregir desde el libro.",
+        ));
     }
 
     // RF-COM-10: Los gastos de grupo no se pueden editar ni corregir desde el libro

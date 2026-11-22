@@ -1,6 +1,6 @@
 mod autenticacion;
-mod social;
 pub mod sincronizacion;
+mod social;
 use crate::domain::RegistrarMovimiento;
 pub mod domain;
 pub mod sqlite_repo;
@@ -17,11 +17,11 @@ mod pruebas_patrimonio;
 
 // Registra el módulo de pruebas de tasas y monedas para cargo test
 #[cfg(test)]
+mod pruebas_sincronizacion;
+#[cfg(test)]
 mod pruebas_tasas_cambio;
 #[cfg(test)]
 mod pruebas_tasas_monedas;
-#[cfg(test)]
-mod pruebas_sincronizacion;
 
 // Importa los tipos y casos de uso del dominio, incluyendo consulta de patrimonio
 use domain::{

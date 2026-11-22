@@ -59,7 +59,10 @@ export function useSincronizacion({
   useEffect(() => {
     if (!sesion) return;
     void sincronizar();
-    const temporizador = window.setInterval(() => void sincronizar(), INTERVALO_MS);
+    const temporizador = window.setInterval(
+      () => void sincronizar(),
+      INTERVALO_MS,
+    );
     const alVolverRed = () => void sincronizar();
     window.addEventListener("online", alVolverRed);
     return () => {

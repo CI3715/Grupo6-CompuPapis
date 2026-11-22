@@ -55,7 +55,7 @@ export function TopAuthBar({
         <div className="top-auth-actions">
           {usuario ? (
             <>
-            {sincronizacion && (
+              {sincronizacion && (
                 <>
                   <span className="top-auth-status" role="status">
                     {sincronizacion.sincronizando
@@ -119,9 +119,7 @@ export function TopAuthBar({
                 )
               }
             >
-              {vistaAuth === "ninguna"
-                ? "Iniciar sesión"
-                : "Cuentas"}
+              {vistaAuth === "ninguna" ? "Iniciar sesión" : "Cuentas"}
             </button>
           )}
         </div>
