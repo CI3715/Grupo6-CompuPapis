@@ -2,6 +2,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
+import type { EstadoSincronizacion } from "@/app/sincronizacion";
+import { formatearFechaHora } from "@/lib/utilidades";
 
 export interface UsuarioSesion {
   id: string;
@@ -26,6 +28,7 @@ interface AuthBarProps {
     vista: "ninguna" | "login" | "registro" | "perfil",
   ) => void;
   onCerrarSesion: () => void;
+  sincronizacion?: EstadoSincronizacion;
 }
 
 // --- BARRA SUPERIOR DE SESIÓN ---
@@ -35,6 +38,7 @@ export function TopAuthBar({
   vistaAuth,
   onCambiarVistaAuth,
   onCerrarSesion,
+  sincronizacion,
 }: AuthBarProps) {
   return (
     <>
@@ -51,6 +55,38 @@ export function TopAuthBar({
         <div className="top-auth-actions">
           {usuario ? (
             <>
+              {sincronizacion && (
+                <>
+                  <span className="top-auth-status" role="status">
+                    {sincronizacion.sincronizando
+                      ? "Sincronizando…"
+                      : sincronizacion.ultimaSync
+                        ? `Última sincronización: ${formatearFechaHora(sincronizacion.ultimaSync)}`
+                        : "Aún sin sincronizar"}
+                    {sincronizacion.errorSync &&
+                      ` · ${sincronizacion.errorSync}`}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ padding: "6px 12px", fontSize: "13px" }}
+                    disabled={sincronizacion.sincronizando}
+                    onClick={() => void sincronizacion.sincronizar()}
+                  >
+                    Sincronizar
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ padding: "6px 12px", fontSize: "13px" }}
+                    title="Reiniciar cursor a cero"
+                    disabled={sincronizacion.sincronizando}
+                    onClick={() => void sincronizacion.reiniciarCursor()}
+                  >
+                    Reiniciar cursor
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 className="user-pill"
@@ -84,9 +120,7 @@ export function TopAuthBar({
                 )
               }
             >
-              {vistaAuth === "ninguna"
-                ? "Iniciar sesión"
-                : "Volver a mis cuentas"}
+              {vistaAuth === "ninguna" ? "Iniciar sesión" : "Cuentas"}
             </button>
           )}
         </div>
@@ -341,7 +375,7 @@ export function AuthScreens({
               className="btn btn-ghost"
               onClick={() => cambiarVista("ninguna")}
             >
-              Volver a mis cuentas
+              Cuentas
             </button>
             <button
               type="button"

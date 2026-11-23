@@ -1,4 +1,5 @@
 mod autenticacion;
+pub mod sincronizacion;
 mod social;
 use crate::domain::RegistrarMovimiento;
 pub mod domain;
@@ -15,6 +16,8 @@ mod pruebas_integracion;
 mod pruebas_patrimonio;
 
 // Registra el módulo de pruebas de tasas y monedas para cargo test
+#[cfg(test)]
+mod pruebas_sincronizacion;
 #[cfg(test)]
 mod pruebas_tasas_cambio;
 #[cfg(test)]
@@ -33,8 +36,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{Manager, State};
 
-struct PingState {
-    http_client: reqwest::Client,
+pub struct PingState {
+    pub http_client: reqwest::Client,
 }
 
 pub struct AppState {
@@ -440,7 +443,7 @@ pub fn run() {
             let db_path = app_dir.join("cuentas_claras.sqlite");
             let ruta_token_fallback = app_dir.join(".sesion_token");
             let server_url = std::env::var("CUENTAS_CLARAS_API_URL")
-                .unwrap_or_else(|_| "http://localhost:8080".to_string());
+                .unwrap_or_else(|_| "http://127.0.0.1:8000".to_string());
             println!("===> RUTA DE SQLITE: {:?}", db_path);
 
             if let Ok(directorio_datos) = app.path().data_dir() {
@@ -485,6 +488,15 @@ pub fn run() {
             crear_categoria,
             registrar_movimiento,
             corregir_movimiento,
+            sincronizacion::sincronizar,
+            sincronizacion::obtener_ultima_sincronizacion,
+            sincronizacion::vincular_datos_anteriores,
+            sincronizacion::obtener_cuenta_grupo,
+            sincronizacion::elegir_cuenta_grupo,
+            sincronizacion::listar_pendientes_aplicar,
+            sincronizacion::listar_cola_gastos,
+            sincronizacion::descartar_rechazo,
+            sincronizacion::reiniciar_cursor,
         ])
         .run(tauri::generate_context!())
         .expect("Error al ejecutar la aplicación Tauri");

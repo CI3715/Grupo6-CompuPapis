@@ -1877,8 +1877,9 @@ mod tests {
 
         // Simula el primer lote cuando existen más de cien eventos disponibles
         let lote_1: Vec<_> = todos.iter().take(101).cloned().collect();
-        let resp_1 = construir_respuesta_cambios(sincronizacion_db::armar_pagina_cambios(lote_1, 0))
-            .expect("La primera página debe construirse");
+        let resp_1 =
+            construir_respuesta_cambios(sincronizacion_db::armar_pagina_cambios(lote_1, 0))
+                .expect("La primera página debe construirse");
         assert_eq!(resp_1.eventos.len(), LIMITE_EVENTOS_CAMBIOS);
         assert_eq!(resp_1.eventos.first().unwrap().cursor, 1);
         assert_eq!(resp_1.eventos.last().unwrap().cursor, 100);
@@ -2073,14 +2074,16 @@ mod tests {
         // Verifica aislamiento INV-17 Elena excluida no recibe eventos
         let resp_elena = app
             .clone()
-            .oneshot(peticion_cambios_http("/cambios?desde=0", Some(&token_elena)))
+            .oneshot(peticion_cambios_http(
+                "/cambios?desde=0",
+                Some(&token_elena),
+            ))
             .await
             .expect("La consulta de Elena debe ejecutarse");
         assert_eq!(resp_elena.status(), StatusCode::OK);
-        let datos_elena: Value = serde_json::from_slice(
-            &to_bytes(resp_elena.into_body(), 65536).await.unwrap(),
-        )
-        .unwrap();
+        let datos_elena: Value =
+            serde_json::from_slice(&to_bytes(resp_elena.into_body(), 65536).await.unwrap())
+                .unwrap();
         assert_eq!(datos_elena["eventos"].as_array().unwrap().len(), 0);
         assert_eq!(datos_elena["nuevo_cursor"], 0);
         assert_eq!(datos_elena["hay_mas"], false);
@@ -2088,14 +2091,16 @@ mod tests {
         // Verifica aislamiento INV-17 Carla solo recibe su grupo ajeno
         let resp_carla = app
             .clone()
-            .oneshot(peticion_cambios_http("/cambios?desde=0", Some(&token_carla)))
+            .oneshot(peticion_cambios_http(
+                "/cambios?desde=0",
+                Some(&token_carla),
+            ))
             .await
             .expect("La consulta de Carla debe ejecutarse");
         assert_eq!(resp_carla.status(), StatusCode::OK);
-        let datos_carla: Value = serde_json::from_slice(
-            &to_bytes(resp_carla.into_body(), 65536).await.unwrap(),
-        )
-        .unwrap();
+        let datos_carla: Value =
+            serde_json::from_slice(&to_bytes(resp_carla.into_body(), 65536).await.unwrap())
+                .unwrap();
         let eventos_carla = datos_carla["eventos"].as_array().unwrap();
         assert_eq!(eventos_carla.len(), 1);
         assert_eq!(eventos_carla[0]["grupo_id"], grupo_ajeno.to_string());
@@ -2110,10 +2115,9 @@ mod tests {
             .await
             .expect("La primera página de Ana debe ejecutarse");
         assert_eq!(resp_pag_1.status(), StatusCode::OK);
-        let pagina_1: Value = serde_json::from_slice(
-            &to_bytes(resp_pag_1.into_body(), 1024 * 1024).await.unwrap(),
-        )
-        .unwrap();
+        let pagina_1: Value =
+            serde_json::from_slice(&to_bytes(resp_pag_1.into_body(), 1024 * 1024).await.unwrap())
+                .unwrap();
         let eventos_1 = pagina_1["eventos"].as_array().unwrap();
         assert_eq!(eventos_1.len(), LIMITE_EVENTOS_CAMBIOS);
         assert_eq!(pagina_1["nuevo_cursor"], 100);
@@ -2135,10 +2139,9 @@ mod tests {
             .await
             .expect("La segunda página de Ana debe ejecutarse");
         assert_eq!(resp_pag_2.status(), StatusCode::OK);
-        let pagina_2: Value = serde_json::from_slice(
-            &to_bytes(resp_pag_2.into_body(), 1024 * 1024).await.unwrap(),
-        )
-        .unwrap();
+        let pagina_2: Value =
+            serde_json::from_slice(&to_bytes(resp_pag_2.into_body(), 1024 * 1024).await.unwrap())
+                .unwrap();
         let eventos_2 = pagina_2["eventos"].as_array().unwrap();
         assert_eq!(eventos_2.len(), 5);
         assert_eq!(pagina_2["nuevo_cursor"], 105);
@@ -2159,10 +2162,9 @@ mod tests {
             .await
             .expect("La consulta sin novedades debe ejecutarse");
         assert_eq!(resp_vacia.status(), StatusCode::OK);
-        let pagina_vacia: Value = serde_json::from_slice(
-            &to_bytes(resp_vacia.into_body(), 65536).await.unwrap(),
-        )
-        .unwrap();
+        let pagina_vacia: Value =
+            serde_json::from_slice(&to_bytes(resp_vacia.into_body(), 65536).await.unwrap())
+                .unwrap();
         assert_eq!(pagina_vacia["eventos"].as_array().unwrap().len(), 0);
         assert_eq!(pagina_vacia["nuevo_cursor"], 105);
         assert_eq!(pagina_vacia["hay_mas"], false);

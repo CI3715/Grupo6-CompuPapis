@@ -914,6 +914,11 @@ mod tests {
         let guardado = guardados.iter().find(|g| g.id == gasto.id).unwrap();
         assert_eq!(guardado.fecha, "2026-10-23");
         assert_eq!(guardado.partes[0].recibio_residuo, Some(true));
+        sqlx::query("DELETE FROM eventos_usuario WHERE grupo_id=$1")
+            .bind(grupo)
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("DELETE FROM grupos WHERE id=$1")
             .bind(grupo)
             .execute(&pool)

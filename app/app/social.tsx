@@ -3,6 +3,12 @@
 import VistaGasto from "@/app/VistaGasto";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
+import type { Cuenta, GastoEnCola, PendienteAplicar } from "@/lib/tipos";
+import {
+  claveCacheGrupos,
+  guardarCacheSocial,
+  leerCacheSocial,
+} from "@/lib/social-cache";
 
 type Amigo = {
   id: string;
@@ -74,17 +80,27 @@ const errorTexto = (error: unknown) =>
     : "No se pudo completar la operación.";
 
 export default function PantallaSocial({
+  usuarioId,
   volver,
   sesion,
   iniciarSesion,
   sesionVencida,
   onSesionVencida,
+  cuentas,
+  sincronizar,
+  ultimaSync,
+  alCambiarLibro,
 }: {
+  usuarioId: string;
   volver: () => void;
   sesion: boolean;
   iniciarSesion: () => void;
   sesionVencida: boolean;
   onSesionVencida: () => void;
+  cuentas: Cuenta[];
+  sincronizar: () => Promise<void>;
+  ultimaSync: string | null;
+  alCambiarLibro: () => Promise<void>;
 }) {
   const [seccion, setSeccion] = useState<Seccion>("amigos");
   const [amistades, setAmistades] = useState<Amistades | null>(null);
@@ -101,6 +117,13 @@ export default function PantallaSocial({
   const [aviso, setAviso] = useState("");
   const [ocupado, setOcupado] = useState(false);
   const [cargandoInicial, setCargandoInicial] = useState(true);
+  const [cuentaGrupo, setCuentaGrupo] = useState("");
+  const [pendientes, setPendientes] = useState<PendienteAplicar[]>([]);
+  const [cola, setCola] = useState<GastoEnCola[]>([]);
+  const [confirmarDatosAnteriores, setConfirmarDatosAnteriores] =
+    useState(false);
+
+  const claveCache = claveCacheGrupos(usuarioId);
 
   const cargar = useCallback(async () => {
     const [a, g] = await Promise.all([
@@ -109,7 +132,8 @@ export default function PantallaSocial({
     ]);
     setAmistades(a);
     setGrupos(g);
-  }, []);
+    guardarCacheSocial(() => localStorage, claveCache, g);
+  }, [claveCache]);
   useEffect(() => {
     if (!sesion) return;
     let activo = true;
@@ -121,6 +145,7 @@ export default function PantallaSocial({
         if (activo) {
           setAmistades(a);
           setGrupos(g);
+          guardarCacheSocial(() => localStorage, claveCache, g);
         }
       })
       .catch((e: unknown) => {
@@ -132,7 +157,14 @@ export default function PantallaSocial({
             e.campo === "sesion"
           )
             onSesionVencida();
-          else setError(errorTexto(e));
+          else {
+            const guardados = leerCacheSocial<Grupos>(
+              () => localStorage,
+              claveCache,
+            );
+            if (guardados) setGrupos(guardados);
+            setError(errorTexto(e));
+          }
         }
       })
       .finally(() => {
@@ -141,14 +173,34 @@ export default function PantallaSocial({
     return () => {
       activo = false;
     };
-  }, [sesion, onSesionVencida]);
+  }, [sesion, onSesionVencida, claveCache]);
+  const cargarLocal = useCallback(async () => {
+    const [p, c] = await Promise.all([
+      invoke<PendienteAplicar[]>("listar_pendientes_aplicar"),
+      invoke<GastoEnCola[]>("listar_cola_gastos"),
+    ]);
+    setPendientes(p);
+    setCola(c);
+  }, []);
+  // Se vuelve a leer cada vez que termina una sincronización
+  useEffect(() => {
+    if (!sesion) return;
+    let activo = true;
+    queueMicrotask(() => {
+      if (activo) void cargarLocal().catch(() => undefined);
+    });
+    return () => {
+      activo = false;
+    };
+  }, [sesion, ultimaSync, cargarLocal]);
+
   async function ejecutar(accion: () => Promise<void>, mensaje = "") {
     setOcupado(true);
     setError("");
     setAviso("");
     try {
       await accion();
-      setAviso(mensaje);
+      if (mensaje) setAviso(mensaje);
     } catch (e: unknown) {
       if (
         typeof e === "object" &&
@@ -162,12 +214,49 @@ export default function PantallaSocial({
       setOcupado(false);
     }
   }
+
   async function abrir(id: string) {
-    setDetalle(await llamar<Detalle>("detalle_grupo", { id }));
+    const claveDetalle = claveCacheGrupos(usuarioId, id);
+    try {
+      const datos = await llamar<Detalle>("detalle_grupo", { id });
+      guardarCacheSocial(() => localStorage, claveDetalle, datos);
+      setDetalle(datos);
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "campo" in error &&
+        error.campo === "sesion"
+      )
+        throw error;
+      const guardado = leerCacheSocial<Detalle>(
+        () => localStorage,
+        claveDetalle,
+      );
+      if (!guardado) throw error;
+      setDetalle(guardado);
+      setAviso(
+        "Mostrando datos guardados del grupo. Los cambios se enviarán al recuperar la conexión.",
+      );
+    }
     setSeleccion("");
+    setCuentaGrupo(
+      (await invoke<string | null>("obtener_cuenta_grupo", { grupoId: id })) ??
+        "",
+    );
   }
+
+  async function elegirCuenta(grupoId: string, cuentaId: string) {
+    await invoke("elegir_cuenta_grupo", { grupoId, cuentaId });
+    setCuentaGrupo(cuentaId);
+    await cargarLocal();
+    await alCambiarLibro();
+  }
+
   const admin =
     detalle && grupos?.grupos.find((g) => g.id === detalle.id)?.es_admin;
+  const nombreGrupo = (id: string) =>
+    grupos?.grupos.find((g) => g.id === id)?.nombre ?? "Grupo";
   return (
     <main className="app-container social-page">
       <header className="header">
@@ -176,7 +265,7 @@ export default function PantallaSocial({
           <h1 className="header-title">Amigos y grupos</h1>
         </div>
         <button className="btn btn-ghost" type="button" onClick={volver}>
-          Volver a mis cuentas
+          Cuentas
         </button>
       </header>
       {!sesion ? (
@@ -220,6 +309,37 @@ export default function PantallaSocial({
           {error && (
             <div className="error-alert" role="alert">
               <p>{error}</p>
+              {error.includes("sin usuario identificado") && (
+                <div>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={confirmarDatosAnteriores}
+                      onChange={(e) =>
+                        setConfirmarDatosAnteriores(e.target.checked)
+                      }
+                    />{" "}
+                    Confirmo que los datos anteriores de sincronización
+                    pertenecen a mi usuario actual.
+                  </label>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={!confirmarDatosAnteriores || ocupado}
+                    onClick={() =>
+                      void ejecutar(async () => {
+                        await invoke("vincular_datos_anteriores");
+                        setConfirmarDatosAnteriores(false);
+                        await cargar();
+                        await cargarLocal();
+                        await sincronizar();
+                      }, "Datos anteriores vinculados.")
+                    }
+                  >
+                    Vincular mis datos anteriores
+                  </button>
+                </div>
+              )}
               {!amistades && !grupos && !cargandoInicial && (
                 <button
                   type="button"
@@ -236,6 +356,70 @@ export default function PantallaSocial({
             <p role="status" className="social-notice">
               {aviso}
             </p>
+          )}
+          {seccion === "grupos" && pendientes.length > 0 && (
+            <section className="form-card">
+              <h2 className="form-title">Partes pendientes de aplicar</h2>
+              <p className="social-notice" role="status">
+                Estas partes llegaron de tus grupos, pero aún no elegiste la
+                cuenta donde aplicarlas. Abre el grupo y elige una cuenta: se
+                aplicarán en cuanto la elijas.
+              </p>
+              {pendientes.map((p) => (
+                <div className="social-row" key={p.id}>
+                  <div>
+                    <strong>
+                      {nombreGrupo(p.grupo_id)} · {p.concepto}
+                    </strong>
+                    <p className="social-muted">
+                      {p.fecha}
+                      {p.recibio_residuo ? " · incluye 0,01 de redondeo" : ""}
+                    </p>
+                  </div>
+                  <strong>
+                    {p.monto_parte} {p.moneda}
+                  </strong>
+                </div>
+              ))}
+            </section>
+          )}
+          {seccion === "grupos" && cola.length > 0 && (
+            <section className="form-card">
+              <h2 className="form-title">Gastos en cola</h2>
+              {cola.map((g) =>
+                g.estado === "rechazado" ? (
+                  <div className="error-alert" role="alert" key={g.clave}>
+                    <div>
+                      <strong>No se pudo enviar «{g.concepto}»: </strong>
+                      <span>
+                        {g.motivo ?? "El servidor rechazó la operación."}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={ocupado}
+                      onClick={() =>
+                        void ejecutar(async () => {
+                          await invoke("descartar_rechazo", { clave: g.clave });
+                          await cargarLocal();
+                        })
+                      }
+                    >
+                      Entendido
+                    </button>
+                  </div>
+                ) : (
+                  <div className="social-row" key={g.clave}>
+                    <div>
+                      <strong>{g.concepto}</strong>
+                      <p className="social-muted">Pendiente de envío</p>
+                    </div>
+                    <strong>{g.monto}</strong>
+                  </div>
+                ),
+              )}
+            </section>
           )}
           {seccion === "amigos" ? (
             <div className="social-grid">
@@ -429,7 +613,7 @@ export default function PantallaSocial({
                   className="btn btn-ghost"
                   onClick={() => setDetalle(null)}
                 >
-                  ← Mis grupos
+                  ← Grupos
                 </button>
                 <h2 className="form-title">{detalle.nombre}</h2>
                 <p className="social-muted">
@@ -497,16 +681,57 @@ export default function PantallaSocial({
                   </form>
                 </section>
               )}
+              <section className="form-card">
+                <h2 className="form-title">Cuenta para mis partes</h2>
+                <p className="social-muted">
+                  Tus partes de los gastos de este grupo se aplicarán en la
+                  cuenta que elijas. Solo se ofrecen cuentas en {detalle.moneda}
+                  . Si la cambias, afecta solo a las partes que lleguen después.
+                </p>
+                <label className="form-label" htmlFor="cuenta-grupo">
+                  Cuenta
+                </label>
+                <select
+                  className="form-control"
+                  id="cuenta-grupo"
+                  value={cuentaGrupo}
+                  disabled={ocupado}
+                  onChange={(e) => {
+                    const cuentaId = e.target.value;
+                    if (!cuentaId) return;
+                    void ejecutar(
+                      () => elegirCuenta(detalle.id, cuentaId),
+                      "Cuenta del grupo guardada.",
+                    );
+                  }}
+                >
+                  <option value="">Selecciona una cuenta</option>
+                  {cuentas
+                    .filter((c) => c.moneda === detalle.moneda)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.nombre} ({c.moneda})
+                      </option>
+                    ))}
+                </select>
+                {!cuentas.some((c) => c.moneda === detalle.moneda) && (
+                  <p className="social-muted">
+                    No tienes cuentas en {detalle.moneda}. Crea una en Mis
+                    cuentas para poder recibir tus partes.
+                  </p>
+                )}
+              </section>
               <VistaGasto
                 key={detalle.id}
                 miembros={detalle.miembros}
                 moneda={detalle.moneda}
                 registrar={async (datos) => {
+                  let resultado: { pendiente?: boolean };
                   try {
-                    await llamar("registrar_gasto", {
-                      id: detalle.id,
-                      ...datos,
-                    });
+                    resultado = await llamar<{ pendiente?: boolean }>(
+                      "registrar_gasto",
+                      { id: detalle.id, ...datos },
+                    );
                   } catch (e: unknown) {
                     if (
                       typeof e === "object" &&
@@ -517,18 +742,26 @@ export default function PantallaSocial({
                       onSesionVencida();
                     throw e;
                   }
-                  try {
-                    const actualizado = await llamar<Detalle>("detalle_grupo", {
-                      id: detalle.id,
-                    });
-                    setDetalle((actual) =>
-                      actual?.id === detalle.id ? actualizado : actual,
-                    );
-                  } catch {
-                    setError(
-                      "El gasto se guardó, pero no se pudo actualizar el grupo. Vuelve a abrirlo para consultar los datos.",
-                    );
+                  void cargarLocal().catch(() => undefined);
+                  void sincronizar();
+                  if (!resultado.pendiente) {
+                    try {
+                      const actualizado = await llamar<Detalle>(
+                        "detalle_grupo",
+                        {
+                          id: detalle.id,
+                        },
+                      );
+                      setDetalle((actual) =>
+                        actual?.id === detalle.id ? actualizado : actual,
+                      );
+                    } catch {
+                      setError(
+                        "El gasto se guardó, pero no se pudo actualizar el grupo. Vuelve a abrirlo para consultar los datos.",
+                      );
+                    }
                   }
+                  return resultado;
                 }}
               />
               <section className="form-card social-wide">

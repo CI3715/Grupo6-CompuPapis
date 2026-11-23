@@ -156,24 +156,26 @@ pub struct LoteCambios {
     pub hay_mas: bool,
 }
 
+type FilaCambio = (
+    Uuid,
+    i64,
+    String,
+    Uuid,
+    Uuid,
+    String,
+    NaiveDate,
+    String,
+    String,
+    bool,
+);
+
 pub async fn consultar_cambios(
     pool: &PgPool,
     usuario_id: Uuid,
     desde: i64,
 ) -> Result<LoteCambios, sqlx::Error> {
     // Buscamos los eventos nuevos de este usuario
-    let mut filas: Vec<(
-        Uuid,
-        i64,
-        String,
-        Uuid,
-        Uuid,
-        String,
-        NaiveDate,
-        String,
-        String,
-        bool,
-    )> = sqlx::query_as(
+    let mut filas: Vec<FilaCambio> = sqlx::query_as(
         "SELECT id, posicion, tipo, gasto_id, grupo_id, concepto,
                     fecha, moneda, monto_parte::text, recibio_residuo
              FROM eventos_usuario

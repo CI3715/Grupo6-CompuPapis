@@ -29,6 +29,8 @@ export function formatearMontoLocal(
     const texto = valor.toString().padStart(d + 1, "0");
     entero = texto.slice(0, texto.length - d);
     fraccion = d > 0 ? texto.slice(texto.length - d) : "";
+  } else {
+    fraccion = fraccion.length < 2 ? fraccion.padEnd(2, "0") : fraccion;
   }
 
   const esCero = !/[1-9]/.test(entero + fraccion);

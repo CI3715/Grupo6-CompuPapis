@@ -4,7 +4,7 @@
 
 Proyecto del laboratorio de Ingeniería de Software I (CI-3715) de la Universidad Simón Bolívar, desarrollado por **CompuPapis**.
 
-Cuentas Claras permite crear cuentas personales multimoneda, registrar ingresos, gastos y correcciones, gestionar tasas de cambio y consultar el patrimonio consolidado en el dispositivo, sin registro de usuario ni conexión a internet. Las funcionalidades sociales y de gastos compartidos corresponden a etapas futuras.
+Cuentas Claras permite gestionar cuentas personales multimoneda, movimientos, tasas y patrimonio en el dispositivo sin registro ni conexión. También incorpora usuarios, grupos y gastos compartidos, cuyas partes pueden sincronizarse con el libro personal.
 
 ## Arquitectura y entregas
 
@@ -15,9 +15,10 @@ Cuentas Claras permite crear cuentas personales multimoneda, registrar ingresos,
 - **Entrega 4 (monedas, tasas y patrimonio):** monedas propias, registro, anulación e historial activo de tasas por par, validaciones de fecha/fuente/valor y moneda base predeterminada USD. La consulta de patrimonio usa saldos y tasas a la fecha elegida, aplica tasas directas o inversas sin cruces y redondea el total una sola vez. Si falta una tasa, muestra los subtotales y el par pendiente sin devolver un total consolidado. Los eventos se conservan en SQLite local.
 - **Entrega 5 (usuarios):** Búsqueda de usuarios por nombre, consultas por correo e ID y pruebas para revisar que no se repitan nombres ni correos.
 - **Entrega 6 (amistades):** Tablas y consultas para mandar, aceptar y rechazar solicitudes de amistad, evitar solicitudes repetidas, ver los amigos y eliminar amistades.
+- **Entrega 7 (sincronización de gastos grupales):** descarga incremental de partes mediante `GET /cambios`, aplicación idempotente en cuentas personales elegidas por el usuario y conservación de partes pendientes. Los gastos registrados sin conexión se guardan en una cola y se reenvían con una clave de idempotencia; el libro personal permanece en el dispositivo. Ver [ADR 012](docs/adr/012-sincronizacion-libro-grupal.md) y [ADR 013](docs/adr/013-cola-gastos-idempotencia.md).
 - **Servidor:** PostgreSQL + Neon para funcionalidades sociales. Las cuentas, movimientos y saldos personales permanecen en SQLite local y no se envían al servidor.
 
-El flujo financiero es `Next.js → invoke() → Tauri/Rust → dominio → SQLite`. Axum no participa en él. Las decisiones arquitectónicas están en [docs/adr](docs/adr/README.md).
+El libro personal sigue el flujo `Next.js → invoke() → Tauri/Rust → dominio → SQLite`. La sincronización de gastos grupales consulta la API Axum y aplica localmente las partes recibidas; no envía cuentas ni saldos personales. Las decisiones arquitectónicas están en [docs/adr](docs/adr/README.md).
 
 ## Instalación
 
@@ -134,7 +135,7 @@ En la aplicación, abrir **Conexión con el servidor · Entrega 1 → Probar con
 
 La [guía de pruebas](docs/pruebas/README.md) reúne los comandos, qué comprueba cada caso, resultados esperados, ubicación de SQLite y procedimientos manuales de las Entregas 2, 3 y 4. Incluye los ejemplos de **1750 USD** y **316.100 VES → tasa faltante → 350 USD**, persistencia, categorías, advertencia de saldo negativo y prueba offline con el ejecutable.
 
-Las pruebas de dominio usan un repositorio en memoria. Las de persistencia y migración usan bases SQLite temporales; no reemplazan la base personal. Pasar las pruebas automáticas o compilar el ejecutable no certifica las interacciones de la ventana: **la demostración manual sigue pendiente hasta ejecutarse y registrarse**.
+Las pruebas de dominio usan un repositorio en memoria. Las de persistencia y migración usan bases SQLite temporales; no reemplazan la base personal.
 
 El archivo personal `cuentas_claras.sqlite` reside en `app_data_dir` de Tauri. La actualización desde el identificador antiguo conserva la base anterior y no sobrescribe un destino existente; ver la [guía de SQLite](docs/pruebas/README.md#6-sqlite-y-actualización-de-datos-existentes) y el [ADR 007](docs/adr/007-libro-local-compatible.md). No se deben borrar ni editar eventos para preparar las pruebas.
 
@@ -165,7 +166,7 @@ Desde `app/`, `npm run format` aplica Prettier y formato Rust a ambos paquetes. 
 
 ## Estudiantes
 
-- Maikel Delgado — `16-10287`
+- Maikel Delgado — `16-10287` [@Maikelacho](https://github.com/Maikelacho)
 - Gabriel Orejarena — `18-10292` [@Arnold-Wesker](https://github.com/Arnold-Wesker)
 - Keyber Sequera — `16-11120` [@keybersequera8](https://github.com/keybersequera8)
 - Gabriel De Ornelas — `15-10377` [@gabodornelas](https://github.com/gabodornelas)

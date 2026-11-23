@@ -22,4 +22,4 @@ Las rutas requieren sesión. Solo un miembro aceptado puede consultar o registra
 
 ## Consecuencias
 
-Las operaciones compartidas requieren conexión y PostgreSQL. Una división inválida no se guarda; los datos históricos incoherentes impiden mostrar balances hasta corregirse. La vista previa del cliente no sustituye la validación del servidor.
+La confirmación y validación de gastos compartidos requiere conexión y PostgreSQL. Desde la entrega 7, el cliente puede guardar un gasto en una cola local mientras no hay conexión y reenviarlo posteriormente; ver [ADR 013](013-cola-gastos-idempotencia.md). Una división inválida no se guarda en el servidor; los datos históricos incoherentes impiden mostrar balances hasta corregirse. La vista previa del cliente no sustituye la validación del servidor.

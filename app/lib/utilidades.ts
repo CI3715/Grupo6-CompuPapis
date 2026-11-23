@@ -37,3 +37,12 @@ export function formatearFecha(iso: string): string {
   const [anio, mes, dia] = iso.split("-");
   return anio && mes && dia ? `${dia}/${mes}/${anio}` : iso;
 }
+
+export function formatearFechaHora(iso: string): string {
+  const fecha = new Date(iso);
+  if (Number.isNaN(fecha.getTime())) return iso;
+  return fecha.toLocaleString("es-VE", {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+}
