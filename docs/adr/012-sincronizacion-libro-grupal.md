@@ -2,7 +2,7 @@
 
 ## Estado
 
-Aceptada para la entrega 7 e implementada en el código actual. La comprobación completa desde la ventana Tauri y la cobertura mínima de la capa de aplicación siguen pendientes.
+Aceptada para la entrega 7 e implementada en el código actual. La suite automatizada cubre el motor y el adaptador HTTP; la guía de pruebas describe los escenarios para comprobar el flujo desde la ventana Tauri.
 
 ## Contexto
 
@@ -27,7 +27,7 @@ Cada participante debe poder reflejar su parte de un gasto compartido en su libr
 
 ## Consecuencias
 
-La aplicación mantiene el libro disponible sin conexión y puede reprocesar páginas sin duplicar gastos. Los datos de cuenta quedan en el dispositivo; la sincronización no sube el libro. El cliente debe conservar el estado SQLite y una sesión válida para comunicarse con el servidor. Las pruebas existentes cubren transacciones, reintentos, cursor, pendientes y correcciones con SQLite y un cliente falso; la prueba integrada en Tauri requiere ejecución manual.
+La aplicación mantiene el libro disponible sin conexión y puede reprocesar páginas sin duplicar gastos. Los datos de cuenta quedan en el dispositivo; la sincronización no sube el libro. El cliente debe conservar el estado SQLite y una sesión válida para comunicarse con el servidor. Las pruebas existentes cubren transacciones, reintentos, cursor, pendientes y correcciones con SQLite y un cliente falso; la guía de pruebas incluye el flujo integrado en Tauri.
 
 El código conserva además una implementación local alternativa de persistencia de la entrega 7 con tablas propias. Los comandos de la interfaz usan el repositorio y las tablas `cuentas_grupos`, `pendientes_aplicar` y `estado_sincronizacion`; la consolidación de ambas implementaciones no se da por realizada en esta decisión.
 

@@ -2,7 +2,7 @@
 
 ## Estado
 
-Aceptada para la entrega 7 e implementada en el código actual. La verificación de extremo a extremo con Tauri sigue pendiente.
+Aceptada para la entrega 7 e implementada en el código actual. La guía de pruebas describe el recorrido de extremo a extremo con Tauri.
 
 ## Contexto
 

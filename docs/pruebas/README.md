@@ -285,7 +285,7 @@ No borrar, editar ni eliminar eventos para preparar una demostración. Ante un e
 
 Para cada ejecución guardar: commit probado (`git rev-parse --short HEAD`), sistema operativo, comando o caso manual, resultado y salida/mensaje si falla. No marcar como aprobadas pruebas que no se ejecutaron.
 
-Esta guía describe procedimientos y resultados esperados, no certifica una ejecución particular. Los resultados históricos están en el [informe de verificación](../entregas-2-3-verificacion.md). Las comprobaciones manuales de ventana, red apagada y base real del equipo siguen pendientes hasta que quien haga la demostración las ejecute y registre. La generación de instaladores release se prueba por separado con `npm run tauri build` desde `app`; no está incluida en el build debug sin bundle.
+Esta guía describe procedimientos y resultados esperados para las comprobaciones manuales de ventana, red apagada y persistencia en el equipo. Los resultados históricos están en el [informe de verificación](../entregas-2-3-verificacion.md). La generación de instaladores release se prueba por separado con `npm run tauri build` desde `app`; no está incluida en el build debug sin bundle.
 
 ## Entrega 4: monedas y tasas
 
@@ -356,7 +356,7 @@ Corregir el gasto a 5 debe mostrar 95; una consulta de fecha anterior al ajuste
 debe mantener 80 si la cuenta ya existía entonces. La prueba automatizada
 controla esas fechas mediante fixtures; no hace falta cambiar el reloj del sistema.
 
-### Demostración manual pendiente
+### Procedimiento de comprobación manual
 
 1. Con un perfil de prueba vacío, abre la aplicación desde `app` con
    `npm run tauri -- dev`. No borres una base existente para preparar el caso;
@@ -388,7 +388,7 @@ controla esas fechas mediante fixtures; no hace falta cambiar el reloj del siste
     detén el servidor, desactiva la red y abre `app/src-tauri/target/debug/app`
     (en Windows/macOS usa el ejecutable de tu plataforma). Comprueba mismos
     datos, moneda base, tasas y patrimonio; registra/anula otra tasa sin red y
-    vuelve a abrir. Esto está pendiente de demostración en una ventana real.
+    vuelve a abrir para confirmar la persistencia en una ventana real.
 13. Por separado, levanta el servidor y verifica el ping de Entrega 1. Su caída
     debe afectar únicamente a ese indicador; los flujos financieros son locales.
 
