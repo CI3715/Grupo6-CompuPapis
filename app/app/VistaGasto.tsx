@@ -134,10 +134,10 @@ export default function VistaGasto({
           </select>
         </div>
       </div>
-      <h3>Participantes</h3>
+      <h3 className="social-subheading">Participantes</h3>
       {miembros.map((m) => (
         <div key={m.id} className="social-row">
-          <label>
+          <label className="checkbox-row">
             <input
               type="checkbox"
               checked={participantes.includes(m.id)}
@@ -148,9 +148,11 @@ export default function VistaGasto({
                     : prev.filter((id) => id !== m.id),
                 )
               }
-            />{" "}
-            {m.nombre_visible}{" "}
-            <span className="social-muted">@{m.nombre_usuario}</span>
+            />
+            <span>
+              {m.nombre_visible}{" "}
+              <span className="social-muted">@{m.nombre_usuario}</span>
+            </span>
           </label>
           {regla !== "iguales" && participantes.includes(m.id) && (
             <input
@@ -173,12 +175,14 @@ export default function VistaGasto({
       )}
       {partes.length > 0 && (
         <div>
-          <h3>Partes</h3>
+          <h3 className="social-subheading">Partes</h3>
           {partes.map((p) => (
             <div className="social-row" key={p.id}>
               <span>
                 @{p.nombre_usuario}{" "}
-                {p.residuo && <small>(incluye 0,01 de redondeo)</small>}
+                {p.residuo && (
+                  <span className="badge badge-grupo">+0,01 de redondeo</span>
+                )}
               </span>
               <strong>
                 {p.monto} {moneda}

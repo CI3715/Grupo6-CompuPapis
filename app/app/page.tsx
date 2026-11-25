@@ -454,11 +454,9 @@ export default function MisCuentasPage() {
     />
   );
   const conBarra = (contenido: React.ReactNode) => (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+    <div className="app-shell">
       {barraSesion}
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-        {contenido}
-      </div>
+      <div className="app-main-scroll">{contenido}</div>
     </div>
   );
 
@@ -501,9 +499,9 @@ export default function MisCuentasPage() {
 
   // --- RENDER ---
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+    <div className="app-shell">
       {barraSesion}
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+      <div className="app-main-scroll">
         {vistaAuth !== "ninguna" ? (
           <AuthScreens
             vista={vistaAuth}
@@ -530,6 +528,7 @@ export default function MisCuentasPage() {
               </div>
               {!cuentaSeleccionadaId && (
                 <button
+                  type="button"
                   onClick={() => {
                     setError(null);
                     setMostrarFormulario(!mostrarFormulario);
@@ -541,45 +540,50 @@ export default function MisCuentasPage() {
               )}
             </header>
 
-            <div
-              className="acciones-movimientos"
-              style={{ marginBottom: "20px" }}
-            >
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => irAPantalla("patrimonio")}
-              >
-                Patrimonio
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => irAPantalla("social")}
-              >
-                Amigos y grupos
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => irAPantalla("tasas")}
-              >
-                Tasas de cambio
-              </button>
-            </div>
+            <div className="dashboard-toolbar">
+              <nav className="nav-pills" aria-label="Secciones principales">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => irAPantalla("patrimonio")}
+                >
+                  Patrimonio
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => irAPantalla("social")}
+                >
+                  Amigos y grupos
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => irAPantalla("tasas")}
+                >
+                  Tasas de cambio
+                </button>
+              </nav>
 
-            <details>
-              <summary>Conexión con el servidor</summary>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                disabled={probandoServidor}
-                onClick={probarServidor}
-              >
-                {probandoServidor ? "Comprobando…" : "Probar conexión"}
-              </button>
-              {estadoServidor && <p role="status">{estadoServidor}</p>}
-            </details>
+              <details className="server-details">
+                <summary>Conexión con el servidor</summary>
+                <div className="server-details-body">
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    disabled={probandoServidor}
+                    onClick={probarServidor}
+                  >
+                    {probandoServidor ? "Comprobando…" : "Probar conexión"}
+                  </button>
+                  {estadoServidor && (
+                    <p className="server-details-status" role="status">
+                      {estadoServidor}
+                    </p>
+                  )}
+                </div>
+              </details>
+            </div>
 
             {error && !mostrarFormulario && (
               <div className="error-alert" role="alert">
@@ -594,7 +598,10 @@ export default function MisCuentasPage() {
             )}
 
             {mostrarFormulario && (
-              <section className="form-card">
+              <section
+                className="form-card"
+                aria-label="Registrar nueva cuenta"
+              >
                 <h2 className="form-title">Registrar nueva cuenta</h2>
                 <p className="form-subtitle">
                   Los datos se guardan únicamente en este dispositivo. La moneda
@@ -602,19 +609,24 @@ export default function MisCuentasPage() {
                 </p>
 
                 {error && (
-                  <div className="error-alert">
-                    <strong>!</strong>
-                    <div>
-                      <strong>Revisa el campo «{error.campo}»: </strong>
-                      <span>{error.mensaje}</span>
+                  <div className="error-alert" role="alert">
+                    <div className="error-alert-body">
+                      <strong aria-hidden="true">!</strong>
+                      <div>
+                        <strong>Revisa el campo «{error.campo}»: </strong>
+                        <span>{error.mensaje}</span>
+                      </div>
                     </div>
                   </div>
                 )}
 
                 <form onSubmit={manejarCrearCuenta}>
                   <div className="form-group">
-                    <label className="form-label">Nombre de la cuenta</label>
+                    <label className="form-label" htmlFor="cuenta-nombre">
+                      Nombre de la cuenta
+                    </label>
                     <input
+                      id="cuenta-nombre"
                       type="text"
                       value={nombre}
                       onChange={(e) => setNombre(e.target.value)}
@@ -625,8 +637,11 @@ export default function MisCuentasPage() {
 
                   <div className="form-row">
                     <div>
-                      <label className="form-label">Tipo de cuenta</label>
+                      <label className="form-label" htmlFor="cuenta-tipo">
+                        Tipo de cuenta
+                      </label>
                       <select
+                        id="cuenta-tipo"
                         value={tipo}
                         onChange={(e) => setTipo(e.target.value)}
                         className={`form-control ${error?.campo === "tipo" ? "input-error" : ""}`}
@@ -640,8 +655,11 @@ export default function MisCuentasPage() {
                     </div>
 
                     <div>
-                      <label className="form-label">Moneda</label>
+                      <label className="form-label" htmlFor="cuenta-moneda">
+                        Moneda
+                      </label>
                       <select
+                        id="cuenta-moneda"
                         value={moneda}
                         onChange={(e) => setMoneda(e.target.value)}
                         className={`form-control ${error?.campo === "moneda" ? "input-error" : ""}`}
@@ -658,9 +676,16 @@ export default function MisCuentasPage() {
                     </div>
 
                     <div>
-                      <label className="form-label">Saldo inicial</label>
+                      <label
+                        className="form-label"
+                        htmlFor="cuenta-saldo-inicial"
+                      >
+                        Saldo inicial
+                      </label>
                       <input
+                        id="cuenta-saldo-inicial"
                         type="text"
+                        inputMode="decimal"
                         value={saldoInicial}
                         onChange={(e) => setSaldoInicial(e.target.value)}
                         placeholder="0.00"
@@ -726,6 +751,7 @@ export default function MisCuentasPage() {
                     dispositivo.
                   </p>
                   <button
+                    type="button"
                     onClick={() => setMostrarFormulario(true)}
                     className="btn btn-primary"
                   >
@@ -734,35 +760,39 @@ export default function MisCuentasPage() {
                 </div>
               ) : (
                 <div className="accounts-list">
-                  {resumen.cuentas.map((c) => (
-                    <div
-                      key={c.id}
-                      className={`account-card ${c.id === cuentaSeleccionadaId ? "account-card-active" : ""}`}
-                      onClick={() => seleccionarCuenta(c.id)}
-                      style={{ cursor: "pointer" }}
-                    >
-                      <div>
-                        <div className="account-name-row">
-                          <h3 className="account-name">{c.nombre}</h3>
-                          <span className={obtenerClaseBadgeMoneda(c.moneda)}>
-                            {c.moneda}
+                  {resumen.cuentas.map((c) => {
+                    const esActiva = c.id === cuentaSeleccionadaId;
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        className={`account-card account-card-clickable ${esActiva ? "account-card-active" : ""}`}
+                        aria-pressed={esActiva}
+                        onClick={() => seleccionarCuenta(c.id)}
+                      >
+                        <div className="account-card-info">
+                          <div className="account-name-row">
+                            <span className="account-name">{c.nombre}</span>
+                            <span className={obtenerClaseBadgeMoneda(c.moneda)}>
+                              {c.moneda}
+                            </span>
+                          </div>
+                          <span className="account-meta">Tipo: {c.tipo}</span>
+                        </div>
+                        <div className="account-balance-box">
+                          <span className="account-balance-label">
+                            Saldo actual
+                          </span>
+                          <span className="account-balance-value">
+                            {formatearMontoLocal(
+                              c.saldo.cantidad,
+                              obtenerSimbolo(c.moneda),
+                            )}
                           </span>
                         </div>
-                        <p className="account-meta">Tipo: {c.tipo}</p>
-                      </div>
-                      <div className="account-balance-box">
-                        <span className="account-balance-label">
-                          Saldo actual
-                        </span>
-                        <span className="account-balance-value">
-                          {formatearMontoLocal(
-                            c.saldo.cantidad,
-                            obtenerSimbolo(c.moneda),
-                          )}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </section>
@@ -771,515 +801,491 @@ export default function MisCuentasPage() {
           {/* PANEL DERECHO: DETALLE DE LA CUENTA Y MOVIMIENTOS */}
           {cuentaSeleccionadaId && cuentaSeleccionada && detalleCuenta && (
             <main className="content-detalle">
-              <button
-                className="btn btn-ghost"
-                onClick={() => setCuentaSeleccionadaId(null)}
-              >
-                <span style={{ fontSize: "14px", lineHeight: "0.8" }}>
-                  ← Volver
-                </span>
-              </button>
-
-              <header className="detalle-header">
-                <div className="detalle-header-top">
-                  <div className="detalle-info">
-                    <h2 className="detalle-titulo">
-                      {cuentaSeleccionada.nombre}
-                    </h2>
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: "8px",
-                        alignItems: "center",
-                      }}
-                    >
-                      <span
-                        className={obtenerClaseBadgeMoneda(
-                          cuentaSeleccionada.moneda,
-                        )}
-                      >
-                        {cuentaSeleccionada.moneda}
-                      </span>
-                      <span className="account-meta">
-                        ({cuentaSeleccionada.tipo})
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="detalle-saldo">
-                    <p className="detalle-subtitulo">Saldo Actual</p>
-                    <h1 className="saldo-gigante">
-                      {formatearMontoLocal(
-                        detalleCuenta.saldoActual,
-                        obtenerSimbolo(cuentaSeleccionada.moneda),
-                      )}
-                    </h1>
-                  </div>
-                </div>
-              </header>
-
-              {/* Composición del saldo (Sección 2.3) */}
-              <section className="section-block">
-                <h3 className="section-title">Composición del saldo</h3>
-                <div className="subtotals-grid">
-                  <div className="subtotal-card">
-                    <span className="subtotal-label">Saldo inicial</span>
-                    <div className="subtotal-amount">
-                      {formatearMontoLocal(
-                        detalleCuenta.composicion.inicial,
-                        obtenerSimbolo(cuentaSeleccionada.moneda),
-                      )}
-                    </div>
-                  </div>
-                  <div className="subtotal-card">
-                    <span className="subtotal-label">Total ingresos</span>
-                    <div
-                      className="subtotal-amount"
-                      style={{ color: "var(--text-success)" }}
-                    >
-                      {formatearMontoLocal(
-                        detalleCuenta.composicion.ingresos,
-                        obtenerSimbolo(cuentaSeleccionada.moneda),
-                        true,
-                      )}
-                    </div>
-                  </div>
-                  <div className="subtotal-card">
-                    <span className="subtotal-label">Total gastos</span>
-                    <div
-                      className="subtotal-amount"
-                      style={{ color: "var(--text-danger)" }}
-                    >
-                      {formatearMontoLocal(
-                        `-${detalleCuenta.composicion.gastos}`,
-                        obtenerSimbolo(cuentaSeleccionada.moneda),
-                      )}
-                    </div>
-                  </div>
-                  <div className="subtotal-card">
-                    <span className="subtotal-label">Total ajustes</span>
-                    <div
-                      className="subtotal-amount"
-                      style={{ color: "var(--text-ajust)" }}
-                    >
-                      {formatearMontoLocal(
-                        detalleCuenta.composicion.ajustes,
-                        obtenerSimbolo(cuentaSeleccionada.moneda),
-                        true,
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              {/* Botones de Acción de Movimientos */}
-              <div
-                className="acciones-movimientos"
-                style={{ marginBottom: "20px" }}
-              >
-                <h3
-                  className="section-title"
-                  style={{ margin: 0, alignSelf: "center" }}
-                >
-                  Historial de Movimientos ({detalleCuenta.movimientos.length})
-                </h3>
-                <div style={{ display: "flex", gap: "10px" }}>
+              <div className="content-detalle-inner">
+                <div className="detalle-back">
                   <button
                     type="button"
-                    onClick={() => abrirFormularioMovimiento("gasto")}
-                    className="btn btn-danger"
-                    style={{ border: "1px solid var(--error-border)" }}
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setCuentaSeleccionadaId(null)}
                   >
-                    - Registrar Gasto
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => abrirFormularioMovimiento("ingreso")}
-                    className="btn btn-success"
-                    style={{ border: "1px solid var(--text-success)" }}
-                  >
-                    + Registrar Ingreso
+                    ← Volver a cuentas
                   </button>
                 </div>
-              </div>
 
-              {/* Formulario Registrar Gasto / Ingreso */}
-              {mostrarFormMovimiento && (
-                <section className="form-card">
-                  <h3 className="form-title">
-                    Registrar {tipoMovimiento === "gasto" ? "Gasto" : "Ingreso"}{" "}
-                    en {cuentaSeleccionada.moneda}
-                  </h3>
-                  <p className="form-subtitle">
-                    La moneda del movimiento es siempre la de la cuenta (
-                    {cuentaSeleccionada.moneda}).
-                  </p>
-
-                  {errorMovimiento && (
-                    <div className="error-alert">
-                      <strong>!</strong>
-                      <div>
-                        <strong>
-                          Revisa el campo «{errorMovimiento.campo}»:{" "}
-                        </strong>
-                        <span>{errorMovimiento.mensaje}</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Advertencia de Saldo Negativo (RF-LIB-04) */}
-                  {advertenciaSaldoNegativo && (
-                    <div className="warning-alert">
-                      <div>
-                        <strong>Advertencia de saldo negativo: </strong>
-                        <span>
-                          Este gasto dejará el saldo de la cuenta en negativo.
-                          ¿Deseas confirmarlo de todas formas?
+                <header className="detalle-header">
+                  <div className="detalle-header-top">
+                    <div className="detalle-info">
+                      <h2 className="detalle-titulo">
+                        {cuentaSeleccionada.nombre}
+                      </h2>
+                      <div className="detalle-meta-row">
+                        <span
+                          className={obtenerClaseBadgeMoneda(
+                            cuentaSeleccionada.moneda,
+                          )}
+                        >
+                          {cuentaSeleccionada.moneda}
+                        </span>
+                        <span className="account-meta">
+                          {cuentaSeleccionada.tipo}
                         </span>
                       </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          gap: "8px",
-                          marginTop: "10px",
-                        }}
-                      >
+                    </div>
+
+                    <div className="detalle-saldo">
+                      <p className="detalle-subtitulo">Saldo actual</p>
+                      <p className="saldo-gigante">
+                        {formatearMontoLocal(
+                          detalleCuenta.saldoActual,
+                          obtenerSimbolo(cuentaSeleccionada.moneda),
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                </header>
+
+                {/* Composición del saldo (Sección 2.3) */}
+                <section className="section-block">
+                  <h3 className="section-title">Composición del saldo</h3>
+                  <div className="subtotals-grid">
+                    <div className="subtotal-card">
+                      <span className="subtotal-label">Saldo inicial</span>
+                      <div className="subtotal-amount">
+                        {formatearMontoLocal(
+                          detalleCuenta.composicion.inicial,
+                          obtenerSimbolo(cuentaSeleccionada.moneda),
+                        )}
+                      </div>
+                    </div>
+                    <div className="subtotal-card">
+                      <span className="subtotal-label">Total ingresos</span>
+                      <div className="subtotal-amount amount-positive">
+                        {formatearMontoLocal(
+                          detalleCuenta.composicion.ingresos,
+                          obtenerSimbolo(cuentaSeleccionada.moneda),
+                          true,
+                        )}
+                      </div>
+                    </div>
+                    <div className="subtotal-card">
+                      <span className="subtotal-label">Total gastos</span>
+                      <div className="subtotal-amount amount-negative">
+                        {formatearMontoLocal(
+                          `-${detalleCuenta.composicion.gastos}`,
+                          obtenerSimbolo(cuentaSeleccionada.moneda),
+                        )}
+                      </div>
+                    </div>
+                    <div className="subtotal-card">
+                      <span className="subtotal-label">Total ajustes</span>
+                      <div className="subtotal-amount amount-adjust">
+                        {formatearMontoLocal(
+                          detalleCuenta.composicion.ajustes,
+                          obtenerSimbolo(cuentaSeleccionada.moneda),
+                          true,
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                {/* Botones de Acción de Movimientos */}
+                <div className="section-header-bar">
+                  <h3 className="section-title">
+                    Historial de movimientos ({detalleCuenta.movimientos.length}
+                    )
+                  </h3>
+                  <div className="acciones-grupo">
+                    <button
+                      type="button"
+                      onClick={() => abrirFormularioMovimiento("gasto")}
+                      className="btn btn-danger btn-sm"
+                    >
+                      − Registrar gasto
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => abrirFormularioMovimiento("ingreso")}
+                      className="btn btn-success btn-sm"
+                    >
+                      + Registrar ingreso
+                    </button>
+                  </div>
+                </div>
+
+                {/* Formulario Registrar Gasto / Ingreso */}
+                {mostrarFormMovimiento && (
+                  <section
+                    className="form-card"
+                    aria-label="Registrar movimiento"
+                  >
+                    <h3 className="form-title">
+                      Registrar{" "}
+                      {tipoMovimiento === "gasto" ? "gasto" : "ingreso"} en{" "}
+                      {cuentaSeleccionada.moneda}
+                    </h3>
+                    <p className="form-subtitle">
+                      La moneda del movimiento es siempre la de la cuenta (
+                      {cuentaSeleccionada.moneda}).
+                    </p>
+
+                    {errorMovimiento && (
+                      <div className="error-alert" role="alert">
+                        <div className="error-alert-body">
+                          <strong aria-hidden="true">!</strong>
+                          <div>
+                            <strong>
+                              Revisa el campo «{errorMovimiento.campo}»:{" "}
+                            </strong>
+                            <span>{errorMovimiento.mensaje}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Advertencia de Saldo Negativo (RF-LIB-04) */}
+                    {advertenciaSaldoNegativo && (
+                      <div className="warning-alert" role="alert">
+                        <div>
+                          <strong>Advertencia de saldo negativo: </strong>
+                          <span>
+                            Este gasto dejará el saldo de la cuenta en negativo.
+                            ¿Deseas confirmarlo de todas formas?
+                          </span>
+                        </div>
+                        <div className="warning-alert-actions">
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            disabled={guardando}
+                            onClick={() => manejarRegistrarMovimiento(true)}
+                          >
+                            Sí, confirmar gasto
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => setAdvertenciaSaldoNegativo(false)}
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void manejarRegistrarMovimiento();
+                      }}
+                    >
+                      <div className="form-row">
+                        <div>
+                          <label className="form-label" htmlFor="mov-tipo">
+                            Tipo
+                          </label>
+                          <select
+                            id="mov-tipo"
+                            value={tipoMovimiento}
+                            onChange={(e) => {
+                              const nuevoTipo = e.target.value as
+                                "gasto" | "ingreso";
+                              setTipoMovimiento(nuevoTipo);
+                              const primera =
+                                categorias.find((c) => c.tipo === nuevoTipo)
+                                  ?.nombre ?? "";
+                              setCategoriaMovimiento(primera);
+                              setAdvertenciaSaldoNegativo(false);
+                            }}
+                            className="form-control"
+                          >
+                            <option value="gasto">Gasto</option>
+                            <option value="ingreso">Ingreso</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="form-label" htmlFor="mov-monto">
+                            Monto ({cuentaSeleccionada.moneda})
+                          </label>
+                          <input
+                            id="mov-monto"
+                            type="text"
+                            inputMode="decimal"
+                            value={montoMovimiento}
+                            onChange={(e) => {
+                              setMontoMovimiento(e.target.value);
+                              setAdvertenciaSaldoNegativo(false);
+                            }}
+                            placeholder="0.00"
+                            className={`form-control ${errorMovimiento?.campo === "monto" ? "input-error" : ""}`}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="form-label" htmlFor="mov-fecha">
+                            Fecha
+                          </label>
+                          <input
+                            id="mov-fecha"
+                            type="date"
+                            value={fechaMovimiento}
+                            onChange={(e) => setFechaMovimiento(e.target.value)}
+                            className={`form-control ${errorMovimiento?.campo === "fecha" ? "input-error" : ""}`}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="form-row">
+                        <div>
+                          <div className="form-label-row">
+                            <label
+                              className="form-label"
+                              htmlFor="mov-categoria"
+                            >
+                              Categoría
+                            </label>
+                            <button
+                              type="button"
+                              className="btn-link"
+                              onClick={() =>
+                                setMostrarNuevaCategoria(!mostrarNuevaCategoria)
+                              }
+                            >
+                              {mostrarNuevaCategoria
+                                ? "Cerrar"
+                                : "+ Nueva categoría"}
+                            </button>
+                          </div>
+                          <select
+                            id="mov-categoria"
+                            value={categoriaMovimiento}
+                            onChange={(e) =>
+                              setCategoriaMovimiento(e.target.value)
+                            }
+                            className={`form-control ${errorMovimiento?.campo === "categoria" ? "input-error" : ""}`}
+                          >
+                            <option value="">Seleccione categoría...</option>
+                            {categoriasFiltradas.map((cat) => (
+                              <option
+                                key={`${cat.tipo}-${cat.nombre}`}
+                                value={cat.nombre}
+                              >
+                                {cat.nombre}
+                              </option>
+                            ))}
+                          </select>
+
+                          {mostrarNuevaCategoria && (
+                            <div className="inline-input-row">
+                              <input
+                                type="text"
+                                aria-label="Nombre de nueva categoría"
+                                value={nombreNuevaCategoria}
+                                onChange={(e) =>
+                                  setNombreNuevaCategoria(e.target.value)
+                                }
+                                placeholder="Nombre de nueva categoría"
+                                className="form-control"
+                              />
+                              <button
+                                type="button"
+                                onClick={manejarCrearCategoria}
+                                className="btn btn-secondary btn-sm"
+                              >
+                                Añadir
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="form-label" htmlFor="mov-nota">
+                            Nota (opcional)
+                          </label>
+                          <input
+                            id="mov-nota"
+                            type="text"
+                            value={notaMovimiento}
+                            onChange={(e) => setNotaMovimiento(e.target.value)}
+                            placeholder="Ej: Mercado del sábado"
+                            className="form-control"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="form-actions">
                         <button
                           type="button"
-                          className="btn btn-primary"
-                          disabled={guardando}
-                          onClick={() => manejarRegistrarMovimiento(true)}
-                        >
-                          Sí, confirmar gasto
-                        </button>
-                        <button
-                          type="button"
+                          onClick={() => setMostrarFormMovimiento(false)}
                           className="btn btn-ghost"
-                          onClick={() => setAdvertenciaSaldoNegativo(false)}
                         >
                           Cancelar
                         </button>
-                      </div>
-                    </div>
-                  )}
-
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      void manejarRegistrarMovimiento();
-                    }}
-                  >
-                    <div className="form-row">
-                      <div>
-                        <label className="form-label">Tipo</label>
-                        <select
-                          value={tipoMovimiento}
-                          onChange={(e) => {
-                            const nuevoTipo = e.target.value as
-                              "gasto" | "ingreso";
-                            setTipoMovimiento(nuevoTipo);
-                            const primera =
-                              categorias.find((c) => c.tipo === nuevoTipo)
-                                ?.nombre ?? "";
-                            setCategoriaMovimiento(primera);
-                            setAdvertenciaSaldoNegativo(false);
-                          }}
-                          className="form-control"
+                        <button
+                          type="submit"
+                          className="btn btn-primary"
+                          disabled={guardando}
                         >
-                          <option value="gasto">Gasto</option>
-                          <option value="ingreso">Ingreso</option>
-                        </select>
+                          Guardar movimiento
+                        </button>
                       </div>
+                    </form>
+                  </section>
+                )}
 
-                      <div>
-                        <label className="form-label">
-                          Monto ({cuentaSeleccionada.moneda})
+                {/* Formulario de Corrección de Movimiento (RF-LIB-06) */}
+                {movimientoACorregir && (
+                  <section
+                    className="form-card"
+                    aria-label="Corregir movimiento"
+                  >
+                    <h3 className="form-title">Corregir movimiento</h3>
+                    <p className="form-subtitle">
+                      El movimiento original ({movimientoACorregir.categoria}{" "}
+                      del {movimientoACorregir.fecha}) no se borrará: se
+                      registrará un ajuste por la diferencia. Si el movimiento
+                      no debió existir, escribe <strong>0</strong>.
+                    </p>
+
+                    {errorCorreccion && (
+                      <div className="error-alert" role="alert">
+                        <div className="error-alert-body">
+                          <strong aria-hidden="true">!</strong>
+                          <div>
+                            <strong>
+                              Revisa el campo «{errorCorreccion.campo}»:{" "}
+                            </strong>
+                            <span>{errorCorreccion.mensaje}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <form onSubmit={manejarCorregirMovimiento}>
+                      <div className="form-group">
+                        <label className="form-label" htmlFor="monto-correcto">
+                          Monto correcto ({cuentaSeleccionada.moneda}) — Valor
+                          vigente actual: {movimientoACorregir.montoVigente}
                         </label>
                         <input
+                          id="monto-correcto"
                           type="text"
-                          value={montoMovimiento}
-                          onChange={(e) => {
-                            setMontoMovimiento(e.target.value);
-                            setAdvertenciaSaldoNegativo(false);
-                          }}
+                          inputMode="decimal"
+                          value={montoCorrecto}
+                          onChange={(e) => setMontoCorrecto(e.target.value)}
                           placeholder="0.00"
-                          className={`form-control ${errorMovimiento?.campo === "monto" ? "input-error" : ""}`}
+                          className={`form-control ${errorCorreccion?.campo === "monto" ? "input-error" : ""}`}
                         />
                       </div>
 
-                      <div>
-                        <label className="form-label">Fecha</label>
-                        <input
-                          type="date"
-                          value={fechaMovimiento}
-                          onChange={(e) => setFechaMovimiento(e.target.value)}
-                          className={`form-control ${errorMovimiento?.campo === "fecha" ? "input-error" : ""}`}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="form-row">
-                      <div>
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                          }}
+                      <div className="form-actions">
+                        <button
+                          type="button"
+                          onClick={() => setMovimientoACorregir(null)}
+                          className="btn btn-ghost"
                         >
-                          <label className="form-label">Categoría</label>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setMostrarNuevaCategoria(!mostrarNuevaCategoria)
-                            }
-                            style={{
-                              background: "none",
-                              border: "none",
-                              color: "var(--brand-primary)",
-                              fontSize: "12px",
-                              fontWeight: 600,
-                              cursor: "pointer",
-                            }}
-                          >
-                            {mostrarNuevaCategoria
-                              ? "Cerrar"
-                              : "+ Nueva categoría"}
-                          </button>
-                        </div>
-                        <select
-                          value={categoriaMovimiento}
-                          onChange={(e) =>
-                            setCategoriaMovimiento(e.target.value)
-                          }
-                          className={`form-control ${errorMovimiento?.campo === "categoria" ? "input-error" : ""}`}
+                          Cancelar
+                        </button>
+                        <button
+                          type="submit"
+                          className="btn btn-primary"
+                          disabled={guardando}
                         >
-                          <option value="">Seleccione categoría...</option>
-                          {categoriasFiltradas.map((cat) => (
-                            <option
-                              key={`${cat.tipo}-${cat.nombre}`}
-                              value={cat.nombre}
-                            >
-                              {cat.nombre}
-                            </option>
-                          ))}
-                        </select>
-
-                        {mostrarNuevaCategoria && (
-                          <div
-                            style={{
-                              display: "flex",
-                              gap: "8px",
-                              marginTop: "8px",
-                            }}
-                          >
-                            <input
-                              type="text"
-                              value={nombreNuevaCategoria}
-                              onChange={(e) =>
-                                setNombreNuevaCategoria(e.target.value)
-                              }
-                              placeholder="Nombre de nueva categoría"
-                              className="form-control"
-                            />
-                            <button
-                              type="button"
-                              onClick={manejarCrearCategoria}
-                              className="btn btn-secondary"
-                            >
-                              Añadir
-                            </button>
-                          </div>
-                        )}
+                          Registrar ajuste de corrección
+                        </button>
                       </div>
+                    </form>
+                  </section>
+                )}
 
-                      <div>
-                        <label className="form-label">Nota (opcional)</label>
-                        <input
-                          type="text"
-                          value={notaMovimiento}
-                          onChange={(e) => setNotaMovimiento(e.target.value)}
-                          placeholder="Ej: Mercado del sábado"
-                          className="form-control"
-                        />
-                      </div>
+                {/* Lista de Movimientos (Sección 2.3) */}
+                <section className="lista-movimientos">
+                  {detalleCuenta.movimientos.length === 0 ? (
+                    <div className="empty-state">
+                      <p className="empty-title">Sin movimientos aún</p>
+                      <p className="empty-description">
+                        No hay movimientos registrados en esta cuenta.
+                      </p>
                     </div>
+                  ) : (
+                    <div className="accounts-list">
+                      {detalleCuenta.movimientos.map((mov) => {
+                        const esPositivo = !mov.monto.startsWith("-");
+                        const claseMonto = mov.esAjuste
+                          ? "amount-adjust"
+                          : esPositivo
+                            ? "amount-positive"
+                            : "amount-negative";
+                        return (
+                          <article key={mov.id} className="account-card">
+                            <div className="account-card-info">
+                              <div className="account-name-row">
+                                <span className="account-name">
+                                  {mov.categoria}
+                                </span>
+                                <span className="badge badge-uppercase">
+                                  {mov.tipo}
+                                </span>
+                                {mov.corregido && (
+                                  <span className="badge badge-corregido">
+                                    Corregido (vigente:{" "}
+                                    {formatearMontoLocal(
+                                      mov.montoVigente,
+                                      obtenerSimbolo(cuentaSeleccionada.moneda),
+                                    )}
+                                    )
+                                  </span>
+                                )}
+                                {mov.esAjuste && (
+                                  <span className="badge badge-ajuste">
+                                    Ajuste de #{mov.referenciaId?.slice(0, 8)}
+                                  </span>
+                                )}
+                                {mov.esGastoDeGrupo && (
+                                  <span className="badge badge-grupo">
+                                    Gasto de grupo
+                                  </span>
+                                )}
+                              </div>
+                              <p className="account-meta text-normal">
+                                Fecha: {mov.fecha}
+                                {mov.nota ? ` • ${mov.nota}` : ""} • ID: #
+                                {mov.id.slice(0, 8)}
+                              </p>
+                            </div>
 
-                    <div className="form-actions">
-                      <button
-                        type="button"
-                        onClick={() => setMostrarFormMovimiento(false)}
-                        className="btn btn-ghost"
-                      >
-                        Cancelar
-                      </button>
-                      <button
-                        type="submit"
-                        className="btn btn-primary"
-                        disabled={guardando}
-                      >
-                        Guardar movimiento
-                      </button>
-                    </div>
-                  </form>
-                </section>
-              )}
+                            <div className="movement-right">
+                              <div className="account-balance-box">
+                                <span
+                                  className={`account-balance-value ${claseMonto}`}
+                                >
+                                  {formatearMontoLocal(
+                                    mov.monto,
+                                    obtenerSimbolo(cuentaSeleccionada.moneda),
+                                    true,
+                                  )}
+                                </span>
+                              </div>
 
-              {/* Formulario de Corrección de Movimiento (RF-LIB-06) */}
-              {movimientoACorregir && (
-                <section className="form-card">
-                  <h3 className="form-title">Corregir movimiento</h3>
-                  <p className="form-subtitle">
-                    El movimiento original ({movimientoACorregir.categoria} del{" "}
-                    {movimientoACorregir.fecha}) no se borrará: se registrará un
-                    ajuste por la diferencia. Si el movimiento no debió existir,
-                    escribe <strong>0</strong>.
-                  </p>
-
-                  {errorCorreccion && (
-                    <div className="error-alert">
-                      <strong>!</strong>
-                      <div>
-                        <strong>
-                          Revisa el campo «{errorCorreccion.campo}»:{" "}
-                        </strong>
-                        <span>{errorCorreccion.mensaje}</span>
-                      </div>
+                              {/* Solo los movimientos originales se pueden corregir; no existe opción de editar ni eliminar (INV-04) */}
+                              {!mov.esAjuste && !mov.esGastoDeGrupo && (
+                                <button
+                                  type="button"
+                                  onClick={() => iniciarCorreccion(mov)}
+                                  className="btn btn-secondary btn-xs"
+                                >
+                                  Corregir
+                                </button>
+                              )}
+                            </div>
+                          </article>
+                        );
+                      })}
                     </div>
                   )}
-
-                  <form onSubmit={manejarCorregirMovimiento}>
-                    <div className="form-group">
-                      <label className="form-label">
-                        Monto correcto ({cuentaSeleccionada.moneda}) — Valor
-                        vigente actual: {movimientoACorregir.montoVigente}
-                      </label>
-                      <input
-                        type="text"
-                        value={montoCorrecto}
-                        onChange={(e) => setMontoCorrecto(e.target.value)}
-                        placeholder="0.00"
-                        className={`form-control ${errorCorreccion?.campo === "monto" ? "input-error" : ""}`}
-                      />
-                    </div>
-
-                    <div className="form-actions">
-                      <button
-                        type="button"
-                        onClick={() => setMovimientoACorregir(null)}
-                        className="btn btn-ghost"
-                      >
-                        Cancelar
-                      </button>
-                      <button
-                        type="submit"
-                        className="btn btn-primary"
-                        disabled={guardando}
-                      >
-                        Registrar ajuste de corrección
-                      </button>
-                    </div>
-                  </form>
                 </section>
-              )}
-
-              {/* Lista de Movimientos (Sección 2.3) */}
-              <section className="lista-movimientos">
-                {detalleCuenta.movimientos.length === 0 ? (
-                  <div className="empty-state">
-                    No hay movimientos registrados en esta cuenta.
-                  </div>
-                ) : (
-                  <div className="accounts-list">
-                    {detalleCuenta.movimientos.map((mov) => {
-                      const esPositivo = !mov.monto.startsWith("-");
-                      return (
-                        <div key={mov.id} className="account-card">
-                          <div>
-                            <div className="account-name-row">
-                              <span className="account-name">
-                                {mov.categoria}
-                              </span>
-                              <span
-                                className="badge"
-                                style={{ textTransform: "uppercase" }}
-                              >
-                                {mov.tipo}
-                              </span>
-                              {mov.corregido && (
-                                <span className="badge badge-corregido">
-                                  Corregido (vigente:{" "}
-                                  {formatearMontoLocal(
-                                    mov.montoVigente,
-                                    obtenerSimbolo(cuentaSeleccionada.moneda),
-                                  )}
-                                  )
-                                </span>
-                              )}
-                              {mov.esAjuste && (
-                                <span className="badge badge-ajuste">
-                                  Ajuste de #{mov.referenciaId?.slice(0, 8)}
-                                </span>
-                              )}
-                              {mov.esGastoDeGrupo && (
-                                <span className="badge">Gasto de grupo</span>
-                              )}
-                            </div>
-                            <p className="account-meta">
-                              Fecha: {mov.fecha}{" "}
-                              {mov.nota ? `• ${mov.nota}` : ""} • ID: #
-                              {mov.id.slice(0, 8)}
-                            </p>
-                          </div>
-
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "16px",
-                            }}
-                          >
-                            <div className="account-balance-box">
-                              <span
-                                className="account-balance-value"
-                                style={{
-                                  color: mov.esAjuste
-                                    ? "var(--text-ajust)"
-                                    : esPositivo
-                                      ? "var(--text-success)"
-                                      : "var(--text-danger)",
-                                }}
-                              >
-                                {formatearMontoLocal(
-                                  mov.monto,
-                                  obtenerSimbolo(cuentaSeleccionada.moneda),
-                                  true,
-                                )}
-                              </span>
-                            </div>
-
-                            {/* Solo los movimientos originales se pueden corregir; no existe opción de editar ni eliminar (INV-04) */}
-                            {!mov.esAjuste && !mov.esGastoDeGrupo && (
-                              <button
-                                type="button"
-                                onClick={() => iniciarCorreccion(mov)}
-                                className="btn btn-primary"
-                                style={{
-                                  border: "1px solid var(--border-subtle)",
-                                  padding: "6px 12px",
-                                  fontSize: "12px",
-                                }}
-                              >
-                                Corregir
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </section>
+              </div>
             </main>
           )}
         </div>

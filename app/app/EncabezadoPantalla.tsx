@@ -12,14 +12,14 @@ export default function EncabezadoPantalla({
         <span className="header-tag">Cuentas Claras • Local-First</span>
         <h1 className="header-title">{titulo}</h1>
       </div>
-      <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+      <nav className="header-actions" aria-label="Navegación de pantalla">
         <button type="button" className="btn btn-ghost" onClick={onVolver}>
-          Cuentas
+          ← Cuentas
         </button>
         <button type="button" className="btn btn-secondary" onClick={onIr}>
           {etiquetaIr}
         </button>
-      </div>
+      </nav>
     </header>
   );
 }
