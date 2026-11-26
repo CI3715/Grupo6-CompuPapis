@@ -259,16 +259,26 @@ export default function PantallaSocial({
   const nombreGrupo = (id: string) =>
     grupos?.grupos.find((g) => g.id === id)?.nombre ?? "Grupo";
   return (
-    <main className="app-container social-page">
-      <header className="header">
-        <div>
-          <span className="header-tag">Cuentas Claras • Compartido</span>
-          <h1 className="header-title">Amigos y grupos</h1>
+    <main className="page-view">
+      <section className="hero-card" aria-label="Amigos y grupos">
+        <div className="hero-top">
+          <div>
+            <span className="hero-eyebrow">Cuentas Claras • Compartido</span>
+            <h1 className="hero-title">Amigos y grupos</h1>
+            <p className="hero-subtitle">
+              Divide gastos con tus amigos y sincroniza tus partes en tus
+              cuentas personales.
+            </p>
+          </div>
+          <button
+            className="btn btn-hero btn-sm"
+            type="button"
+            onClick={volver}
+          >
+            ← Mis cuentas
+          </button>
         </div>
-        <button className="btn btn-ghost" type="button" onClick={volver}>
-          ← Cuentas
-        </button>
-      </header>
+      </section>
       {!sesion ? (
         <section className="form-card">
           <h2 className="form-title">

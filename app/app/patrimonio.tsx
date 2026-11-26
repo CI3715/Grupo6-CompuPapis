@@ -3,7 +3,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 
-import EncabezadoPantalla from "@/app/EncabezadoPantalla";
 import { formatearMontoLocal } from "@/lib/money";
 import type {
   ErrorDominio,
@@ -20,7 +19,7 @@ import {
   obtenerClaseBadgeMoneda,
 } from "@/lib/utilidades";
 
-export default function PantallaPatrimonio({ onVolver, onIr }: PropsPantalla) {
+export default function PantallaPatrimonio({ onIr }: PropsPantalla) {
   const [monedas, setMonedas] = useState<Moneda[]>([]);
   const [fecha, setFecha] = useState("");
   const [version, setVersion] = useState(0);
@@ -179,288 +178,276 @@ export default function PantallaPatrimonio({ onVolver, onIr }: PropsPantalla) {
   };
 
   return (
-    <div className="app-wrapper">
-      <main className="content-detalle">
-        <div className="content-detalle-inner">
-          <EncabezadoPantalla
-            titulo="Patrimonio"
-            etiquetaIr="Tasas de cambio"
-            onVolver={onVolver}
-            onIr={onIr}
-          />
-
-          {error && (
-            <div className="error-alert" role="alert">
-              {error.mensaje}
+    <main className="page-view">
+      {/* Tarjeta Hero Total Consolidado estilo Cashea */}
+      <section className="hero-card" aria-label="Total consolidado">
+        <div className="hero-top">
+          <div>
+            <span className="hero-eyebrow">Cuentas Claras • Patrimonio</span>
+            <h1 className="hero-title">Total consolidado</h1>
+            <div className="hero-meta-row">
+              <span className="hero-badge">{base}</span>
+              <span className="hero-meta-text">
+                {fecha ? `Al ${formatearFecha(fecha)}` : "Fecha actual"}
+              </span>
             </div>
-          )}
+          </div>
+          <div className="hero-balance-block">
+            <span className="hero-eyebrow">Patrimonio en {base}</span>
+            <p className="hero-amount">
+              {consolidado
+                ? formatearMontoLocal(
+                    patrimonio?.total ?? "0",
+                    obtenerSimbolo(base),
+                  )
+                : "—"}
+            </p>
+          </div>
+        </div>
+        <div className="hero-pills">
+          <button
+            type="button"
+            className="btn btn-hero btn-sm"
+            onClick={abrirFormMoneda}
+          >
+            + Nueva moneda
+          </button>
+          <button type="button" className="btn btn-hero btn-sm" onClick={onIr}>
+            Tasas de cambio →
+          </button>
+        </div>
+      </section>
 
-          {/* Moneda base, fecha de consulta y monedas propias */}
-          <section className="form-card" aria-label="Filtros de patrimonio">
-            <div className="form-row form-row-flush">
-              <div>
-                <label className="form-label" htmlFor="patrimonio-moneda-base">
-                  Moneda base
-                </label>
-                <select
-                  id="patrimonio-moneda-base"
-                  value={monedaBase}
-                  disabled={cambiandoBase}
-                  onChange={(e) => cambiarBase(e.target.value)}
-                  className="form-control"
-                >
-                  {monedas.map((m) => (
-                    <option key={m.codigo} value={m.codigo}>
-                      {m.codigo} ({m.simbolo})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="form-label" htmlFor="patrimonio-fecha">
-                  Fecha de consulta
-                </label>
-                <input
-                  id="patrimonio-fecha"
-                  type="date"
-                  value={fecha}
-                  onChange={(e) => setFecha(e.target.value)}
-                  className="form-control"
-                />
-              </div>
-            </div>
+      {error && (
+        <div className="error-alert" role="alert">
+          {error.mensaje}
+        </div>
+      )}
 
-            {!mostrarFormMoneda && (
-              <div className="form-actions form-actions-spaced">
+      {/* Moneda base, fecha de consulta y monedas propias */}
+      <section className="form-card" aria-label="Filtros de patrimonio">
+        <div className="form-row form-row-flush">
+          <div>
+            <label className="form-label" htmlFor="patrimonio-moneda-base">
+              Moneda base
+            </label>
+            <select
+              id="patrimonio-moneda-base"
+              value={monedaBase}
+              disabled={cambiandoBase}
+              onChange={(e) => cambiarBase(e.target.value)}
+              className="form-control"
+            >
+              {monedas.map((m) => (
+                <option key={m.codigo} value={m.codigo}>
+                  {m.codigo} ({m.simbolo})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="form-label" htmlFor="patrimonio-fecha">
+              Fecha de consulta
+            </label>
+            <input
+              id="patrimonio-fecha"
+              type="date"
+              value={fecha}
+              onChange={(e) => setFecha(e.target.value)}
+              className="form-control"
+            />
+          </div>
+        </div>
+
+        {mostrarFormMoneda && (
+          <div className="form-divider">
+            <h2 className="form-title">Registrar moneda propia</h2>
+            <p className="form-subtitle">
+              Una vez creada podrás usarla en cuentas nuevas y en tasas.
+            </p>
+
+            {errorMoneda && (
+              <div className="error-alert" role="alert">
+                <div className="error-alert-body">
+                  <strong aria-hidden="true">!</strong>
+                  <div>
+                    <strong>Revisa el campo «{errorMoneda.campo}»: </strong>
+                    <span>{errorMoneda.mensaje}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <form onSubmit={manejarCrearMoneda}>
+              <div className="form-row">
+                <div>
+                  <label className="form-label" htmlFor="moneda-codigo">
+                    Código (3 a 5 letras)
+                  </label>
+                  <input
+                    id="moneda-codigo"
+                    type="text"
+                    value={codigo}
+                    onChange={(e) => setCodigo(e.target.value.toUpperCase())}
+                    placeholder="Ej: BTC"
+                    className={`form-control ${errorMoneda?.campo === "codigo" ? "input-error" : ""}`}
+                  />
+                </div>
+                <div>
+                  <label className="form-label" htmlFor="moneda-nombre">
+                    Nombre
+                  </label>
+                  <input
+                    id="moneda-nombre"
+                    type="text"
+                    value={nombreMoneda}
+                    onChange={(e) => setNombreMoneda(e.target.value)}
+                    placeholder="Ej: Bitcoin"
+                    className={`form-control ${errorMoneda?.campo === "nombre" ? "input-error" : ""}`}
+                  />
+                </div>
+                <div>
+                  <label className="form-label" htmlFor="moneda-simbolo">
+                    Símbolo
+                  </label>
+                  <input
+                    id="moneda-simbolo"
+                    type="text"
+                    value={simboloMoneda}
+                    onChange={(e) => setSimboloMoneda(e.target.value)}
+                    placeholder="Ej: ₿"
+                    className={`form-control ${errorMoneda?.campo === "simbolo" ? "input-error" : ""}`}
+                  />
+                </div>
+                <div>
+                  <label className="form-label" htmlFor="moneda-decimales">
+                    Decimales (0 a 8)
+                  </label>
+                  <input
+                    id="moneda-decimales"
+                    type="text"
+                    inputMode="numeric"
+                    value={decimales}
+                    onChange={(e) => setDecimales(e.target.value)}
+                    placeholder="2"
+                    className={`form-control ${errorMoneda?.campo === "decimales" ? "input-error" : ""}`}
+                  />
+                </div>
+              </div>
+
+              <div className="form-actions">
                 <button
                   type="button"
-                  className="btn btn-secondary btn-sm"
-                  onClick={abrirFormMoneda}
+                  onClick={() => setMostrarFormMoneda(false)}
+                  className="btn btn-ghost"
                 >
-                  + Nueva moneda
+                  Cancelar
+                </button>
+                <button type="submit" className="btn btn-primary">
+                  Guardar moneda
                 </button>
               </div>
-            )}
+            </form>
+          </div>
+        )}
+      </section>
 
-            {mostrarFormMoneda && (
-              <div className="form-divider">
-                <h3 className="form-title">Registrar moneda propia</h3>
-                <p className="form-subtitle">
-                  Una vez creada podrás usarla en cuentas nuevas y en tasas.
-                </p>
-
-                {errorMoneda && (
-                  <div className="error-alert" role="alert">
-                    <div className="error-alert-body">
-                      <strong aria-hidden="true">!</strong>
-                      <div>
-                        <strong>Revisa el campo «{errorMoneda.campo}»: </strong>
-                        <span>{errorMoneda.mensaje}</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <form onSubmit={manejarCrearMoneda}>
-                  <div className="form-row">
-                    <div>
-                      <label className="form-label" htmlFor="moneda-codigo">
-                        Código (3 a 5 letras)
-                      </label>
-                      <input
-                        id="moneda-codigo"
-                        type="text"
-                        value={codigo}
-                        onChange={(e) =>
-                          setCodigo(e.target.value.toUpperCase())
-                        }
-                        placeholder="Ej: BTC"
-                        className={`form-control ${errorMoneda?.campo === "codigo" ? "input-error" : ""}`}
-                      />
-                    </div>
-                    <div>
-                      <label className="form-label" htmlFor="moneda-nombre">
-                        Nombre
-                      </label>
-                      <input
-                        id="moneda-nombre"
-                        type="text"
-                        value={nombreMoneda}
-                        onChange={(e) => setNombreMoneda(e.target.value)}
-                        placeholder="Ej: Bitcoin"
-                        className={`form-control ${errorMoneda?.campo === "nombre" ? "input-error" : ""}`}
-                      />
-                    </div>
-                    <div>
-                      <label className="form-label" htmlFor="moneda-simbolo">
-                        Símbolo
-                      </label>
-                      <input
-                        id="moneda-simbolo"
-                        type="text"
-                        value={simboloMoneda}
-                        onChange={(e) => setSimboloMoneda(e.target.value)}
-                        placeholder="Ej: ₿"
-                        className={`form-control ${errorMoneda?.campo === "simbolo" ? "input-error" : ""}`}
-                      />
-                    </div>
-                    <div>
-                      <label className="form-label" htmlFor="moneda-decimales">
-                        Decimales (0 a 8)
-                      </label>
-                      <input
-                        id="moneda-decimales"
-                        type="text"
-                        inputMode="numeric"
-                        value={decimales}
-                        onChange={(e) => setDecimales(e.target.value)}
-                        placeholder="2"
-                        className={`form-control ${errorMoneda?.campo === "decimales" ? "input-error" : ""}`}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="form-actions">
-                    <button
-                      type="button"
-                      onClick={() => setMostrarFormMoneda(false)}
-                      className="btn btn-ghost"
-                    >
-                      Cancelar
-                    </button>
-                    <button type="submit" className="btn btn-primary">
-                      Guardar moneda
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
-          </section>
-
-          {/* Total consolidado */}
-          <section className="detalle-header" aria-label="Total consolidado">
-            <div className="detalle-header-top">
-              <div className="detalle-info">
-                <h2 className="detalle-titulo">Total consolidado</h2>
-                <span className={obtenerClaseBadgeMoneda(base)}>{base}</span>
-              </div>
-              <div className="detalle-saldo">
-                <p className="detalle-subtitulo">
-                  {fecha ? `Al ${formatearFecha(fecha)}` : "Patrimonio"}
-                </p>
-                <p className="saldo-gigante">
-                  {consolidado
-                    ? formatearMontoLocal(
-                        patrimonio?.total ?? "0",
-                        obtenerSimbolo(base),
-                      )
-                    : "—"}
-                </p>
-              </div>
-            </div>
-          </section>
-
-          {patrimonio && !consolidado && (
-            <div className="warning-alert" role="alert">
-              <strong>No se puede mostrar el total consolidado.</strong>
-              {patrimonio.faltantes.map((f) => (
-                <p key={`${f.origen}-${f.destino}`}>
-                  Falta una tasa de {f.origen} a {f.destino} con fecha igual o
-                  anterior al {formatearFecha(patrimonio.fecha)}.
-                </p>
-              ))}
-            </div>
-          )}
-
-          {!patrimonio && (
-            <div className="warning-alert" role="status">
-              {error
-                ? "No se pudo consultar el patrimonio para esta fecha."
-                : "Consultando patrimonio…"}
-            </div>
-          )}
-
-          {/* Subtotales por moneda */}
-          <section className="form-card">
-            <h2 className="section-title">Subtotales por moneda</h2>
-            {subtotales.length === 0 ? (
-              <div className="empty-state">
-                <p className="empty-title">Sin subtotales</p>
-              </div>
-            ) : (
-              <div className="subtotals-grid">
-                {subtotales.map((sub) => (
-                  <div key={sub.codigo} className="subtotal-card">
-                    <div className="subtotal-header">
-                      <span className="subtotal-label">Subtotal</span>
-                      <span className={obtenerClaseBadgeMoneda(sub.codigo)}>
-                        {sub.codigo}
-                      </span>
-                    </div>
-                    <div className="subtotal-amount">
-                      {formatearMontoLocal(sub.subtotal, sub.simbolo)}
-                    </div>
-                    <p className="account-meta text-normal mt-sm">
-                      {textoTasa(sub.codigo, sub.tasa, sub.inversa)}
-                    </p>
-                    <p className="subtotal-label mt-xs">
-                      En {base}:{" "}
-                      <strong>
-                        {textoEnBase(sub.codigo, sub.subtotal, sub.enBase)}
-                      </strong>
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          {/* Cuentas */}
-          <section className="form-card">
-            <h2 className="section-title">Cuentas ({filas.length})</h2>
-            {filas.length === 0 ? (
-              <div className="empty-state">
-                <p className="empty-title">No hay cuentas registradas</p>
-              </div>
-            ) : (
-              <div className="accounts-list">
-                {filas.map((f) => (
-                  <article key={f.cuentaId} className="account-card">
-                    <div className="account-card-info">
-                      <div className="account-name-row">
-                        <h3 className="account-name">{f.nombre}</h3>
-                        <span className={obtenerClaseBadgeMoneda(f.moneda)}>
-                          {f.moneda}
-                        </span>
-                      </div>
-                      <p className="account-meta text-normal">
-                        {textoTasa(f.moneda, f.tasa, f.inversa)}
-                      </p>
-                    </div>
-                    <div className="patrimonio-balances">
-                      <div className="account-balance-box">
-                        <span className="account-balance-label">Monto</span>
-                        <span className="account-balance-value">
-                          {formatearMontoLocal(
-                            f.saldo,
-                            obtenerSimbolo(f.moneda),
-                          )}
-                        </span>
-                      </div>
-                      <div className="account-balance-box">
-                        <span className="account-balance-label">En {base}</span>
-                        <span className="account-balance-value">
-                          {textoEnBase(f.moneda, f.saldo, f.enBase)}
-                        </span>
-                      </div>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
-          </section>
+      {patrimonio && !consolidado && (
+        <div className="warning-alert" role="alert">
+          <strong>No se puede mostrar el total consolidado.</strong>
+          {patrimonio.faltantes.map((f) => (
+            <p key={`${f.origen}-${f.destino}`}>
+              Falta una tasa de {f.origen} a {f.destino} con fecha igual o
+              anterior al {formatearFecha(patrimonio.fecha)}.
+            </p>
+          ))}
         </div>
-      </main>
-    </div>
+      )}
+
+      {!patrimonio && (
+        <div className="warning-alert" role="status">
+          {error
+            ? "No se pudo consultar el patrimonio para esta fecha."
+            : "Consultando patrimonio…"}
+        </div>
+      )}
+
+      {/* Subtotales por moneda */}
+      <section className="form-card">
+        <h2 className="section-title">Subtotales por moneda</h2>
+        {subtotales.length === 0 ? (
+          <div className="empty-state">
+            <p className="empty-title">Sin subtotales</p>
+          </div>
+        ) : (
+          <div className="subtotals-grid">
+            {subtotales.map((sub) => (
+              <div key={sub.codigo} className="subtotal-card">
+                <div className="subtotal-header">
+                  <span className="subtotal-label">Subtotal</span>
+                  <span className={obtenerClaseBadgeMoneda(sub.codigo)}>
+                    {sub.codigo}
+                  </span>
+                </div>
+                <div className="subtotal-amount">
+                  {formatearMontoLocal(sub.subtotal, sub.simbolo)}
+                </div>
+                <p className="account-meta text-normal mt-sm">
+                  {textoTasa(sub.codigo, sub.tasa, sub.inversa)}
+                </p>
+                <p className="subtotal-label mt-xs">
+                  En {base}:{" "}
+                  <strong>
+                    {textoEnBase(sub.codigo, sub.subtotal, sub.enBase)}
+                  </strong>
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Cuentas */}
+      <section className="form-card">
+        <h2 className="section-title">Cuentas ({filas.length})</h2>
+        {filas.length === 0 ? (
+          <div className="empty-state">
+            <p className="empty-title">No hay cuentas registradas</p>
+          </div>
+        ) : (
+          <div className="accounts-list">
+            {filas.map((f) => (
+              <article key={f.cuentaId} className="account-card">
+                <div className="account-card-info">
+                  <div className="account-name-row">
+                    <h3 className="account-name">{f.nombre}</h3>
+                    <span className={obtenerClaseBadgeMoneda(f.moneda)}>
+                      {f.moneda}
+                    </span>
+                  </div>
+                  <p className="account-meta text-normal">
+                    {textoTasa(f.moneda, f.tasa, f.inversa)}
+                  </p>
+                </div>
+                <div className="patrimonio-balances">
+                  <div className="account-balance-box">
+                    <span className="account-balance-label">Monto</span>
+                    <span className="account-balance-value">
+                      {formatearMontoLocal(f.saldo, obtenerSimbolo(f.moneda))}
+                    </span>
+                  </div>
+                  <div className="account-balance-box">
+                    <span className="account-balance-label">En {base}</span>
+                    <span className="account-balance-value">
+                      {textoEnBase(f.moneda, f.saldo, f.enBase)}
+                    </span>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </main>
   );
 }
