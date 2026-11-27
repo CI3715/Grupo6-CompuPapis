@@ -67,11 +67,13 @@ Ideal si prefieres controlar el historial en un repositorio privado de GitHub, G
 
 ## Copias de seguridad manuales (Exportar e Importar)
 
-Además de la sincronización continua, desde **Respaldo y Sync** puedes:
+Además de la sincronización al abrir y bajo demanda, desde **Respaldo y Sync** puedes:
 
 - **Exportar copia de seguridad cifrada (`.ccbackup`):** ingresa tu frase de paso dos veces. El archivo resultante no revela ningún dato si se abre en un editor de texto.
 - **Exportar sin cifrar (`.ndjson`):** opción avanzada con advertencia de seguridad, pensada para auditar tus datos o reconstruir saldos fuera de la aplicación (ver [formato-exportacion.md](formato-exportacion.md)).
 - **Importar copia de seguridad:** selecciona cualquier respaldo previo (cifrado o en claro). Importar el mismo archivo varias veces es seguro e idempotente, e importar un archivo antiguo nunca borra movimientos locales recientes.
+
+Si el libro no puede proyectarse, en **Mis cuentas** puedes elegir **Revisar eventos** para identificar el primer punto que falla y **Exportar copia** para conservar los eventos legibles. El diagnóstico no cambia los datos; la copia se usa para revisión y puede requerir corrección externa antes de poder importarse.
 
 ---
 

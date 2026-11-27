@@ -267,7 +267,10 @@ pub fn parsear_eventos_ndjson(
         if !crate::domain::datos_evento_validos(&ev.tipo, &datos_json) {
             return Err(ErrorDominio::nuevo(
                 "archivo",
-                &format!("Los datos del evento en la linea {} no son validos.", num_linea),
+                &format!(
+                    "Los datos del evento en la linea {} no son validos.",
+                    num_linea
+                ),
             ));
         }
 

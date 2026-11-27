@@ -262,8 +262,7 @@ export default function PantallaRespaldo({
             <h1 className="hero-title">Respaldo y sincronización</h1>
             <p className="hero-subtitle">
               Exporta copias cifradas con frase de paso o sincroniza tus
-              dispositivos propios con Git o una carpeta compartida. El servidor
-              no participa.
+              dispositivos propios con Git o una carpeta compartida.
             </p>
             <div className="hero-meta-row">
               {estadoSync?.dispositivoId && (

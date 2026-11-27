@@ -467,6 +467,16 @@ textarea {
   padding: 24px 28px 40px;
 }
 
+.diagnostico-acciones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 16px 0;
+}
+.diagnostico-identificador {
+  overflow-wrap: anywhere;
+}
+
 /* Bottom Navigation Bar (oculta en escritorio, fija en móvil <= 860px) */
 .app-bottom-nav {
   display: none;

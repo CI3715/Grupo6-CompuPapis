@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::respaldo::exportar_a_archivo;
 
@@ -74,15 +73,12 @@ fn reconstruir_saldo_exportado() {
     let gasto = det.movimientos.iter().find(|m| m.tipo == "gasto").unwrap();
 
     // Cambiamos el monto del gasto
-    let det = ejecutar_corregir_movimiento(
-        &mut repo, &cid, &gasto.id, "75.00", &disp
-    ).unwrap();
+    let det = ejecutar_corregir_movimiento(&mut repo, &cid, &gasto.id, "75.00", &disp).unwrap();
 
     let ruta = dir.path().join("respaldo.ndjson");
     exportar_a_archivo(&repo, &ruta, false, None, None).unwrap();
 
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tools/reconstruir_saldos.mjs");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/reconstruir_saldos.mjs");
 
     // Probamos la herramienta con el archivo que exportamos
     let salida = Command::new("node")
@@ -117,8 +113,14 @@ fn importar_archivos_invalidos() {
 
     let disp = destino.dispositivo_id().unwrap();
     ejecutar_crear_cuenta(
-        &mut destino, "Cuenta local", "efectivo", "USD", "50.00", &disp
-    ).unwrap();
+        &mut destino,
+        "Cuenta local",
+        "efectivo",
+        "USD",
+        "50.00",
+        &disp,
+    )
+    .unwrap();
 
     let antes = destino.obtener_eventos().unwrap();
     let ruta = dir.path().join("respaldo.ndjson");
@@ -160,16 +162,15 @@ fn importar_archivos_invalidos() {
 #[test]
 fn exportar_importar_moneda_propia() {
     use crate::domain::{
-        ejecutar_crear_categoria, ejecutar_corregir_movimiento,
-        ejecutar_listar_monedas, ejecutar_listar_categorias,
-        ejecutar_listar_tasas, ejecutar_obtener_moneda_base,
+        ejecutar_corregir_movimiento, ejecutar_crear_categoria, ejecutar_listar_categorias,
+        ejecutar_listar_monedas, ejecutar_listar_tasas, ejecutar_obtener_moneda_base,
         eventos_equivalentes,
     };
-    use crate::tasas_monedas::{
-        ejecutar_crear_moneda, ejecutar_registrar_tasa,
-        ejecutar_eliminar_tasa, ejecutar_cambiar_moneda_base,
-    };
     use crate::respaldo::importar_desde_archivo;
+    use crate::tasas_monedas::{
+        ejecutar_cambiar_moneda_base, ejecutar_crear_moneda, ejecutar_eliminar_tasa,
+        ejecutar_registrar_tasa,
+    };
 
     let dir = DirTemp::nuevo("moneda_propia");
     let mut repo = bd_en(dir.path(), "origen");
@@ -178,17 +179,20 @@ fn exportar_importar_moneda_propia() {
     let ids = crate::GeneradorUuid;
 
     // Creamos una moneda con 8 decimales
-    let moneda = ejecutar_crear_moneda(
-        &mut repo, "BTC", "Bitcoin", "BTC", 8, &disp, &reloj, &ids
-    ).unwrap();
+    let moneda =
+        ejecutar_crear_moneda(&mut repo, "BTC", "Bitcoin", "BTC", 8, &disp, &reloj, &ids).unwrap();
 
-    let cat = ejecutar_crear_categoria(
-        &mut repo, "Compras", "gasto", &disp
-    ).unwrap();
+    let cat = ejecutar_crear_categoria(&mut repo, "Compras", "gasto", &disp).unwrap();
 
     let cuenta = ejecutar_crear_cuenta(
-        &mut repo, "Billetera BTC", "efectivo", "BTC", "1.23456789", &disp
-    ).unwrap();
+        &mut repo,
+        "Billetera BTC",
+        "efectivo",
+        "BTC",
+        "1.23456789",
+        &disp,
+    )
+    .unwrap();
 
     let cid = cuenta.id();
 
@@ -204,23 +208,38 @@ fn exportar_importar_moneda_propia() {
             nota_opt: Some("Compra".into()),
             dispositivo_id: &disp,
         },
-    ).unwrap();
+    )
+    .unwrap();
 
     let mov = &detalle.movimientos[0].id;
 
-    ejecutar_corregir_movimiento(
-        &mut repo, cid, mov, "0.12345679", &disp
-    ).unwrap();
+    ejecutar_corregir_movimiento(&mut repo, cid, mov, "0.12345679", &disp).unwrap();
 
     let tasa = ejecutar_registrar_tasa(
-        &mut repo, "BTC", "USD", "2.12345678",
-        "2026-11-20", "Prueba", &disp, &reloj, &ids
-    ).unwrap();
+        &mut repo,
+        "BTC",
+        "USD",
+        "2.12345678",
+        "2026-11-20",
+        "Prueba",
+        &disp,
+        &reloj,
+        &ids,
+    )
+    .unwrap();
 
     ejecutar_registrar_tasa(
-        &mut repo, "BTC", "USD", "3.12345678",
-        "2026-11-21", "Prueba", &disp, &reloj, &ids
-    ).unwrap();
+        &mut repo,
+        "BTC",
+        "USD",
+        "3.12345678",
+        "2026-11-21",
+        "Prueba",
+        &disp,
+        &reloj,
+        &ids,
+    )
+    .unwrap();
 
     ejecutar_eliminar_tasa(&mut repo, &tasa.id, &disp, &reloj, &ids).unwrap();
     ejecutar_cambiar_moneda_base(&mut repo, "BTC", &disp, &reloj, &ids).unwrap();

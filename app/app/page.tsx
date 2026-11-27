@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import AppShell from "@/app/AppShell";
 import PantallaPatrimonio from "@/app/patrimonio";
 import PantallaRespaldo from "@/app/respaldo";
+import DiagnosticoLibro from "@/app/diagnostico-libro";
 import PantallaSocial from "@/app/social";
 import PantallaTasas from "@/app/tasas";
 import { useSincronizacion } from "@/app/sincronizacion";
@@ -1054,6 +1055,9 @@ export default function MisCuentasPage() {
           <div className="error-alert" role="alert">
             {error.mensaje}
           </div>
+        )}
+        {error?.campo === "almacenamiento" && !mostrarFormulario && (
+          <DiagnosticoLibro onRespaldar={() => irAPantalla("respaldo")} />
         )}
         {errorMovimiento && !mostrarFormMovimiento && (
           <div className="error-alert" role="alert">

@@ -196,24 +196,6 @@ pub struct ResultadoFusion {
     pub rechazados: Vec<EventoRechazado>,
 }
 
-fn fase_catalogo(tipo: &str) -> u8 {
-    match tipo {
-        "MonedaCreada" | "CategoriaCreada" => 0,
-        _ => 1,
-    }
-}
-
-fn fase_causal(tipo: &str) -> u8 {
-    match tipo {
-        "MonedaCreada" | "CategoriaCreada" => 0,
-        "CuentaCreada" => 1,
-        "TasaRegistrada" | "MonedaBaseCambiada" => 2,
-        "MovimientoRegistrado" | "GastoDeGrupoAplicado" => 3,
-        "MovimientoCorregido" | "TasaEliminada" => 4,
-        _ => 5,
-    }
-}
-
 /// Ordena los eventos de forma determinista según la Sección 2.1:
 /// momento de registro, luego dispositivo de origen, luego identificador.
 pub fn ordenar_eventos_determinista(eventos: &[EventoLibro]) -> Vec<&EventoLibro> {
@@ -222,21 +204,6 @@ pub fn ordenar_eventos_determinista(eventos: &[EventoLibro]) -> Vec<&EventoLibro
         a.momento_registro
             .cmp(&b.momento_registro)
             .then_with(|| a.dispositivo_origen.cmp(&b.dispositivo_origen))
-            .then_with(|| a.id.cmp(&b.id))
-    });
-    ordenados
-}
-
-/// Orden determinista para proyectar el libro respetando dependencias causales de catálogo
-/// y el orden (momento_registro, dispositivo_origen) con desempate estable.
-fn ordenar_para_proyeccion(eventos: &[EventoLibro]) -> Vec<&EventoLibro> {
-    let mut ordenados: Vec<&EventoLibro> = eventos.iter().collect();
-    ordenados.sort_by(|a, b| {
-        fase_catalogo(&a.tipo)
-            .cmp(&fase_catalogo(&b.tipo))
-            .then_with(|| a.momento_registro.cmp(&b.momento_registro))
-            .then_with(|| a.dispositivo_origen.cmp(&b.dispositivo_origen))
-            .then_with(|| fase_causal(&a.tipo).cmp(&fase_causal(&b.tipo)))
             .then_with(|| a.id.cmp(&b.id))
     });
     ordenados
@@ -288,6 +255,27 @@ pub fn validar_proyeccion_eventos(eventos: &[EventoLibro]) -> Result<(), ErrorDo
 pub trait RepositorioEventos {
     fn guardar_evento(&mut self, evento: &EventoLibro) -> Result<(), String>;
     fn obtener_eventos(&self) -> Result<Vec<EventoLibro>, String>;
+
+    /// Solo para eventos recién creados: conserva el orden causal si el reloj retrocede.
+    fn guardar_evento_local(&mut self, evento: &EventoLibro) -> Result<(), String> {
+        let mut nuevo = evento.clone();
+        nuevo.momento_registro = momento_causal(evento.momento_registro, &self.obtener_eventos()?)?;
+        self.guardar_evento(&nuevo)
+    }
+}
+
+pub(crate) fn momento_causal(
+    ahora: DateTime<Utc>,
+    eventos: &[EventoLibro],
+) -> Result<DateTime<Utc>, String> {
+    match eventos.iter().map(|e| e.momento_registro).max() {
+        Some(ultimo) if ahora <= ultimo => ultimo
+            .checked_add_signed(chrono::Duration::nanoseconds(1))
+            .ok_or_else(|| {
+                "No se puede asignar un momento posterior al último evento.".to_string()
+            }),
+        _ => Ok(ahora),
+    }
 }
 
 // ==========================================
@@ -458,7 +446,7 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
     let mut ids_movimientos = HashSet::new();
     let mut eventos_servidor_aplicados = HashSet::new();
 
-    let ordenados = ordenar_para_proyeccion(eventos);
+    let ordenados = ordenar_eventos_determinista(eventos);
 
     for ev in ordenados {
         if let Some(anterior) = eventos_aplicados.insert(ev.id.clone(), ev) {
@@ -933,7 +921,7 @@ pub fn ejecutar_crear_cuenta<R: RepositorioEventos>(
         datos_json: serde_json::to_string(&datos).unwrap(),
     };
 
-    repo.guardar_evento(&evento).map_err(|_| {
+    repo.guardar_evento_local(&evento).map_err(|_| {
         ErrorDominio::nuevo("general", "No se pudo guardar la cuenta en el dispositivo.")
     })?;
 
@@ -1055,7 +1043,7 @@ pub fn ejecutar_crear_categoria<R: RepositorioEventos>(
         datos_json: serde_json::to_string(&datos).unwrap(),
     };
 
-    repo.guardar_evento(&evento)
+    repo.guardar_evento_local(&evento)
         .map_err(|_| ErrorDominio::nuevo("general", "No se pudo guardar la categoría."))?;
 
     Ok(Categoria {
@@ -1173,7 +1161,7 @@ pub fn ejecutar_registrar_movimiento<R: RepositorioEventos>(
         datos_json: serde_json::to_string(&datos).unwrap(),
     };
 
-    repo.guardar_evento(&evento)
+    repo.guardar_evento_local(&evento)
         .map_err(|_| ErrorDominio::nuevo("general", "No se pudo guardar el movimiento."))?;
 
     ejecutar_obtener_detalle_cuenta(repo, cuenta_id)
@@ -1272,7 +1260,7 @@ pub fn ejecutar_corregir_movimiento<R: RepositorioEventos>(
         datos_json: serde_json::to_string(&datos).unwrap(),
     };
 
-    repo.guardar_evento(&evento)
+    repo.guardar_evento_local(&evento)
         .map_err(|_| ErrorDominio::nuevo("general", "No se pudo registrar la corrección."))?;
 
     ejecutar_obtener_detalle_cuenta(repo, cuenta_id)

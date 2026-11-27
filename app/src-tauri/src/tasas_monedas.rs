@@ -56,7 +56,7 @@ pub fn ejecutar_crear_moneda<R: RepositorioEventos>(
     };
 
     // Verifica el evento en el repositorio local y maneja posibles errores
-    if repo.guardar_evento(&evento).is_err() {
+    if repo.guardar_evento_local(&evento).is_err() {
         return Err(ErrorDominio::nuevo(
             "general",
             "Hubo un problema al guardar la moneda.",
@@ -104,7 +104,7 @@ pub fn ejecutar_registrar_tasa<R: RepositorioEventos>(
         datos_json: datos,
     };
 
-    let resp = repo.guardar_evento(&evento);
+    let resp = repo.guardar_evento_local(&evento);
 
     if resp.is_err() {
         return Err(ErrorDominio::nuevo(
@@ -187,7 +187,7 @@ pub fn ejecutar_eliminar_tasa<R: RepositorioEventos>(
         datos_json: datos,
     };
 
-    let resp = repo.guardar_evento(&evento);
+    let resp = repo.guardar_evento_local(&evento);
 
     if resp.is_err() {
         return Err(ErrorDominio::nuevo(
@@ -239,7 +239,7 @@ pub fn ejecutar_cambiar_moneda_base<R: RepositorioEventos>(
         datos_json: datos,
     };
 
-    let resp = repo.guardar_evento(&evento);
+    let resp = repo.guardar_evento_local(&evento);
 
     // Retorna error general si falla la escritura en almacenamiento
     if resp.is_err() {
