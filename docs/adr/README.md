@@ -15,9 +15,12 @@ Este directorio registra decisiones arquitectónicas de Cuentas Claras. Cada ADR
 - [ADR 011: gastos compartidos y división exacta](011-gastos-compartidos-exactos.md)
 - [ADR 012: sincronización de gastos grupales al libro local](012-sincronizacion-libro-grupal.md)
 - [ADR 013: cola offline e idempotencia de gastos grupales](013-cola-gastos-idempotencia.md)
+- [ADR 014: cifrado autenticado para respaldos y sincronización personal](014-cifrado-respaldo-sincronizacion.md)
 
 ## Documentación técnica complementaria
 
 - [Entregas 2 y 3: verificación del libro local](../entregas-2-3-verificacion.md).
 - [Entrega 4: backend local de monedas, tasas y patrimonio](../entrega-4-backend.md).
+- [Formato de exportación y reconstrucción del libro](../formato-exportacion.md).
+- [Guía de usuario: cómo sincronizar con Git o con una carpeta](../guia-sincronizacion-personal.md).
 - [Guía de pruebas](../pruebas/README.md).
