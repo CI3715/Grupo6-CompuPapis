@@ -25,6 +25,12 @@ use uuid::Uuid;
 const FRASE_PRUEBA: &str = "mi-frase-secreta-segura-2026";
 const FRASE_INCORRECTA: &str = "otra-frase-equivocada-9999";
 
+#[test]
+fn importar_cantidad_declarada_excesiva_rechaza_sin_reservar_memoria() {
+    let texto = "{\"formato\":\"cuentas-claras-libro\",\"version\":1,\"fecha_exportacion\":\"2026-11-26T00:00:00Z\",\"cantidad_eventos\":18446744073709551615}\n";
+    assert!(parsear_eventos_ndjson(texto).is_err());
+}
+
 struct DirTemp(PathBuf);
 
 impl DirTemp {

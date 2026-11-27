@@ -225,7 +225,7 @@ pub fn parsear_eventos_ndjson(
         ));
     }
 
-    let mut eventos = Vec::with_capacity(encabezado.cantidad_eventos);
+    let mut eventos = Vec::new();
     for (idx, linea) in lineas.enumerate() {
         let num_linea = idx + 2;
         let ev: EventoSerializado = serde_json::from_str(linea).map_err(|_| {
