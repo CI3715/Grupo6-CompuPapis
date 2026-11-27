@@ -3,11 +3,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 
-import EncabezadoPantalla from "@/app/EncabezadoPantalla";
 import type { ErrorDominio, Moneda, PropsPantalla, Tasa } from "@/lib/tipos";
 import { formatearFecha, normalizarError } from "@/lib/utilidades";
 
-export default function PantallaTasas({ onVolver, onIr }: PropsPantalla) {
+export default function PantallaTasas({ onIr }: PropsPantalla) {
   const [monedas, setMonedas] = useState<Moneda[]>([]);
   const [tasas, setTasas] = useState<Tasa[]>([]);
   const [error, setError] = useState<ErrorDominio | null>(null);
@@ -93,186 +92,203 @@ export default function PantallaTasas({ onVolver, onIr }: PropsPantalla) {
   }, {});
 
   return (
-    <div className="app-wrapper">
-      <main className="content-detalle">
-        <EncabezadoPantalla
-          titulo="Tasas de cambio"
-          etiquetaIr="Patrimonio"
-          onVolver={onVolver}
-          onIr={onIr}
-        />
-
-        {error && (
-          <div className="error-alert" role="alert">
-            {error.mensaje}
+    <main className="page-view">
+      <section className="hero-card" aria-label="Resumen de tasas de cambio">
+        <div className="hero-top">
+          <div>
+            <span className="hero-eyebrow">Cuentas Claras • Local-First</span>
+            <h1 className="hero-title">Tasas de cambio</h1>
+            <p className="hero-subtitle">
+              {tasas.length === 0
+                ? "Registra tasas de cambio para consolidar tu patrimonio."
+                : `${tasas.length} ${tasas.length === 1 ? "tasa registrada" : "tasas registradas"} en ${Object.keys(grupos).length} ${Object.keys(grupos).length === 1 ? "par" : "pares"}`}
+            </p>
           </div>
-        )}
-
-        <div className="acciones-movimientos" style={{ marginBottom: "20px" }}>
-          <h3
-            className="section-title"
-            style={{ margin: 0, alignSelf: "center" }}
-          >
-            Historial por par ({tasas.length})
-          </h3>
-          <div style={{ display: "flex", gap: "10px" }}>
+          <div className="acciones-grupo">
             <button
               type="button"
-              className="btn btn-primary"
+              className="btn btn-hero btn-sm"
               onClick={abrirFormTasa}
             >
               + Nueva tasa
             </button>
+            <button
+              type="button"
+              className="btn btn-hero btn-sm"
+              onClick={onIr}
+            >
+              Patrimonio →
+            </button>
           </div>
         </div>
+      </section>
 
-        {mostrarFormTasa && (
-          <section className="form-card">
-            <h3 className="form-title">Registrar tasa de cambio</h3>
-            <p className="form-subtitle">
-              Valor: cuántas unidades de la moneda destino equivalen a 1 unidad
-              de la moneda origen. Se guarda únicamente en este dispositivo.
-            </p>
+      {error && (
+        <div className="error-alert" role="alert">
+          {error.mensaje}
+        </div>
+      )}
 
-            {errorTasa && (
-              <div className="error-alert">
-                <strong>!</strong>
+      {mostrarFormTasa && (
+        <section className="form-card" aria-label="Registrar tasa de cambio">
+          <h2 className="form-title">Registrar tasa de cambio</h2>
+          <p className="form-subtitle">
+            Valor: cuántas unidades de la moneda destino equivalen a 1 unidad de
+            la moneda origen. Se guarda únicamente en este dispositivo.
+          </p>
+
+          {errorTasa && (
+            <div className="error-alert" role="alert">
+              <div className="error-alert-body">
+                <strong aria-hidden="true">!</strong>
                 <div>
                   <strong>Revisa el campo «{errorTasa.campo}»: </strong>
                   <span>{errorTasa.mensaje}</span>
                 </div>
               </div>
-            )}
+            </div>
+          )}
 
-            <form onSubmit={manejarRegistrarTasa}>
-              <div className="form-row">
-                <div>
-                  <label className="form-label">Moneda origen</label>
-                  <select
-                    value={origen}
-                    onChange={(e) => setOrigen(e.target.value)}
-                    className={`form-control ${errorTasa?.campo === "origen" ? "input-error" : ""}`}
-                  >
-                    <option value="" disabled hidden>
-                      Seleccione...
-                    </option>
-                    {monedas.map((m) => (
-                      <option key={m.codigo} value={m.codigo}>
-                        {m.codigo} ({m.simbolo})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="form-label">Moneda destino</label>
-                  <select
-                    value={destino}
-                    onChange={(e) => setDestino(e.target.value)}
-                    className={`form-control ${errorTasa?.campo === "destino" ? "input-error" : ""}`}
-                  >
-                    <option value="" disabled hidden>
-                      Seleccione...
-                    </option>
-                    {monedas.map((m) => (
-                      <option key={m.codigo} value={m.codigo}>
-                        {m.codigo} ({m.simbolo})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="form-label">Valor</label>
-                  <input
-                    type="text"
-                    value={valor}
-                    onChange={(e) => setValor(e.target.value)}
-                    placeholder="0.00"
-                    className={`form-control ${errorTasa?.campo === "valor" ? "input-error" : ""}`}
-                  />
-                </div>
-              </div>
-
-              <div className="form-row">
-                <div>
-                  <label className="form-label">Fecha</label>
-                  <input
-                    type="date"
-                    value={fecha}
-                    onChange={(e) => setFecha(e.target.value)}
-                    className={`form-control ${errorTasa?.campo === "fecha" ? "input-error" : ""}`}
-                  />
-                </div>
-                <div>
-                  <label className="form-label">Fuente</label>
-                  <input
-                    type="text"
-                    value={fuente}
-                    onChange={(e) => setFuente(e.target.value)}
-                    placeholder="Ej: BCV, casa de cambio, estimación propia"
-                    className={`form-control ${errorTasa?.campo === "fuente" ? "input-error" : ""}`}
-                  />
-                </div>
-              </div>
-
-              <div className="form-actions">
-                <button
-                  type="button"
-                  onClick={() => setMostrarFormTasa(false)}
-                  className="btn btn-ghost"
+          <form onSubmit={manejarRegistrarTasa}>
+            <div className="form-row">
+              <div>
+                <label className="form-label" htmlFor="tasa-origen">
+                  Moneda origen
+                </label>
+                <select
+                  id="tasa-origen"
+                  value={origen}
+                  onChange={(e) => setOrigen(e.target.value)}
+                  className={`form-control ${errorTasa?.campo === "origen" ? "input-error" : ""}`}
                 >
-                  Cancelar
-                </button>
-                <button type="submit" className="btn btn-primary">
-                  Guardar tasa
-                </button>
+                  <option value="" disabled hidden>
+                    Seleccione...
+                  </option>
+                  {monedas.map((m) => (
+                    <option key={m.codigo} value={m.codigo}>
+                      {m.codigo} ({m.simbolo})
+                    </option>
+                  ))}
+                </select>
               </div>
-            </form>
-          </section>
-        )}
+              <div>
+                <label className="form-label" htmlFor="tasa-destino">
+                  Moneda destino
+                </label>
+                <select
+                  id="tasa-destino"
+                  value={destino}
+                  onChange={(e) => setDestino(e.target.value)}
+                  className={`form-control ${errorTasa?.campo === "destino" ? "input-error" : ""}`}
+                >
+                  <option value="" disabled hidden>
+                    Seleccione...
+                  </option>
+                  {monedas.map((m) => (
+                    <option key={m.codigo} value={m.codigo}>
+                      {m.codigo} ({m.simbolo})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="form-label" htmlFor="tasa-valor">
+                  Valor
+                </label>
+                <input
+                  id="tasa-valor"
+                  type="text"
+                  inputMode="decimal"
+                  value={valor}
+                  onChange={(e) => setValor(e.target.value)}
+                  placeholder="0.00"
+                  className={`form-control ${errorTasa?.campo === "valor" ? "input-error" : ""}`}
+                />
+              </div>
+            </div>
 
-        {tasas.length === 0 ? (
-          <div className="empty-state">
-            <p className="empty-title">Todavía no hay tasas registradas</p>
-            <p className="empty-description">
-              Registra una tasa con su fecha y fuente para poder consolidar tu
-              patrimonio en una sola moneda.
-            </p>
-          </div>
-        ) : (
-          Object.entries(grupos).map(([par, lista]) => (
-            <section key={par} className="section-block">
-              <h2 className="section-title">{par}</h2>
-              <div className="accounts-list">
-                {lista.map((t) => (
-                  <div key={t.id} className="account-card">
-                    <div>
-                      <div className="account-name-row">
-                        <span className="account-name">
-                          1 {t.origen} = {t.valor} {t.destino}
-                        </span>
-                      </div>
-                      <p
-                        className="account-meta"
-                        style={{ textTransform: "none" }}
-                      >
-                        Fecha: {formatearFecha(t.fecha)} • Fuente: {t.fuente}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      className="btn btn-danger"
-                      style={{ border: "1px solid var(--error-border)" }}
-                      onClick={() => eliminarTasa(t.id)}
-                    >
-                      Eliminar
-                    </button>
-                  </div>
-                ))}
+            <div className="form-row">
+              <div>
+                <label className="form-label" htmlFor="tasa-fecha">
+                  Fecha
+                </label>
+                <input
+                  id="tasa-fecha"
+                  type="date"
+                  value={fecha}
+                  onChange={(e) => setFecha(e.target.value)}
+                  className={`form-control ${errorTasa?.campo === "fecha" ? "input-error" : ""}`}
+                />
               </div>
-            </section>
-          ))
-        )}
-      </main>
-    </div>
+              <div>
+                <label className="form-label" htmlFor="tasa-fuente">
+                  Fuente
+                </label>
+                <input
+                  id="tasa-fuente"
+                  type="text"
+                  value={fuente}
+                  onChange={(e) => setFuente(e.target.value)}
+                  placeholder="Ej: BCV, casa de cambio, estimación propia"
+                  className={`form-control ${errorTasa?.campo === "fuente" ? "input-error" : ""}`}
+                />
+              </div>
+            </div>
+
+            <div className="form-actions">
+              <button
+                type="button"
+                onClick={() => setMostrarFormTasa(false)}
+                className="btn btn-ghost"
+              >
+                Cancelar
+              </button>
+              <button type="submit" className="btn btn-primary">
+                Guardar tasa
+              </button>
+            </div>
+          </form>
+        </section>
+      )}
+
+      {tasas.length === 0 ? (
+        <div className="empty-state">
+          <p className="empty-title">Todavía no hay tasas registradas</p>
+          <p className="empty-description">
+            Registra una tasa con su fecha y fuente para poder consolidar tu
+            patrimonio en una sola moneda.
+          </p>
+        </div>
+      ) : (
+        Object.entries(grupos).map(([par, lista]) => (
+          <section key={par} className="section-block">
+            <h2 className="section-title">{par}</h2>
+            <div className="accounts-list">
+              {lista.map((t) => (
+                <article key={t.id} className="account-card">
+                  <div className="account-card-info">
+                    <div className="account-name-row">
+                      <span className="account-name">
+                        1 {t.origen} = {t.valor} {t.destino}
+                      </span>
+                    </div>
+                    <p className="account-meta text-normal">
+                      Fecha: {formatearFecha(t.fecha)} • Fuente: {t.fuente}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-sm"
+                    onClick={() => eliminarTasa(t.id)}
+                  >
+                    Eliminar
+                  </button>
+                </article>
+              ))}
+            </div>
+          </section>
+        ))
+      )}
+    </main>
   );
 }

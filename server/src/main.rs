@@ -702,8 +702,18 @@ pub fn construir_app(estado: auth::State) -> Router {
         .merge(auth::routes(estado))
 }
 
+// Carga variables desde .env (CWD o directorio de server/) sin sobrescribir las ya exportadas
+fn cargar_entorno() {
+    if dotenvy::dotenv().is_err() {
+        let ruta_manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".env");
+        let _ = dotenvy::from_path(ruta_manifest);
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    cargar_entorno();
+
     let database_url = std::env::var("DATABASE_URL").map_err(|_| "Falta DATABASE_URL")?;
     let secret = std::env::var("JWT_SECRET").map_err(|_| "Falta JWT_SECRET")?;
     if secret.len() < 32 {

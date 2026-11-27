@@ -43,11 +43,14 @@ async fn comandos_y_adaptador_http_cubren_operaciones_y_errores() {
     let ruta = std::env::temp_dir().join(format!("social-test-{}.sqlite", Uuid::new_v4()));
     let repo = RepositorioSqlite::inicializar(ruta.clone()).unwrap();
     let usuario = Uuid::new_v4().to_string();
+    let dispositivo_id = repo.dispositivo_id().unwrap();
     let app = tauri::test::mock_app();
     app.manage(AppState {
         repo: Mutex::new(repo),
         server_url: format!("http://{direccion}"),
         ruta_token_fallback: ruta.clone(),
+        app_dir: std::env::temp_dir(),
+        dispositivo_id,
     });
     app.manage(PingState {
         http_client: reqwest::Client::new(),

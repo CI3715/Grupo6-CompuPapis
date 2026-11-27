@@ -411,11 +411,14 @@ mod pruebas_motor {
         propio.registrar_sincronizacion_exitosa().unwrap();
         let evento: EventoCambioRecibido = serde_json::from_value(json!({"id":"evento", "cursor":1, "tipo":"gasto_grupo", "grupo_id":"grupo", "grupo_nombre":"Viaje", "gasto_id":"hotel", "concepto":"Hotel", "fecha":"2026-11-20", "moneda":"USD", "monto_parte":"10.00", "incluye_centimos_redondeo":false})).unwrap();
         propio.aplicar_lote_cambios(1, vec![evento]).unwrap();
+        let dispositivo_id = repo.dispositivo_id().unwrap();
         let app = tauri::test::mock_app();
         app.manage(AppState {
             repo: Mutex::new(repo),
             server_url: String::new(),
             ruta_token_fallback: ruta.clone(),
+            app_dir: std::env::temp_dir(),
+            dispositivo_id,
         });
         app.manage(AuthState {
             sesion: Mutex::new(Some(SesionLocal {

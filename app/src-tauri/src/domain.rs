@@ -181,6 +181,109 @@ pub struct EventoLibro {
     pub datos_json: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventoRechazado {
+    pub evento_id: String,
+    pub motivo: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ResultadoFusion {
+    pub nuevos: usize,
+    pub ya_existian: usize,
+    pub rechazados: Vec<EventoRechazado>,
+}
+
+fn fase_catalogo(tipo: &str) -> u8 {
+    match tipo {
+        "MonedaCreada" | "CategoriaCreada" => 0,
+        _ => 1,
+    }
+}
+
+fn fase_causal(tipo: &str) -> u8 {
+    match tipo {
+        "MonedaCreada" | "CategoriaCreada" => 0,
+        "CuentaCreada" => 1,
+        "TasaRegistrada" | "MonedaBaseCambiada" => 2,
+        "MovimientoRegistrado" | "GastoDeGrupoAplicado" => 3,
+        "MovimientoCorregido" | "TasaEliminada" => 4,
+        _ => 5,
+    }
+}
+
+/// Ordena los eventos de forma determinista según la Sección 2.1:
+/// momento de registro, luego dispositivo de origen, luego identificador.
+pub fn ordenar_eventos_determinista(eventos: &[EventoLibro]) -> Vec<&EventoLibro> {
+    let mut ordenados: Vec<&EventoLibro> = eventos.iter().collect();
+    ordenados.sort_by(|a, b| {
+        a.momento_registro
+            .cmp(&b.momento_registro)
+            .then_with(|| a.dispositivo_origen.cmp(&b.dispositivo_origen))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    ordenados
+}
+
+/// Orden determinista para proyectar el libro respetando dependencias causales de catálogo
+/// y el orden (momento_registro, dispositivo_origen) con desempate estable.
+fn ordenar_para_proyeccion(eventos: &[EventoLibro]) -> Vec<&EventoLibro> {
+    let mut ordenados: Vec<&EventoLibro> = eventos.iter().collect();
+    ordenados.sort_by(|a, b| {
+        fase_catalogo(&a.tipo)
+            .cmp(&fase_catalogo(&b.tipo))
+            .then_with(|| a.momento_registro.cmp(&b.momento_registro))
+            .then_with(|| a.dispositivo_origen.cmp(&b.dispositivo_origen))
+            .then_with(|| fase_causal(&a.tipo).cmp(&fase_causal(&b.tipo)))
+    });
+    ordenados
+}
+
+/// Compara si dos eventos con el mismo identificador tienen el mismo contenido lógico.
+pub fn eventos_equivalentes(a: &EventoLibro, b: &EventoLibro) -> bool {
+    if a.id != b.id
+        || a.tipo != b.tipo
+        || a.momento_registro != b.momento_registro
+        || a.dispositivo_origen != b.dispositivo_origen
+    {
+        return false;
+    }
+    if a.datos_json == b.datos_json {
+        return true;
+    }
+    match (
+        serde_json::from_str::<serde_json::Value>(&a.datos_json),
+        serde_json::from_str::<serde_json::Value>(&b.datos_json),
+    ) {
+        (Ok(va), Ok(vb)) => va == vb,
+        _ => false,
+    }
+}
+
+/// Deriva un UUID determinista a partir del identificador de un evento del servidor (Sección 2.1),
+/// de modo que dos dispositivos que descargan la misma parte generen el mismo evento.
+pub fn id_derivado_evento_servidor(prefijo: &str, evento_servidor_id: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(prefijo.as_bytes());
+    hasher.update(b":");
+    hasher.update(evento_servidor_id.as_bytes());
+    let digest = hasher.finalize();
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    // Versión 5 (determinista) y variante RFC 4122
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    uuid::Uuid::from_bytes(bytes).to_string()
+}
+
+/// Valida que un conjunto completo de eventos proyecta un libro coherente y sin errores.
+pub fn validar_proyeccion_eventos(eventos: &[EventoLibro]) -> Result<(), ErrorDominio> {
+    proyectar_libro(eventos).map(|_| ())
+}
+
 pub trait RepositorioEventos {
     fn guardar_evento(&mut self, evento: &EventoLibro) -> Result<(), String>;
     fn obtener_eventos(&self) -> Result<Vec<EventoLibro>, String>;
@@ -338,13 +441,11 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
     let mut ids_movimientos = HashSet::new();
     let mut eventos_servidor_aplicados = HashSet::new();
 
-    for ev in eventos {
+    let ordenados = ordenar_para_proyeccion(eventos);
+
+    for ev in ordenados {
         if let Some(anterior) = eventos_aplicados.insert(ev.id.clone(), ev) {
-            if anterior.tipo != ev.tipo
-                || anterior.datos_json != ev.datos_json
-                || anterior.momento_registro != ev.momento_registro
-                || anterior.dispositivo_origen != ev.dispositivo_origen
-            {
+            if !eventos_equivalentes(anterior, ev) {
                 return Err(error_libro());
             }
             continue;
