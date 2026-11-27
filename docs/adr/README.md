@@ -16,6 +16,7 @@ Este directorio registra decisiones arquitectónicas de Cuentas Claras. Cada ADR
 - [ADR 012: sincronización de gastos grupales al libro local](012-sincronizacion-libro-grupal.md)
 - [ADR 013: cola offline e idempotencia de gastos grupales](013-cola-gastos-idempotencia.md)
 - [ADR 014: cifrado autenticado para respaldos y sincronización personal](014-cifrado-respaldo-sincronizacion.md)
+- [ADR 015: proyección y sincronización del libro personal](015-libro-personal-sincronizado.md)
 
 ## Documentación técnica complementaria
 
