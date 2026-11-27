@@ -103,4 +103,17 @@ test("reconstruye saldos exactos desde una exportación NDJSON sin cifrar (RNF-0
   assert.equal(resultado.cuentas[0].nombre, "Efectivo USD");
   assert.equal(resultado.cuentas[0].saldo, "143.34");
   assert.equal(resultado.cuentas[0].movimientos, 4);
+
+  // Probamos con 2 eventos casi a la vez
+  eventos[2].momento_registro = "2026-11-20T10:00:00.123100Z";
+  eventos[2].dispositivo_origen = "z";
+  eventos[3].momento_registro = "2026-11-20T10:00:00.123200Z";
+  eventos[3].dispositivo_origen = "a";
+
+  const texto = [encabezado, ...eventos]
+    .map((e) => JSON.stringify(e))
+    .join("\n");
+
+  const nuevo = reconstruirDesdeNdjson(texto);
+  assert.equal(nuevo.cuentas[0].saldo, "143.34");
 });

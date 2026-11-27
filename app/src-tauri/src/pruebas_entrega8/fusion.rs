@@ -5,6 +5,101 @@ use super::*;
 // =========================================================
 
 #[test]
+fn gastos_grupo_en_distintas_cuentas() {
+    let dir = DirTemp::nuevo("gastos_grupo");
+    let mut a = bd_en(dir.path(), "a");
+    let mut b = bd_en(dir.path(), "b");
+
+    let disp = a.dispositivo_id().unwrap();
+
+    let cuenta1 = ejecutar_crear_cuenta(
+        &mut a, "Efectivo", "efectivo", "USD", "200.00", &disp
+    ).unwrap();
+
+    let cuenta2 = ejecutar_crear_cuenta(
+        &mut a, "Ahorros", "efectivo", "USD", "200.00", &disp
+    ).unwrap();
+
+    let c1 = cuenta1.id();
+    let c2 = cuenta2.id();
+
+    let inicial = a.obtener_eventos().unwrap();
+    b.fusionar_eventos(&inicial).unwrap();
+
+    let grupo = Uuid::new_v4().to_string();
+
+    // Cada dispositivo elige una cuenta distinta
+    a.elegir_cuenta_grupo(&grupo, c1).unwrap();
+    b.elegir_cuenta_grupo(&grupo, c2).unwrap();
+
+    let mut cambio = EventoCambioRecibido {
+        id: Uuid::new_v4().to_string(),
+        cursor: 1,
+        tipo: "gasto_grupo".into(),
+        grupo_id: grupo,
+        grupo_nombre: "Viaje".into(),
+        gasto_id: Uuid::new_v4().to_string(),
+        concepto: "Hotel".into(),
+        fecha: "2026-11-20".into(),
+        moneda: "USD".into(),
+        monto_parte: "33.33".into(),
+        incluye_centimos_redondeo: false,
+    };
+
+    // Primero pasamos el gasto de un libro al otro
+    assert_eq!(a.aplicar_lote_cambios(1, vec![cambio.clone()]).unwrap(), 1);
+
+    let eventos = a.obtener_eventos().unwrap();
+    let res = b.fusionar_eventos(&eventos).unwrap();
+
+    assert_eq!(res.nuevos, 1);
+    assert!(res.rechazados.is_empty());
+
+    // Bajamos el mismo gasto otra vez
+    assert_eq!(b.aplicar_lote_cambios(1, vec![cambio.clone()]).unwrap(), 0);
+    assert_eq!(b.obtener_eventos().unwrap(), eventos);
+
+    let det1 = ejecutar_obtener_detalle_cuenta(&b, c1).unwrap();
+    let det2 = ejecutar_obtener_detalle_cuenta(&b, c2).unwrap();
+
+    assert_eq!(det1.saldo_actual, "166.67");
+    assert_eq!(det1.movimientos.len(), 1);
+    assert_eq!(det2.saldo_actual, "200.00");
+    assert!(det2.movimientos.is_empty());
+
+    // Ahora los 2 reciben otro gasto por separado
+    cambio.id = Uuid::new_v4().to_string();
+    cambio.gasto_id = Uuid::new_v4().to_string();
+    cambio.cursor = 2;
+
+    assert_eq!(a.aplicar_lote_cambios(2, vec![cambio.clone()]).unwrap(), 1);
+    assert_eq!(b.aplicar_lote_cambios(2, vec![cambio]).unwrap(), 1);
+
+    let ev_a = a.obtener_eventos().unwrap();
+    let ev_b = b.obtener_eventos().unwrap();
+
+    assert_eq!(ev_a.len(), 4);
+    assert_eq!(ev_b.len(), 4);
+    assert_eq!(ev_a[3].id, ev_b[3].id);
+
+    // Vemos que pasa al juntar los libros
+    let res_a = a.fusionar_eventos(&ev_b).unwrap();
+    let res_b = b.fusionar_eventos(&ev_a).unwrap();
+
+    assert_eq!(res_a.nuevos, 0);
+    assert_eq!(res_b.nuevos, 0);
+
+    assert_eq!(res_a.rechazados.len(), 1);
+    assert_eq!(res_b.rechazados.len(), 1);
+
+    assert_eq!(res_a.rechazados[0].evento_id, ev_a[3].id);
+    assert_eq!(res_b.rechazados[0].evento_id, ev_b[3].id);
+
+    assert_eq!(a.obtener_eventos().unwrap(), ev_a);
+    assert_eq!(b.obtener_eventos().unwrap(), ev_b);
+}
+
+#[test]
 fn importacion_revierte_todo_si_sqlite_falla_a_mitad_del_lote() {
     let dir = DirTemp::nuevo("rollback_importacion");
     let mut origen = bd_en(dir.path(), "origen");
@@ -196,6 +291,90 @@ fn fusion_idempotente_archivo_antiguo_no_borra_y_conflicto_se_rechaza() {
             .saldo_actual,
         "191.67"
     );
+}
+
+#[test]
+fn fusion_en_distinto_orden() {
+    use crate::domain::ejecutar_consultar_patrimonio;
+
+    let dir = DirTemp::nuevo("orden_eventos");
+    let mut a = bd_en(dir.path(), "a");
+    let mut b = bd_en(dir.path(), "b");
+
+    let disp = a.dispositivo_id().unwrap();
+    let cuenta = ejecutar_crear_cuenta(
+        &mut a, "Efectivo EUR", "efectivo", "EUR", "100.00", &disp
+    ).unwrap();
+
+    let cid = cuenta.id();
+    let inicial = a.obtener_eventos().unwrap();
+    b.fusionar_eventos(&inicial).unwrap();
+
+    let mut eventos = Vec::new();
+
+    let tasas = [
+        (4, "2026-11-20T16:00:00Z", "b", "9.00"),
+        (3, "2026-11-21T16:00:00Z", "a", "8.00"),
+        (1, "2026-11-21T16:00:00Z", "b", "2.00"),
+        (2, "2026-11-21T16:00:00Z", "b", "3.00"),
+    ];
+
+    // Armamos los eventos de las tasas
+    for (n, fecha, disp, valor) in tasas {
+        let id = format!("00000000-0000-4000-8000-00000000000{}", n);
+        let momento = chrono::DateTime::parse_from_rfc3339(fecha).unwrap();
+        let momento = momento.with_timezone(&chrono::Utc);
+
+        let datos = serde_json::json!({
+            "id": id,
+            "origen": "EUR",
+            "destino": "USD",
+            "valor": valor,
+            "fecha": "2026-11-20",
+            "fuente": "Prueba"
+        });
+
+        eventos.push(EventoLibro {
+            id,
+            tipo: "TasaRegistrada".into(),
+            momento_registro: momento,
+            dispositivo_origen: disp.into(),
+            datos_json: datos.to_string(),
+        });
+    }
+
+    // Pasamos los eventos al primer libro
+    for ev in &eventos {
+        let res = a.fusionar_eventos(&[ev.clone()]).unwrap();
+        assert_eq!(res.nuevos, 1);
+    }
+
+    // Hacemos lo mismo pero al reves
+    for i in (0..eventos.len()).rev() {
+        let res = b.fusionar_eventos(&[eventos[i].clone()]).unwrap();
+        assert_eq!(res.nuevos, 1);
+    }
+
+    assert_eq!(a.obtener_eventos().unwrap().len(), 5);
+    assert_eq!(b.obtener_eventos().unwrap().len(), 5);
+
+    let hoy = chrono::Local::now().date_naive();
+
+    let det_a = ejecutar_obtener_detalle_cuenta(&a, cid).unwrap();
+    let det_b = ejecutar_obtener_detalle_cuenta(&b, cid).unwrap();
+
+    let pat_a = ejecutar_consultar_patrimonio(&a, None, hoy).unwrap();
+    let pat_b = ejecutar_consultar_patrimonio(&b, None, hoy).unwrap();
+
+    // Vemos si al final nos da lo mismo
+    assert_eq!(det_a.saldo_actual, "100.00");
+    assert_eq!(det_a.saldo_actual, det_b.saldo_actual);
+
+    assert_eq!(pat_a.total.as_deref(), Some("300.00"));
+    assert_eq!(pat_a.total, pat_b.total);
+
+    assert_eq!(pat_a.filas[0].tasa.as_ref().unwrap().id, eventos[3].id);
+    assert_eq!(pat_b.filas[0].tasa.as_ref().unwrap().id, eventos[3].id);
 }
 
 #[test]

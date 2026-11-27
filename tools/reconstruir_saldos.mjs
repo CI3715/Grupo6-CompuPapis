@@ -92,6 +92,12 @@ export function reconstruirDesdeNdjson(contenido) {
     const tA = Date.parse(a.momento_registro);
     const tB = Date.parse(b.momento_registro);
     if (tA !== tB) return tA - tB;
+
+    // Comparamos tambien los decimales de la fecha
+    const fA = (a.momento_registro.match(/\.(\d+)/)?.[1] ?? "").padEnd(9, "0");
+    const fB = (b.momento_registro.match(/\.(\d+)/)?.[1] ?? "").padEnd(9, "0");
+    if (fA !== fB) return fA < fB ? -1 : 1;
+
     if (a.dispositivo_origen !== b.dispositivo_origen) {
       return a.dispositivo_origen < b.dispositivo_origen ? -1 : 1;
     }
