@@ -1091,6 +1091,7 @@ pub fn ejecutar_sincronizacion_personal(
     let mut total_enviados = 0usize;
     let mut todos_rechazados: Vec<EventoRechazado> = Vec::new();
     let mut pendientes_publicados: Vec<String> = Vec::new();
+    let mut lotes_por_publicar = HashSet::new();
 
     for intento in 0..MAX_REINTENTOS_PUBLICACION {
         // Paso 1: Traer
@@ -1110,7 +1111,7 @@ pub fn ejecutar_sincronizacion_personal(
 
         for lote in lotes_disponibles {
             let clave_lote = lote.clave();
-            if leidos.contains(&clave_lote) {
+            if leidos.contains(&clave_lote) || lotes_por_publicar.contains(&clave_lote) {
                 continue;
             }
             let bytes = transporte
@@ -1179,8 +1180,7 @@ pub fn ejecutar_sincronizacion_personal(
                 dispositivo_id: mi_dispositivo.clone(),
                 nombre_archivo: nombre_lote,
             };
-            repo.marcar_lote_leido(destino_clave, &ref_lote.clave())
-                .map_err(|e| ErrorDominio::nuevo("almacenamiento", &e))?;
+            lotes_por_publicar.insert(ref_lote.clave());
 
             for ev in &faltantes {
                 pendientes_publicados.push(ev.id.clone());
@@ -1198,6 +1198,10 @@ pub fn ejecutar_sincronizacion_personal(
             .map_err(|e| e.a_error_dominio())?
         {
             ResultadoPublicacion::Publicado => {
+                for clave in &lotes_por_publicar {
+                    repo.marcar_lote_leido(destino_clave, clave)
+                        .map_err(|e| ErrorDominio::nuevo("almacenamiento", &e))?;
+                }
                 if !pendientes_publicados.is_empty() {
                     repo.marcar_eventos_enviados(destino_clave, &pendientes_publicados)
                         .map_err(|e| ErrorDominio::nuevo("almacenamiento", &e))?;

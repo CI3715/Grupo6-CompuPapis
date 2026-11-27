@@ -12,13 +12,11 @@ fn gastos_grupo_en_distintas_cuentas() {
 
     let disp = a.dispositivo_id().unwrap();
 
-    let cuenta1 = ejecutar_crear_cuenta(
-        &mut a, "Efectivo", "efectivo", "USD", "200.00", &disp
-    ).unwrap();
+    let cuenta1 =
+        ejecutar_crear_cuenta(&mut a, "Efectivo", "efectivo", "USD", "200.00", &disp).unwrap();
 
-    let cuenta2 = ejecutar_crear_cuenta(
-        &mut a, "Ahorros", "efectivo", "USD", "200.00", &disp
-    ).unwrap();
+    let cuenta2 =
+        ejecutar_crear_cuenta(&mut a, "Ahorros", "efectivo", "USD", "200.00", &disp).unwrap();
 
     let c1 = cuenta1.id();
     let c2 = cuenta2.id();
@@ -302,9 +300,8 @@ fn fusion_en_distinto_orden() {
     let mut b = bd_en(dir.path(), "b");
 
     let disp = a.dispositivo_id().unwrap();
-    let cuenta = ejecutar_crear_cuenta(
-        &mut a, "Efectivo EUR", "efectivo", "EUR", "100.00", &disp
-    ).unwrap();
+    let cuenta =
+        ejecutar_crear_cuenta(&mut a, "Efectivo EUR", "efectivo", "EUR", "100.00", &disp).unwrap();
 
     let cid = cuenta.id();
     let inicial = a.obtener_eventos().unwrap();
@@ -345,7 +342,7 @@ fn fusion_en_distinto_orden() {
 
     // Pasamos los eventos al primer libro
     for ev in &eventos {
-        let res = a.fusionar_eventos(&[ev.clone()]).unwrap();
+        let res = a.fusionar_eventos(std::slice::from_ref(ev)).unwrap();
         assert_eq!(res.nuevos, 1);
     }
 

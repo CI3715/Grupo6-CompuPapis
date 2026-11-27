@@ -1,5 +1,70 @@
 use super::*;
 
+#[test]
+fn publicacion_fallida_no_marca_lote_local_como_leido() {
+    struct FalloPublicacion(TransporteMemoria);
+    impl TransporteSincronizacion for FalloPublicacion {
+        fn preparar(&mut self) -> Result<(), ErrorTransporte> {
+            self.0.preparar()
+        }
+        fn listar_lotes(&self) -> Result<Vec<ReferenciaLote>, ErrorTransporte> {
+            self.0.listar_lotes()
+        }
+        fn leer_lote(&self, lote: &ReferenciaLote) -> Result<Vec<u8>, ErrorTransporte> {
+            self.0.leer_lote(lote)
+        }
+        fn escribir_lote(
+            &mut self,
+            dispositivo: &str,
+            nombre: &str,
+            datos: &[u8],
+        ) -> Result<(), ErrorTransporte> {
+            self.0.escribir_lote(dispositivo, nombre, datos)
+        }
+        fn publicar(
+            &mut self,
+            _: &str,
+        ) -> Result<crate::sincronizacion_personal::ResultadoPublicacion, ErrorTransporte> {
+            Err(ErrorTransporte::DestinoInaccesible("fallo simulado".into()))
+        }
+    }
+    let dir = DirTemp::nuevo("fallo_publicacion");
+    let mut repo = bd_en(dir.path(), "origen");
+    crear_cuenta_y_movimientos_base(&mut repo);
+    let mut transporte = FalloPublicacion(TransporteMemoria::nuevo());
+    assert!(
+        ejecutar_sincronizacion_personal(
+            &mut repo,
+            &mut transporte,
+            "destino",
+            FRASE_PRUEBA,
+            ParametrosKdf::para_pruebas()
+        )
+        .is_err()
+    );
+    assert!(repo.lotes_leidos_destino("destino").unwrap().is_empty());
+    assert!(repo.eventos_enviados_destino("destino").unwrap().is_empty());
+    let mut recuperacion = transporte.0;
+    ejecutar_sincronizacion_personal(
+        &mut repo,
+        &mut recuperacion,
+        "destino",
+        FRASE_PRUEBA,
+        ParametrosKdf::para_pruebas(),
+    )
+    .unwrap();
+    let mut otro = bd_en(dir.path(), "otro");
+    ejecutar_sincronizacion_personal(
+        &mut otro,
+        &mut recuperacion,
+        "destino",
+        FRASE_PRUEBA,
+        ParametrosKdf::para_pruebas(),
+    )
+    .unwrap();
+    assert_eq!(otro.obtener_eventos().unwrap().len(), 3);
+}
+
 // =========================================================
 // 3. CONTRATO COMÚN PARA LOS 3 ADAPTADORES DE TRANSPORTE (RNF-14, RNF-15)
 //    + CONVERGENCIA DEL EJEMPLO 2.6 EN AMBOS ÓRDENES + INCREMENTALIDAD (RNF-10)
