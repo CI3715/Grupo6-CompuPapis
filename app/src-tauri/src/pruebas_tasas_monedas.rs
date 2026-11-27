@@ -713,11 +713,12 @@ pub(crate) fn consultar_fixture_en_fecha(
 ) -> Result<crate::domain::Patrimonio, crate::domain::ErrorDominio> {
     use crate::domain::RepositorioEventos;
     let mut fixture = RepositorioEnMemoria::default();
-    for mut evento in repo.obtener_eventos().unwrap() {
+    for (indice, mut evento) in repo.obtener_eventos().unwrap().into_iter().enumerate() {
         if evento.tipo == "CuentaCreada" {
             evento.momento_registro = chrono::DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")
                 .unwrap()
-                .with_timezone(&chrono::Utc);
+                .with_timezone(&chrono::Utc)
+                + chrono::Duration::nanoseconds(indice as i64);
         }
         fixture.guardar_evento(&evento).unwrap();
     }

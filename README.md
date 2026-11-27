@@ -16,6 +16,7 @@ Cuentas Claras permite gestionar cuentas personales multimoneda, movimientos, ta
 - **Entrega 5 (usuarios):** Búsqueda de usuarios por nombre, consultas por correo e ID y pruebas para revisar que no se repitan nombres ni correos.
 - **Entrega 6 (amistades):** Tablas y consultas para mandar, aceptar y rechazar solicitudes de amistad, evitar solicitudes repetidas, ver los amigos y eliminar amistades.
 - **Entrega 7 (sincronización de gastos grupales):** descarga incremental de partes mediante `GET /cambios`, aplicación idempotente en cuentas personales elegidas por el usuario y conservación de partes pendientes. Los gastos registrados sin conexión se guardan en una cola y se reenvían con una clave de idempotencia; el libro personal permanece en el dispositivo. Ver [ADR 012](docs/adr/012-sincronizacion-libro-grupal.md) y [ADR 013](docs/adr/013-cola-gastos-idempotencia.md).
+- **Entrega 8 (respaldo y sincronización personal):** exportación e importación del libro por eventos, con cifrado opcional mediante frase de paso y fusión transaccional. La sincronización incremental usa Git o una carpeta compartida elegidos por el usuario, sin enviar el libro al servidor. Consulta la [guía de sincronización](docs/guia-sincronizacion-personal.md), el [formato de exportación](docs/formato-exportacion.md), la [ADR de cifrado](docs/adr/014-cifrado-respaldo-sincronizacion.md) y la [ADR de proyección y sincronización](docs/adr/015-libro-personal-sincronizado.md).
 - **Servidor:** PostgreSQL + Neon para funcionalidades sociales. Las cuentas, movimientos y saldos personales permanecen en SQLite local y no se envían al servidor.
 
 El libro personal sigue el flujo `Next.js → invoke() → Tauri/Rust → dominio → SQLite`. La sincronización de gastos grupales consulta la API Axum y aplica localmente las partes recibidas; no envía cuentas ni saldos personales. Las decisiones arquitectónicas están en [docs/adr](docs/adr/README.md).
@@ -151,14 +152,15 @@ cargo test --manifest-path app/src-tauri/Cargo.toml pruebas_tasas_cambio
 cargo test --manifest-path app/src-tauri/Cargo.toml pruebas_patrimonio
 ```
 
-Resultado esperado: **51 pruebas unitarias y 1 doctest** en la suite completa;
-el filtro `pruebas_tasas_cambio` ejecuta **8 pruebas** de validaciones, historial, anulación,
+El filtro `pruebas_tasas_cambio` ejecuta pruebas de validaciones, historial, anulación,
 precisión, consolidación y reapertura de SQLite. La suite completa también
 incluye cuentas y movimientos con monedas propias y las regresiones de las
 Entregas 2 y 3. El filtro `pruebas_patrimonio` ejecuta **6 regresiones** de
 gastos, ajustes históricos, precisión, contrato JSON y persistencia SQLite.
 La [verificación de integración del backend](docs/entrega-4-integracion-backend.md)
 detalla la resolución de conflictos y las comprobaciones actuales.
+
+Las pruebas y flujos automatizados de respaldo y sincronización se describen en la [verificación de Entrega 8](docs/entrega-8-verificacion.md).
 
 ## Formato
 

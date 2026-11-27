@@ -181,9 +181,101 @@ pub struct EventoLibro {
     pub datos_json: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventoRechazado {
+    pub evento_id: String,
+    pub motivo: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ResultadoFusion {
+    pub nuevos: usize,
+    pub ya_existian: usize,
+    pub rechazados: Vec<EventoRechazado>,
+}
+
+/// Ordena los eventos de forma determinista según la Sección 2.1:
+/// momento de registro, luego dispositivo de origen, luego identificador.
+pub fn ordenar_eventos_determinista(eventos: &[EventoLibro]) -> Vec<&EventoLibro> {
+    let mut ordenados: Vec<&EventoLibro> = eventos.iter().collect();
+    ordenados.sort_by(|a, b| {
+        a.momento_registro
+            .cmp(&b.momento_registro)
+            .then_with(|| a.dispositivo_origen.cmp(&b.dispositivo_origen))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    ordenados
+}
+
+/// Compara si dos eventos con el mismo identificador tienen el mismo contenido lógico.
+pub fn eventos_equivalentes(a: &EventoLibro, b: &EventoLibro) -> bool {
+    if a.id != b.id
+        || a.tipo != b.tipo
+        || a.momento_registro != b.momento_registro
+        || a.dispositivo_origen != b.dispositivo_origen
+    {
+        return false;
+    }
+    if a.datos_json == b.datos_json {
+        return true;
+    }
+    match (
+        serde_json::from_str::<serde_json::Value>(&a.datos_json),
+        serde_json::from_str::<serde_json::Value>(&b.datos_json),
+    ) {
+        (Ok(va), Ok(vb)) => va == vb,
+        _ => false,
+    }
+}
+
+/// Deriva un UUID determinista a partir del identificador de un evento del servidor (Sección 2.1),
+/// de modo que dos dispositivos que descargan la misma parte generen el mismo evento.
+pub fn id_derivado_evento_servidor(prefijo: &str, evento_servidor_id: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(prefijo.as_bytes());
+    hasher.update(b":");
+    hasher.update(evento_servidor_id.as_bytes());
+    let digest = hasher.finalize();
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    // Versión 5 (determinista) y variante RFC 4122
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    uuid::Uuid::from_bytes(bytes).to_string()
+}
+
+/// Valida que un conjunto completo de eventos proyecta un libro coherente y sin errores.
+pub fn validar_proyeccion_eventos(eventos: &[EventoLibro]) -> Result<(), ErrorDominio> {
+    proyectar_libro(eventos).map(|_| ())
+}
+
 pub trait RepositorioEventos {
     fn guardar_evento(&mut self, evento: &EventoLibro) -> Result<(), String>;
     fn obtener_eventos(&self) -> Result<Vec<EventoLibro>, String>;
+
+    /// Solo para eventos recién creados: conserva el orden causal si el reloj retrocede.
+    fn guardar_evento_local(&mut self, evento: &EventoLibro) -> Result<(), String> {
+        let mut nuevo = evento.clone();
+        nuevo.momento_registro = momento_causal(evento.momento_registro, &self.obtener_eventos()?)?;
+        self.guardar_evento(&nuevo)
+    }
+}
+
+pub(crate) fn momento_causal(
+    ahora: DateTime<Utc>,
+    eventos: &[EventoLibro],
+) -> Result<DateTime<Utc>, String> {
+    match eventos.iter().map(|e| e.momento_registro).max() {
+        Some(ultimo) if ahora <= ultimo => ultimo
+            .checked_add_signed(chrono::Duration::nanoseconds(1))
+            .ok_or_else(|| {
+                "No se puede asignar un momento posterior al último evento.".to_string()
+            }),
+        _ => Ok(ahora),
+    }
 }
 
 // ==========================================
@@ -326,6 +418,22 @@ enum CorreccionAlmacenada {
     Historica(CorreccionHistorica),
 }
 
+pub(crate) fn datos_evento_validos(tipo: &str, datos: &str) -> bool {
+    // Vemos si los datos corresponden al evento
+    match tipo {
+        "CuentaCreada" => serde_json::from_str::<DatosCuentaCreada>(datos).is_ok(),
+        "CategoriaCreada" => serde_json::from_str::<DatosCategoriaCreada>(datos).is_ok(),
+        "MovimientoRegistrado" => serde_json::from_str::<MovimientoAlmacenado>(datos).is_ok(),
+        "MovimientoCorregido" => serde_json::from_str::<CorreccionAlmacenada>(datos).is_ok(),
+        "GastoDeGrupoAplicado" => serde_json::from_str::<DatosGastoDeGrupoAplicado>(datos).is_ok(),
+        "MonedaCreada" => serde_json::from_str::<Moneda>(datos).is_ok(),
+        "TasaRegistrada" => serde_json::from_str::<TasaCambio>(datos).is_ok(),
+        "TasaEliminada" => serde_json::from_str::<DatosTasaEliminada>(datos).is_ok(),
+        "MonedaBaseCambiada" => serde_json::from_str::<DatosMonedaBaseCambiada>(datos).is_ok(),
+        _ => false,
+    }
+}
+
 fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDominio> {
     let mut eventos_aplicados = HashMap::new();
     let mut cuentas_orden = Vec::new();
@@ -338,13 +446,11 @@ fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDomi
     let mut ids_movimientos = HashSet::new();
     let mut eventos_servidor_aplicados = HashSet::new();
 
-    for ev in eventos {
+    let ordenados = ordenar_eventos_determinista(eventos);
+
+    for ev in ordenados {
         if let Some(anterior) = eventos_aplicados.insert(ev.id.clone(), ev) {
-            if anterior.tipo != ev.tipo
-                || anterior.datos_json != ev.datos_json
-                || anterior.momento_registro != ev.momento_registro
-                || anterior.dispositivo_origen != ev.dispositivo_origen
-            {
+            if !eventos_equivalentes(anterior, ev) {
                 return Err(error_libro());
             }
             continue;
@@ -815,7 +921,7 @@ pub fn ejecutar_crear_cuenta<R: RepositorioEventos>(
         datos_json: serde_json::to_string(&datos).unwrap(),
     };
 
-    repo.guardar_evento(&evento).map_err(|_| {
+    repo.guardar_evento_local(&evento).map_err(|_| {
         ErrorDominio::nuevo("general", "No se pudo guardar la cuenta en el dispositivo.")
     })?;
 
@@ -937,7 +1043,7 @@ pub fn ejecutar_crear_categoria<R: RepositorioEventos>(
         datos_json: serde_json::to_string(&datos).unwrap(),
     };
 
-    repo.guardar_evento(&evento)
+    repo.guardar_evento_local(&evento)
         .map_err(|_| ErrorDominio::nuevo("general", "No se pudo guardar la categoría."))?;
 
     Ok(Categoria {
@@ -1055,7 +1161,7 @@ pub fn ejecutar_registrar_movimiento<R: RepositorioEventos>(
         datos_json: serde_json::to_string(&datos).unwrap(),
     };
 
-    repo.guardar_evento(&evento)
+    repo.guardar_evento_local(&evento)
         .map_err(|_| ErrorDominio::nuevo("general", "No se pudo guardar el movimiento."))?;
 
     ejecutar_obtener_detalle_cuenta(repo, cuenta_id)
@@ -1154,7 +1260,7 @@ pub fn ejecutar_corregir_movimiento<R: RepositorioEventos>(
         datos_json: serde_json::to_string(&datos).unwrap(),
     };
 
-    repo.guardar_evento(&evento)
+    repo.guardar_evento_local(&evento)
         .map_err(|_| ErrorDominio::nuevo("general", "No se pudo registrar la corrección."))?;
 
     ejecutar_obtener_detalle_cuenta(repo, cuenta_id)

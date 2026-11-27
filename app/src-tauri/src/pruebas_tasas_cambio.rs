@@ -2,10 +2,14 @@ use crate::domain::*;
 use crate::tasas_monedas::*;
 use chrono::{TimeZone, Utc};
 
+static SECUENCIA_RELOJ: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 struct RelojFijo;
 impl Reloj for RelojFijo {
     fn ahora(&self) -> chrono::DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 10, 28, 16, 0, 0).unwrap()
+            + chrono::Duration::nanoseconds(
+                SECUENCIA_RELOJ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            )
     }
 }
 fn registrar<R: RepositorioEventos>(

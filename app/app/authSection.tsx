@@ -42,12 +42,13 @@ export function TopAuthBar({
 }: AuthBarProps) {
   return (
     <>
-      <nav className="top-auth-bar">
+      <nav className="top-auth-bar" aria-label="Barra superior de sesión">
         <div className="top-auth-brand">
-          <span className="header-tag" style={{ margin: 0 }}>
-            Cuentas Claras
+          <span className="brand-mark">
+            <span className="brand-dot" aria-hidden="true" />
+            <span>Cuentas Claras</span>
           </span>
-          <span className="top-auth-status">
+          <span className="top-auth-status top-auth-tagline">
             Modo Local-First • Datos financieros 100% en este dispositivo
           </span>
         </div>
@@ -68,8 +69,7 @@ export function TopAuthBar({
                   </span>
                   <button
                     type="button"
-                    className="btn btn-ghost"
-                    style={{ padding: "6px 12px", fontSize: "13px" }}
+                    className="btn btn-ghost btn-sm"
                     disabled={sincronizacion.sincronizando}
                     onClick={() => void sincronizacion.sincronizar()}
                   >
@@ -77,8 +77,7 @@ export function TopAuthBar({
                   </button>
                   <button
                     type="button"
-                    className="btn btn-ghost"
-                    style={{ padding: "6px 12px", fontSize: "13px" }}
+                    className="btn btn-ghost btn-sm"
                     title="Reiniciar cursor a cero"
                     disabled={sincronizacion.sincronizando}
                     onClick={() => void sincronizacion.reiniciarCursor()}
@@ -96,14 +95,14 @@ export function TopAuthBar({
                   )
                 }
                 title="Ver perfil de usuario"
+                aria-expanded={vistaAuth === "perfil"}
               >
-                <span>●</span>
+                <span className="user-pill-dot" aria-hidden="true" />
                 <span>{usuario.nombre_visible}</span>
               </button>
               <button
                 type="button"
-                className="btn btn-ghost"
-                style={{ padding: "6px 12px", fontSize: "13px" }}
+                className="btn btn-ghost btn-sm"
                 onClick={onCerrarSesion}
               >
                 Cerrar sesión
@@ -112,8 +111,7 @@ export function TopAuthBar({
           ) : (
             <button
               type="button"
-              className="btn btn-primary"
-              style={{ padding: "7px 14px", fontSize: "13px" }}
+              className="btn btn-primary btn-sm"
               onClick={() =>
                 onCambiarVistaAuth(
                   vistaAuth === "ninguna" ? "login" : "ninguna",
@@ -128,16 +126,14 @@ export function TopAuthBar({
 
       {/* Aviso de sesión expirada (Sección 2.4: no bloquea funciones personales) */}
       {sesionVencida && !usuario && (
-        <div className="session-banner-expired">
+        <div className="session-banner-expired" role="status">
           <span>
             <strong>Tu sesión venció, inicia sesión de nuevo.</strong> Tus
-            cuentas, movimientos y patrimonio siguen funcionando normalmente
-            14].
+            cuentas, movimientos y patrimonio siguen funcionando normalmente.
           </span>
           <button
             type="button"
-            className="btn btn-secondary"
-            style={{ padding: "5px 12px", fontSize: "12px" }}
+            className="btn btn-secondary btn-xs"
             onClick={() => onCambiarVistaAuth("login")}
           >
             Iniciar sesión
@@ -318,20 +314,14 @@ export function AuthScreens({
     const vigencia = perfilDetallado.vencimiento ?? perfilDetallado.expira_en;
 
     return (
-      <section className="auth-screen-container">
+      <section className="auth-screen-container" aria-label="Perfil de usuario">
         <div className="form-card">
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
+          <div className="auth-card-header">
             <h2 className="form-title">Perfil de usuario</h2>
             <button
               type="button"
-              className="btn btn-ghost"
-              style={{ padding: "4px 10px" }}
+              className="btn btn-ghost btn-icon"
+              aria-label="Cerrar perfil"
               onClick={() => cambiarVista("ninguna")}
             >
               ✕
@@ -364,12 +354,14 @@ export function AuthScreens({
             {vigencia && (
               <div>
                 <span className="profile-item-label">Vigencia de sesión</span>
-                <span className="profile-item-value">{vigencia}</span>
+                <span className="profile-item-value">
+                  {formatearFechaHora(vigencia)}
+                </span>
               </div>
             )}
           </div>
 
-          <div className="form-actions" style={{ marginTop: "24px" }}>
+          <div className="form-actions form-actions-spaced">
             <button
               type="button"
               className="btn btn-ghost"
@@ -380,7 +372,6 @@ export function AuthScreens({
             <button
               type="button"
               className="btn btn-danger"
-              style={{ border: "1px solid var(--error-border)" }}
               onClick={onCerrarSesion}
             >
               Cerrar sesión
@@ -393,21 +384,17 @@ export function AuthScreens({
 
   // Vistas de Inicio de Sesión y Registro
   return (
-    <section className="auth-screen-container">
+    <section
+      className="auth-screen-container"
+      aria-label="Autenticación de cuenta"
+    >
       <div className="form-card">
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: "12px",
-          }}
-        >
+        <div className="auth-card-header">
           <span className="header-tag">Cuenta en el servidor (Opcional)</span>
           <button
             type="button"
-            className="btn btn-ghost"
-            style={{ padding: "4px 10px" }}
+            className="btn btn-ghost btn-icon"
+            aria-label="Cerrar pantalla de sesión"
             onClick={() => cambiarVista("ninguna")}
           >
             ✕
@@ -415,9 +402,11 @@ export function AuthScreens({
         </div>
 
         {/* Selector entre Iniciar sesión y Registrarse */}
-        <div className="auth-tabs">
+        <div className="auth-tabs" role="tablist" aria-label="Tipo de acceso">
           <button
             type="button"
+            role="tab"
+            aria-selected={vista === "login"}
             className={`auth-tab ${vista === "login" ? "active" : ""}`}
             onClick={() => cambiarVista("login")}
           >
@@ -425,6 +414,8 @@ export function AuthScreens({
           </button>
           <button
             type="button"
+            role="tab"
+            aria-selected={vista === "registro"}
             className={`auth-tab ${vista === "registro" ? "active" : ""}`}
             onClick={() => cambiarVista("registro")}
           >
@@ -439,29 +430,21 @@ export function AuthScreens({
         </div>
 
         {mensajeExito && (
-          <div
-            style={{
-              backgroundColor: "var(--brand-light)",
-              border: "1px solid var(--brand-primary)",
-              color: "#065F46",
-              padding: "12px 14px",
-              borderRadius: "8px",
-              fontSize: "13px",
-              marginBottom: "16px",
-            }}
-          >
+          <div className="success-alert" role="status">
             {mensajeExito}
           </div>
         )}
 
         {error && (
-          <div className="error-alert">
-            <strong>!</strong>
-            <div>
-              {error.campo !== "general" && error.campo !== "conexion" && (
-                <strong>Campo «{error.campo}»: </strong>
-              )}
-              <span>{error.mensaje}</span>
+          <div className="error-alert" role="alert">
+            <div className="error-alert-body">
+              <strong aria-hidden="true">!</strong>
+              <div>
+                {error.campo !== "general" && error.campo !== "conexion" && (
+                  <strong>Campo «{error.campo}»: </strong>
+                )}
+                <span>{error.mensaje}</span>
+              </div>
             </div>
           </div>
         )}
@@ -469,8 +452,11 @@ export function AuthScreens({
         {vista === "login" ? (
           <form onSubmit={manejarLogin} noValidate>
             <div className="form-group">
-              <label className="form-label">Correo electrónico</label>
+              <label className="form-label" htmlFor="login-correo">
+                Correo electrónico
+              </label>
               <input
+                id="login-correo"
                 type="email"
                 value={correoLogin}
                 onChange={(e) => setCorreoLogin(e.target.value)}
@@ -481,8 +467,11 @@ export function AuthScreens({
             </div>
 
             <div className="form-group">
-              <label className="form-label">Contraseña</label>
+              <label className="form-label" htmlFor="login-password">
+                Contraseña
+              </label>
               <input
+                id="login-password"
                 type="password"
                 value={passwordLogin}
                 onChange={(e) => setPasswordLogin(e.target.value)}
@@ -512,12 +501,16 @@ export function AuthScreens({
         ) : (
           <form onSubmit={manejarRegistro} noValidate>
             <div className="form-group">
-              <label className="form-label">Nombre de usuario</label>
+              <label className="form-label" htmlFor="registro-usuario">
+                Nombre de usuario
+              </label>
               <input
+                id="registro-usuario"
                 type="text"
                 value={nombreUsuario}
                 onChange={(e) => setNombreUsuario(e.target.value)}
                 placeholder="ej: test._1"
+                autoComplete="username"
                 className={`form-control ${error?.campo === "nombre_usuario" ? "input-error" : ""}`}
               />
               <span className="field-hint">
@@ -527,34 +520,46 @@ export function AuthScreens({
             </div>
 
             <div className="form-group">
-              <label className="form-label">Nombre visible</label>
+              <label className="form-label" htmlFor="registro-nombre">
+                Nombre visible
+              </label>
               <input
+                id="registro-nombre"
                 type="text"
                 value={nombreVisible}
                 onChange={(e) => setNombreVisible(e.target.value)}
-                placeholder="El nombre que veran tus amigos"
+                placeholder="El nombre que verán tus amigos"
+                autoComplete="name"
                 className={`form-control ${error?.campo === "nombre_visible" ? "input-error" : ""}`}
               />
             </div>
 
             <div className="form-group">
-              <label className="form-label">Correo electrónico</label>
+              <label className="form-label" htmlFor="registro-correo">
+                Correo electrónico
+              </label>
               <input
+                id="registro-correo"
                 type="email"
                 value={correoRegistro}
                 onChange={(e) => setCorreoRegistro(e.target.value)}
                 placeholder="ejemplo@correo.com"
+                autoComplete="email"
                 className={`form-control ${error?.campo === "correo" ? "input-error" : ""}`}
               />
             </div>
 
             <div className="form-group">
-              <label className="form-label">Contraseña</label>
+              <label className="form-label" htmlFor="registro-password">
+                Contraseña
+              </label>
               <input
+                id="registro-password"
                 type="password"
                 value={passwordRegistro}
                 onChange={(e) => setPasswordRegistro(e.target.value)}
                 placeholder="Mínimo 10 caracteres"
+                autoComplete="new-password"
                 className={`form-control ${error?.campo === "password" ? "input-error" : ""}`}
               />
               <span className="field-hint">

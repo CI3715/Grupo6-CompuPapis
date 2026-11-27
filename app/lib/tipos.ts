@@ -64,7 +64,8 @@ export interface DetalleCuenta {
   movimientos: Movimiento[];
 }
 
-export type Pantalla = "cuentas" | "patrimonio" | "tasas" | "social";
+export type Pantalla =
+  "cuentas" | "patrimonio" | "tasas" | "social" | "respaldo";
 
 export interface Tasa {
   id: string;
@@ -133,4 +134,45 @@ export interface GastoEnCola {
   monto: string;
   estado: "pendiente" | "rechazado";
   motivo: string | null;
+}
+
+// --- Entrega 8: Respaldo y Sincronización Personal ---
+export interface ResumenExportacion {
+  ruta: string;
+  cantidadEventos: number;
+  cifrado: boolean;
+  fechaExportacion: string;
+}
+
+export interface EventoRechazado {
+  eventoId: string;
+  motivo: string;
+}
+
+export interface ResultadoFusion {
+  nuevos: number;
+  yaExistian: number;
+  rechazados: EventoRechazado[];
+}
+
+export type TipoDestinoSync = "carpeta" | "git";
+
+export interface EstadoConfigSyncPersonal {
+  configurado: boolean;
+  dispositivoId: string;
+  tipo: TipoDestinoSync | null;
+  destino: string | null;
+  rama: string | null;
+  usuarioGit: string | null;
+  tieneFrase: boolean;
+  tieneCredencialGit: boolean;
+  ultimaSincronizacion: string | null;
+}
+
+export interface InformeSyncPersonal {
+  enviados: number;
+  recibidos: number;
+  yaExistian: number;
+  rechazados: EventoRechazado[];
+  ultimaSincronizacion: string;
 }

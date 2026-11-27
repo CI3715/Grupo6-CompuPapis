@@ -9,6 +9,7 @@ import {
   guardarCacheSocial,
   leerCacheSocial,
 } from "@/lib/social-cache";
+import { obtenerClaseBadgeMoneda } from "@/lib/utilidades";
 
 type Amigo = {
   id: string;
@@ -258,16 +259,26 @@ export default function PantallaSocial({
   const nombreGrupo = (id: string) =>
     grupos?.grupos.find((g) => g.id === id)?.nombre ?? "Grupo";
   return (
-    <main className="app-container social-page">
-      <header className="header">
-        <div>
-          <span className="header-tag">Cuentas Claras • Compartido</span>
-          <h1 className="header-title">Amigos y grupos</h1>
+    <main className="page-view">
+      <section className="hero-card" aria-label="Amigos y grupos">
+        <div className="hero-top">
+          <div>
+            <span className="hero-eyebrow">Cuentas Claras • Compartido</span>
+            <h1 className="hero-title">Amigos y grupos</h1>
+            <p className="hero-subtitle">
+              Divide gastos con tus amigos y sincroniza tus partes en tus
+              cuentas personales.
+            </p>
+          </div>
+          <button
+            className="btn btn-hero btn-sm"
+            type="button"
+            onClick={volver}
+          >
+            ← Mis cuentas
+          </button>
         </div>
-        <button className="btn btn-ghost" type="button" onClick={volver}>
-          Cuentas
-        </button>
-      </header>
+      </section>
       {!sesion ? (
         <section className="form-card">
           <h2 className="form-title">
@@ -287,10 +298,16 @@ export default function PantallaSocial({
         </section>
       ) : (
         <>
-          <nav className="social-tabs" aria-label="Secciones compartidas">
+          <nav
+            className="social-tabs"
+            role="tablist"
+            aria-label="Secciones compartidas"
+          >
             <button
               type="button"
-              className={`btn ${seccion === "amigos" ? "btn-primary" : "btn-ghost"}`}
+              role="tab"
+              aria-selected={seccion === "amigos"}
+              className={`btn btn-sm ${seccion === "amigos" ? "btn-primary" : "btn-ghost"}`}
               onClick={() => {
                 setSeccion("amigos");
                 setDetalle(null);
@@ -300,7 +317,9 @@ export default function PantallaSocial({
             </button>
             <button
               type="button"
-              className={`btn ${seccion === "grupos" ? "btn-primary" : "btn-ghost"}`}
+              role="tab"
+              aria-selected={seccion === "grupos"}
+              className={`btn btn-sm ${seccion === "grupos" ? "btn-primary" : "btn-ghost"}`}
               onClick={() => setSeccion("grupos")}
             >
               Grupos
@@ -311,20 +330,22 @@ export default function PantallaSocial({
               <p>{error}</p>
               {error.includes("sin usuario identificado") && (
                 <div>
-                  <label>
+                  <label className="checkbox-row">
                     <input
                       type="checkbox"
                       checked={confirmarDatosAnteriores}
                       onChange={(e) =>
                         setConfirmarDatosAnteriores(e.target.checked)
                       }
-                    />{" "}
-                    Confirmo que los datos anteriores de sincronización
-                    pertenecen a mi usuario actual.
+                    />
+                    <span>
+                      Confirmo que los datos anteriores de sincronización
+                      pertenecen a mi usuario actual.
+                    </span>
                   </label>
                   <button
                     type="button"
-                    className="btn btn-ghost"
+                    className="btn btn-secondary btn-sm mt-sm"
                     disabled={!confirmarDatosAnteriores || ocupado}
                     onClick={() =>
                       void ejecutar(async () => {
@@ -343,7 +364,7 @@ export default function PantallaSocial({
               {!amistades && !grupos && !cargandoInicial && (
                 <button
                   type="button"
-                  className="btn btn-ghost"
+                  className="btn btn-secondary btn-sm"
                   disabled={ocupado}
                   onClick={() => void ejecutar(cargar)}
                 >
@@ -608,19 +629,26 @@ export default function PantallaSocial({
           ) : detalle ? (
             <div className="social-grid">
               <section className="form-card social-wide">
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => setDetalle(null)}
-                >
-                  ← Grupos
-                </button>
-                <h2 className="form-title">{detalle.nombre}</h2>
+                <div className="detalle-back">
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setDetalle(null)}
+                  >
+                    ← Grupos
+                  </button>
+                </div>
+                <div className="account-name-row">
+                  <h2 className="form-title">{detalle.nombre}</h2>
+                  <span className={obtenerClaseBadgeMoneda(detalle.moneda)}>
+                    {detalle.moneda}
+                  </span>
+                </div>
                 <p className="social-muted">
-                  {detalle.descripcion || "Sin descripción"} · {detalle.moneda}
+                  {detalle.descripcion || "Sin descripción"}
                   {detalle.actividad ? ` · ${detalle.actividad}` : ""}
                 </p>
-                <h3>Miembros</h3>
+                <h3 className="social-subheading">Miembros</h3>
                 {detalle.miembros.map((m) => (
                   <div className="social-row" key={m.id}>
                     <span>
@@ -628,7 +656,7 @@ export default function PantallaSocial({
                       <span className="social-muted">@{m.nombre_usuario}</span>
                     </span>
                     {m.es_admin && (
-                      <span className="social-muted">Administrador</span>
+                      <span className="badge badge-grupo">Administrador</span>
                     )}
                   </div>
                 ))}
@@ -801,19 +829,28 @@ export default function PantallaSocial({
                 <p className="social-muted">
                   Positivo: le deben. Negativo: debe.
                 </p>
-                {detalle.balances.map((b) => (
-                  <div className="social-row" key={b.usuario_id}>
-                    <div>
-                      <strong>{b.nombre_visible}</strong>
-                      <p className="social-muted">
-                        Pagó {b.pagado} · Le corresponde {b.corresponde}
-                      </p>
+                {detalle.balances.map((b) => {
+                  const esNegativo = b.balance.startsWith("-");
+                  const esCero = Number(b.balance) === 0;
+                  const claseBalance = esCero
+                    ? ""
+                    : esNegativo
+                      ? "amount-negative"
+                      : "amount-positive";
+                  return (
+                    <div className="social-row" key={b.usuario_id}>
+                      <div>
+                        <strong>{b.nombre_visible}</strong>
+                        <p className="social-muted">
+                          Pagó {b.pagado} · Le corresponde {b.corresponde}
+                        </p>
+                      </div>
+                      <strong className={claseBalance}>
+                        {b.balance} {detalle.moneda}
+                      </strong>
                     </div>
-                    <strong>
-                      {b.balance} {detalle.moneda}
-                    </strong>
-                  </div>
-                ))}
+                  );
+                })}
               </section>
             </div>
           ) : (
@@ -907,14 +944,19 @@ export default function PantallaSocial({
                   grupos.grupos.map((g) => (
                     <div className="social-row" key={g.id}>
                       <div>
-                        <strong>{g.nombre}</strong>
+                        <div className="account-name-row">
+                          <strong>{g.nombre}</strong>
+                          <span className={obtenerClaseBadgeMoneda(g.moneda)}>
+                            {g.moneda}
+                          </span>
+                        </div>
                         <p className="social-muted">
-                          {g.moneda} ·{" "}
                           {g.es_admin ? "Administrador" : "Miembro"}
                         </p>
                       </div>
                       <button
-                        className="btn btn-secondary"
+                        type="button"
+                        className="btn btn-secondary btn-sm"
                         disabled={ocupado}
                         onClick={() => void ejecutar(() => abrir(g.id))}
                       >

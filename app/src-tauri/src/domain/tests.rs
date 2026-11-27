@@ -2,6 +2,36 @@ use super::*;
 use crate::pruebas_tasas_monedas::{aviso_faltante, consultar_fixture_en_fecha};
 
 #[test]
+fn proyeccion_usa_instante_dispositivo_e_identificador_sin_depender_del_orden_recibido() {
+    let momento = chrono::DateTime::parse_from_rfc3339("2026-10-20T12:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let evento = |id: &str, dispositivo: &str, codigo: &str, instante| EventoLibro {
+        id: id.into(),
+        tipo: "MonedaBaseCambiada".into(),
+        momento_registro: instante,
+        dispositivo_origen: dispositivo.into(),
+        datos_json: serde_json::json!({"codigo": codigo}).to_string(),
+    };
+    let eventos = vec![
+        evento("b", "z", "EUR", momento),
+        evento("z", "a", "VES", momento),
+        evento("a", "z", "USD", momento),
+        evento("0", "a", "USD", momento + chrono::Duration::nanoseconds(1)),
+    ];
+    let ordenados = ordenar_eventos_determinista(&eventos);
+    assert_eq!(
+        ordenados.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+        vec!["z", "a", "b", "0"]
+    );
+    let mut repo = RepositorioEnMemoria::default();
+    for ev in eventos.iter().rev() {
+        repo.guardar_evento(ev).unwrap();
+    }
+    assert_eq!(ejecutar_obtener_moneda_base(&repo).unwrap(), "USD");
+}
+
+#[test]
 fn test_ejemplo_seccion_2_2_correccion_e_inv_04_inv_05() {
     let mut repo = RepositorioEnMemoria::default();
     let hoy = chrono::Local::now()

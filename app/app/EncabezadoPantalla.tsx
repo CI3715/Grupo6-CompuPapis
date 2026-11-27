@@ -3,7 +3,6 @@ import type { PropsPantalla } from "@/lib/tipos";
 export default function EncabezadoPantalla({
   titulo,
   etiquetaIr,
-  onVolver,
   onIr,
 }: PropsPantalla & { titulo: string; etiquetaIr: string }) {
   return (
@@ -12,12 +11,13 @@ export default function EncabezadoPantalla({
         <span className="header-tag">Cuentas Claras • Local-First</span>
         <h1 className="header-title">{titulo}</h1>
       </div>
-      <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-        <button type="button" className="btn btn-ghost" onClick={onVolver}>
-          Cuentas
-        </button>
-        <button type="button" className="btn btn-secondary" onClick={onIr}>
-          {etiquetaIr}
+      <div className="header-actions">
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          onClick={onIr}
+        >
+          Ir a {etiquetaIr} →
         </button>
       </div>
     </header>
