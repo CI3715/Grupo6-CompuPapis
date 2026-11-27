@@ -1045,6 +1045,21 @@ impl RepositorioSqlite {
 }
 
 impl RepositorioEventos for RepositorioSqlite {
+    fn guardar_evento_local(&mut self, evento: &EventoLibro) -> Result<(), String> {
+        let mut conn = self.abrir()?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        let eventos = leer_eventos(&tx)?;
+        if eventos.iter().any(|e| e.id == evento.id) {
+            return Err("El identificador ya pertenece a otro evento.".into());
+        }
+        let momento = crate::domain::momento_causal(evento.momento_registro, &eventos)?;
+        tx.execute("INSERT INTO eventos_libro (id, tipo, momento_registro, dispositivo_origen, datos_json) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![evento.id, evento.tipo, momento.to_rfc3339(), evento.dispositivo_origen, evento.datos_json]).map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())
+    }
+
     fn guardar_evento(&mut self, evento: &EventoLibro) -> Result<(), String> {
         let conn = self.abrir()?;
         // INV-04 e INV-13: La tabla de eventos solo admite inserciones idempotentes

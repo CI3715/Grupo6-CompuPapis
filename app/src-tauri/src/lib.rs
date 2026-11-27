@@ -1,4 +1,5 @@
 mod autenticacion;
+mod diagnostico_libro;
 pub mod respaldo;
 pub mod sincronizacion;
 pub mod sincronizacion_personal;
@@ -332,6 +333,29 @@ fn listar_cuentas(state: State<'_, AppState>) -> Result<ResumenCuentas, ErrorDom
 }
 
 #[tauri::command]
+async fn diagnosticar_libro(
+    state: State<'_, AppState>,
+) -> Result<diagnostico_libro::DiagnosticoLibro, ErrorDominio> {
+    use crate::domain::RepositorioEventos;
+    let repo = state
+        .repo
+        .lock()
+        .map_err(|_| ErrorDominio::nuevo("almacenamiento", "No se pudo acceder al libro."))?
+        .clone();
+    tokio::task::spawn_blocking(move || {
+        let eventos = repo.obtener_eventos().map_err(|_| {
+            ErrorDominio::nuevo(
+                "almacenamiento",
+                "No se pudieron leer los eventos del libro.",
+            )
+        })?;
+        Ok(diagnostico_libro::diagnosticar(&eventos))
+    })
+    .await
+    .map_err(|_| ErrorDominio::nuevo("almacenamiento", "No se pudo completar el diagnóstico."))?
+}
+
+#[tauri::command]
 fn crear_cuenta(
     state: State<'_, AppState>,
     nombre: String,
@@ -643,6 +667,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            diagnosticar_libro,
             ping_servidor,
             autenticacion::registrar_usuario,
             autenticacion::iniciar_sesion,
