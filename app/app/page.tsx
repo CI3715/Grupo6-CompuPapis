@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import AppShell from "@/app/AppShell";
 import PantallaPatrimonio from "@/app/patrimonio";
+import PantallaRespaldo from "@/app/respaldo";
 import PantallaSocial from "@/app/social";
 import PantallaTasas from "@/app/tasas";
 import { useSincronizacion } from "@/app/sincronizacion";
@@ -13,6 +14,8 @@ import type {
   Categoria,
   DetalleCuenta,
   ErrorDominio,
+  EstadoConfigSyncPersonal,
+  InformeSyncPersonal,
   Moneda,
   Movimiento,
   Pantalla,
@@ -188,6 +191,8 @@ export default function MisCuentasPage() {
   const [guardando, setGuardando] = useState(false);
   const [estadoServidor, setEstadoServidor] = useState("");
   const [probandoServidor, setProbandoServidor] = useState(false);
+  const [informeSyncPersonal, setInformeSyncPersonal] =
+    useState<InformeSyncPersonal | null>(null);
 
   const manejarCerrarSesion = async () => {
     try {
@@ -246,6 +251,28 @@ export default function MisCuentasPage() {
       })
       .catch((err: unknown) => {
         if (activo) setError(normalizarError(err));
+      });
+    // Entrega 8 (Sección 2.5.3): sincroniza al abrir la app si hay un destino configurado
+    invoke<EstadoConfigSyncPersonal>("obtener_config_sync_personal")
+      .then((cfg) => {
+        if (!activo || !cfg.configurado) return;
+        return invoke<InformeSyncPersonal>("sincronizar_personal_ahora").then(
+          (inf) => {
+            if (!activo) return;
+            setInformeSyncPersonal(inf);
+            if (inf.recibidos > 0) {
+              return leerDatos().then((datos) => {
+                if (!activo) return;
+                setResumen(datos.resumen);
+                setMonedas(datos.monedas);
+                setCategorias(datos.categorias);
+              });
+            }
+          },
+        );
+      })
+      .catch(() => {
+        // Sin conexión o sin Tauri: las cuentas personales siguen operando normalmente
       });
     return () => {
       activo = false;
@@ -488,6 +515,13 @@ export default function MisCuentasPage() {
       <PantallaTasas
         onVolver={() => irAPantalla("cuentas")}
         onIr={() => irAPantalla("patrimonio")}
+      />
+    );
+  } else if (pantalla === "respaldo") {
+    contenidoPantalla = (
+      <PantallaRespaldo
+        alCambiarLibro={cargarDatos}
+        informeInicial={informeSyncPersonal}
       />
     );
   } else if (cuentaSeleccionadaId && cuentaSeleccionada && detalleCuenta) {

@@ -1,7 +1,11 @@
-use crate::domain::{EventoLibro, RepositorioEventos};
-use chrono::{DateTime, Utc};
+use crate::domain::{
+    EventoLibro, EventoRechazado, RepositorioEventos, ResultadoFusion, eventos_equivalentes,
+    id_derivado_evento_servidor, validar_proyeccion_eventos,
+};
+use chrono::{DateTime, NaiveDate, Utc};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,6 +149,45 @@ impl RepositorioSqlite {
         )
         .map_err(|e| e.to_string())?;
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS config_local (
+                clave TEXT PRIMARY KEY,
+                valor TEXT NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+
+        // Cada instalación genera su identificador único de dispositivo la primera vez que se abre (Sección 2.1)
+        let nuevo_dispositivo = uuid::Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT OR IGNORE INTO config_local (clave, valor) VALUES ('dispositivo_id', ?1)",
+            params![nuevo_dispositivo],
+        )
+        .map_err(|e| e.to_string())?;
+
+        // Tablas de estado local para sincronización personal entre dispositivos propios (nunca guardan secretos)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS sync_personal_lotes_leidos (
+                destino_clave TEXT NOT NULL,
+                lote_clave TEXT NOT NULL,
+                leido_en TEXT NOT NULL,
+                PRIMARY KEY (destino_clave, lote_clave)
+            )",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS sync_personal_eventos_enviados (
+                destino_clave TEXT NOT NULL,
+                evento_id TEXT NOT NULL,
+                PRIMARY KEY (destino_clave, evento_id)
+            )",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+
         conn.execute_batch(
             "CREATE TRIGGER IF NOT EXISTS impedir_modificar_eventos
              BEFORE UPDATE ON eventos_libro
@@ -167,6 +210,249 @@ impl RepositorioSqlite {
 
     fn abrir(&self) -> Result<Connection, String> {
         Connection::open(&self.ruta_db).map_err(|e| e.to_string())
+    }
+
+    /// Calcula un momento_registro determinista para un gasto de grupo aplicado:
+    /// nunca anterior a la creación de la cuenta destino, garantizando que dos dispositivos
+    /// con la misma cuenta y el mismo gasto produzcan exactamente el mismo evento (Sección 2.1).
+    fn momento_determinista_gasto_grupo(&self, cuenta_id: &str, fecha_gasto: &str) -> DateTime<Utc> {
+        let base_fecha = NaiveDate::parse_from_str(fecha_gasto, "%Y-%m-%d")
+            .ok()
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+            .unwrap_or_else(Utc::now);
+
+        let momento_cuenta = self
+            .obtener_eventos()
+            .ok()
+            .and_then(|evs| {
+                evs.into_iter().find_map(|e| {
+                    if e.tipo != "CuentaCreada" {
+                        return None;
+                    }
+                    let datos: crate::domain::DatosCuentaCreada =
+                        serde_json::from_str(&e.datos_json).ok()?;
+                    if datos.cuenta_id == cuenta_id {
+                        Some(e.momento_registro)
+                    } else {
+                        None
+                    }
+                })
+            });
+
+        match momento_cuenta {
+            Some(mc) if base_fecha <= mc => mc + chrono::Duration::milliseconds(1),
+            _ => base_fecha,
+        }
+    }
+
+    pub fn dispositivo_id(&self) -> Result<String, String> {
+        let conn = self.abrir()?;
+        conn.query_row(
+            "SELECT valor FROM config_local WHERE clave = 'dispositivo_id'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    pub fn obtener_config_local(&self, clave: &str) -> Result<Option<String>, String> {
+        use rusqlite::OptionalExtension;
+        self.abrir()?
+            .query_row(
+                "SELECT valor FROM config_local WHERE clave = ?1",
+                [clave],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn guardar_config_local(&self, clave: &str, valor: &str) -> Result<(), String> {
+        self.abrir()?
+            .execute(
+                "INSERT OR REPLACE INTO config_local (clave, valor) VALUES (?1, ?2)",
+                params![clave, valor],
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn eliminar_config_local(&self, clave: &str) -> Result<(), String> {
+        self.abrir()?
+            .execute("DELETE FROM config_local WHERE clave = ?1", [clave])
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn lotes_leidos_destino(&self, destino_clave: &str) -> Result<HashSet<String>, String> {
+        let conn = self.abrir()?;
+        let mut stmt = conn
+            .prepare("SELECT lote_clave FROM sync_personal_lotes_leidos WHERE destino_clave = ?1")
+            .map_err(|e| e.to_string())?;
+        let filas = stmt
+            .query_map([destino_clave], |row| row.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        let mut set = HashSet::new();
+        for f in filas {
+            set.insert(f.map_err(|e| e.to_string())?);
+        }
+        Ok(set)
+    }
+
+    pub fn marcar_lote_leido(&self, destino_clave: &str, lote_clave: &str) -> Result<(), String> {
+        self.abrir()?
+            .execute(
+                "INSERT OR IGNORE INTO sync_personal_lotes_leidos (destino_clave, lote_clave, leido_en) VALUES (?1, ?2, ?3)",
+                params![destino_clave, lote_clave, Utc::now().to_rfc3339()],
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn eventos_enviados_destino(&self, destino_clave: &str) -> Result<HashSet<String>, String> {
+        let conn = self.abrir()?;
+        let mut stmt = conn
+            .prepare("SELECT evento_id FROM sync_personal_eventos_enviados WHERE destino_clave = ?1")
+            .map_err(|e| e.to_string())?;
+        let filas = stmt
+            .query_map([destino_clave], |row| row.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        let mut set = HashSet::new();
+        for f in filas {
+            set.insert(f.map_err(|e| e.to_string())?);
+        }
+        Ok(set)
+    }
+
+    pub fn marcar_eventos_enviados(
+        &self,
+        destino_clave: &str,
+        evento_ids: &[String],
+    ) -> Result<(), String> {
+        let mut conn = self.abrir()?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        for id in evento_ids {
+            tx.execute(
+                "INSERT OR IGNORE INTO sync_personal_eventos_enviados (destino_clave, evento_id) VALUES (?1, ?2)",
+                params![destino_clave, id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Fusiona un conjunto de eventos entrantes en el libro local en una sola transacción (Sección 2.1, INV-13, INV-14).
+    /// - Los eventos que ya existen con contenido idéntico se cuentan en `ya_existian`.
+    /// - Los eventos con mismo id y contenido distinto se reportan en `rechazados` y no alteran el libro.
+    /// - El resto se valida y aplica atómicamente en una única transacción.
+    pub fn fusionar_eventos(
+        &mut self,
+        entrantes: &[EventoLibro],
+    ) -> Result<ResultadoFusion, String> {
+        let existentes = self.obtener_eventos()?;
+        let mut mapa_actual: HashMap<String, EventoLibro> = existentes
+            .iter()
+            .cloned()
+            .map(|e| (e.id.clone(), e))
+            .collect();
+
+        let mut ya_existian = 0usize;
+        let mut rechazados: Vec<EventoRechazado> = Vec::new();
+        let mut candidatos_nuevos: Vec<EventoLibro> = Vec::new();
+
+        for ev in entrantes {
+            if let Some(prev) = mapa_actual.get(&ev.id) {
+                if eventos_equivalentes(prev, ev) {
+                    ya_existian += 1;
+                } else {
+                    rechazados.push(EventoRechazado {
+                        evento_id: ev.id.clone(),
+                        motivo: "El identificador ya existe en el libro con un contenido distinto."
+                            .to_string(),
+                    });
+                }
+            } else {
+                mapa_actual.insert(ev.id.clone(), ev.clone());
+                candidatos_nuevos.push(ev.clone());
+            }
+        }
+
+        if candidatos_nuevos.is_empty() {
+            return Ok(ResultadoFusion {
+                nuevos: 0,
+                ya_existian,
+                rechazados,
+            });
+        }
+
+        // Validar proyección completa antes de escribir nada en SQLite.
+        let mut conjunto_prueba = existentes.clone();
+        conjunto_prueba.extend(candidatos_nuevos.iter().cloned());
+        if validar_proyeccion_eventos(&conjunto_prueba).is_err() {
+            // Si algún evento candidato rompe las invariantes del libro, evaluamos uno a uno en orden determinista
+            // para aislar el evento inválido sin rechazar los válidos (o fallar limpio si ninguno es aplicable).
+            let mut aceptados: Vec<EventoLibro> = Vec::new();
+            let mut ordenados_candidatos = candidatos_nuevos.clone();
+            ordenados_candidatos.sort_by(|a, b| {
+                a.momento_registro
+                    .cmp(&b.momento_registro)
+                    .then_with(|| a.dispositivo_origen.cmp(&b.dispositivo_origen))
+                    .then_with(|| a.id.cmp(&b.id))
+            });
+            for cand in ordenados_candidatos {
+                let mut prueba_parcial = existentes.clone();
+                prueba_parcial.extend(aceptados.iter().cloned());
+                prueba_parcial.push(cand.clone());
+                if validar_proyeccion_eventos(&prueba_parcial).is_ok() {
+                    aceptados.push(cand);
+                } else {
+                    rechazados.push(EventoRechazado {
+                        evento_id: cand.id.clone(),
+                        motivo: "El evento es incompatible o inconsistente con el libro."
+                            .to_string(),
+                    });
+                }
+            }
+            candidatos_nuevos = aceptados;
+        }
+
+        if candidatos_nuevos.is_empty() {
+            return Ok(ResultadoFusion {
+                nuevos: 0,
+                ya_existian,
+                rechazados,
+            });
+        }
+
+        // Aplicar en una sola transacción atómica (Sección 2.4)
+        let mut conn = self.abrir()?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let mut insertados_total = 0usize;
+        for ev in &candidatos_nuevos {
+            let filas = tx
+                .execute(
+                    "INSERT OR IGNORE INTO eventos_libro (id, tipo, momento_registro, dispositivo_origen, datos_json)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        ev.id,
+                        ev.tipo,
+                        ev.momento_registro.to_rfc3339(),
+                        ev.dispositivo_origen,
+                        ev.datos_json
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            insertados_total += filas;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+
+        Ok(ResultadoFusion {
+            nuevos: insertados_total,
+            ya_existian,
+            rechazados,
+        })
     }
 
     fn sql(&self, texto: &str) -> String {
@@ -375,7 +661,6 @@ impl RepositorioSqlite {
         }
 
         let mut aplicados = 0;
-        let ahora = Utc::now();
         for p in pendientes {
             validar_parte(
                 &p.id,
@@ -387,8 +672,9 @@ impl RepositorioSqlite {
             )?;
             let cant =
                 rust_decimal::Decimal::from_str(&p.monto_parte).map_err(|e| e.to_string())?;
+            let momento_gasto = self.momento_determinista_gasto_grupo(cuenta_id, &p.fecha);
             let datos = crate::domain::DatosGastoDeGrupoAplicado {
-                movimiento_id: uuid::Uuid::new_v4().to_string(),
+                movimiento_id: id_derivado_evento_servidor("cuentas-claras:gasto-grupo-mov", &p.id),
                 cuenta_id: cuenta_id.to_string(),
                 evento_servidor_id: p.id.clone(),
                 grupo_id: p.grupo_id.clone(),
@@ -400,10 +686,10 @@ impl RepositorioSqlite {
             };
 
             let evento = EventoLibro {
-                id: uuid::Uuid::new_v4().to_string(),
+                id: id_derivado_evento_servidor("cuentas-claras:gasto-grupo-ev", &p.id),
                 tipo: "GastoDeGrupoAplicado".to_string(),
-                momento_registro: ahora,
-                dispositivo_origen: "dispositivo-local".to_string(),
+                momento_registro: momento_gasto,
+                dispositivo_origen: "servidor".to_string(),
                 datos_json: serde_json::to_string(&datos).map_err(|e| e.to_string())?,
             };
 
@@ -630,7 +916,6 @@ impl RepositorioSqlite {
         let cuentas = crate::domain::ejecutar_listar_cuentas(self).map_err(|e| e.mensaje)?;
 
         let mut aplicados = 0;
-        let ahora = Utc::now();
 
         for ev in eventos_cambio {
             if ev.tipo != "gasto_grupo" {
@@ -677,8 +962,12 @@ impl RepositorioSqlite {
                 }
                 let cant =
                     rust_decimal::Decimal::from_str(&ev.monto_parte).map_err(|e| e.to_string())?;
+                let momento_gasto = self.momento_determinista_gasto_grupo(cuenta_id, &ev.fecha);
                 let datos = crate::domain::DatosGastoDeGrupoAplicado {
-                    movimiento_id: uuid::Uuid::new_v4().to_string(),
+                    movimiento_id: id_derivado_evento_servidor(
+                        "cuentas-claras:gasto-grupo-mov",
+                        &ev.id,
+                    ),
                     cuenta_id: cuenta_id.clone(),
                     evento_servidor_id: ev.id.clone(),
                     grupo_id: ev.grupo_id.clone(),
@@ -690,10 +979,10 @@ impl RepositorioSqlite {
                 };
 
                 let evento = EventoLibro {
-                    id: uuid::Uuid::new_v4().to_string(),
+                    id: id_derivado_evento_servidor("cuentas-claras:gasto-grupo-ev", &ev.id),
                     tipo: "GastoDeGrupoAplicado".to_string(),
-                    momento_registro: ahora,
-                    dispositivo_origen: "dispositivo-local".to_string(),
+                    momento_registro: momento_gasto,
+                    dispositivo_origen: "servidor".to_string(),
                     datos_json: serde_json::to_string(&datos).map_err(|e| e.to_string())?,
                 };
 

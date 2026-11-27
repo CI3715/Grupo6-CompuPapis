@@ -103,6 +103,25 @@ function IconoTasas() {
   );
 }
 
+function IconoRespaldo() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
+      <path d="m9 12 2 2 4-4" />
+    </svg>
+  );
+}
+
 function IconoSync({ girando }: { girando?: boolean }) {
   return (
     <svg
@@ -155,6 +174,12 @@ const ITEMS_NAV: {
     etiquetaCorta: "Tasas",
     icono: IconoTasas,
   },
+  {
+    id: "respaldo",
+    etiqueta: "Respaldo y Sync",
+    etiquetaCorta: "Respaldo",
+    icono: IconoRespaldo,
+  },
 ];
 
 const TITULOS_PANTALLA: Record<Pantalla, string> = {
@@ -162,6 +187,7 @@ const TITULOS_PANTALLA: Record<Pantalla, string> = {
   patrimonio: "Patrimonio",
   social: "Amigos y grupos",
   tasas: "Tasas de cambio",
+  respaldo: "Respaldo y sincronización",
 };
 
 export default function AppShell({

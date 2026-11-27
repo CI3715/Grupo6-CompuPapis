@@ -1,10 +1,15 @@
 mod autenticacion;
+pub mod respaldo;
 pub mod sincronizacion;
+pub mod sincronizacion_personal;
 mod social;
 use crate::domain::RegistrarMovimiento;
 pub mod domain;
 pub mod sqlite_repo;
 pub mod tasas_monedas;
+
+#[cfg(test)]
+mod pruebas_entrega8;
 
 #[cfg(test)]
 mod pruebas_movimientos;
@@ -44,6 +49,8 @@ pub struct AppState {
     pub repo: Mutex<RepositorioSqlite>,
     pub server_url: String,
     pub ruta_token_fallback: PathBuf,
+    pub app_dir: PathBuf,
+    pub dispositivo_id: String,
 }
 
 // Obtiene la fecha y hora UTC del sistema
@@ -167,7 +174,7 @@ fn crear_moneda(
         decimales
             .parse::<u32>()
             .map_err(|_| ErrorDominio::nuevo("decimales", "Indica un entero de 0 a 8."))?,
-        "dispositivo-local",
+        &state.dispositivo_id,
         &RelojSistema,
         &GeneradorUuid,
     )?;
@@ -203,7 +210,7 @@ fn registrar_tasa(
             fecha,
             fuente,
         },
-        "dispositivo-local",
+        &state.dispositivo_id,
         &RelojSistema,
         &GeneradorUuid,
     )
@@ -270,7 +277,7 @@ fn eliminar_tasa(state: State<'_, AppState>, tasa_id: String) -> Result<(), Erro
     tasas_monedas::ejecutar_eliminar_tasa(
         &mut *repo,
         &tasa_id,
-        "dispositivo-local",
+        &state.dispositivo_id,
         &RelojSistema,
         &GeneradorUuid,
     )
@@ -307,7 +314,7 @@ fn cambiar_moneda_base(state: State<'_, AppState>, codigo: String) -> Result<Str
     let resp = tasas_monedas::ejecutar_cambiar_moneda_base(
         &mut *repo,
         &codigo,
-        "dispositivo-local",
+        &state.dispositivo_id,
         &RelojSistema,
         &GeneradorUuid,
     )?;
@@ -342,7 +349,7 @@ fn crear_cuenta(
         &tipo,
         &moneda,
         &saldo_inicial,
-        "dispositivo-local",
+        &state.dispositivo_id,
     )
 }
 
@@ -377,7 +384,7 @@ fn crear_categoria(
         .repo
         .lock()
         .map_err(|_| ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."))?;
-    ejecutar_crear_categoria(&mut *repo, &nombre, &tipo, "dispositivo-local")
+    ejecutar_crear_categoria(&mut *repo, &nombre, &tipo, &state.dispositivo_id)
 }
 
 #[tauri::command]
@@ -403,7 +410,7 @@ fn registrar_movimiento(
             fecha_str: &fecha,
             categoria_str: &categoria,
             nota_opt: nota,
-            dispositivo_id: "dispositivo-local",
+            dispositivo_id: &state.dispositivo_id,
         },
     )
 }
@@ -424,8 +431,170 @@ fn corregir_movimiento(
         &cuenta_id,
         &movimiento_id,
         &monto_correcto,
-        "dispositivo-local",
+        &state.dispositivo_id,
     )
+}
+
+// --- COMANDOS ENTREGA 8: COPIA DE SEGURIDAD Y SINCRONIZACIÓN PERSONAL ---
+
+#[tauri::command]
+fn ruta_respaldo_sugerida(state: State<'_, AppState>, cifrado: bool) -> String {
+    let fecha = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let ext = if cifrado { "ccbackup" } else { "ndjson" };
+    state
+        .app_dir
+        .join("respaldos")
+        .join(format!("cuentas-claras-{fecha}.{ext}"))
+        .to_string_lossy()
+        .to_string()
+}
+
+#[tauri::command]
+async fn exportar_copia_seguridad(
+    state: State<'_, AppState>,
+    ruta: String,
+    cifrado: bool,
+    frase: Option<String>,
+    confirmacion: Option<String>,
+) -> Result<respaldo::ResumenExportacion, ErrorDominio> {
+    if ruta.trim().is_empty() {
+        return Err(ErrorDominio::nuevo(
+            "ruta",
+            "Indica la ruta donde guardar el archivo de copia de seguridad.",
+        ));
+    }
+    let repo_clon = state
+        .repo
+        .lock()
+        .map_err(|_| ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."))?
+        .clone();
+    tokio::task::spawn_blocking(move || {
+        respaldo::exportar_a_archivo(
+            &repo_clon,
+            std::path::Path::new(ruta.trim()),
+            cifrado,
+            frase.as_deref(),
+            confirmacion.as_deref(),
+        )
+    })
+    .await
+    .map_err(|_| ErrorDominio::nuevo("exportacion", "Error interno al exportar la copia."))?
+}
+
+#[tauri::command]
+fn verificar_archivo_cifrado(ruta: String) -> Result<bool, ErrorDominio> {
+    let bytes = std::fs::read(ruta.trim()).map_err(|_| {
+        ErrorDominio::nuevo(
+            "ruta",
+            "No se pudo abrir el archivo indicado. Verifica que exista.",
+        )
+    })?;
+    Ok(respaldo::es_archivo_cifrado(&bytes))
+}
+
+#[tauri::command]
+async fn importar_copia_seguridad(
+    state: State<'_, AppState>,
+    ruta: String,
+    frase: Option<String>,
+) -> Result<domain::ResultadoFusion, ErrorDominio> {
+    if ruta.trim().is_empty() {
+        return Err(ErrorDominio::nuevo(
+            "ruta",
+            "Indica la ruta del archivo de copia de seguridad a importar.",
+        ));
+    }
+    let mut repo_clon = state
+        .repo
+        .lock()
+        .map_err(|_| ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."))?
+        .clone();
+    tokio::task::spawn_blocking(move || {
+        respaldo::importar_desde_archivo(
+            &mut repo_clon,
+            std::path::Path::new(ruta.trim()),
+            frase.as_deref(),
+        )
+    })
+    .await
+    .map_err(|_| ErrorDominio::nuevo("importacion", "Error interno al importar la copia."))?
+}
+
+#[tauri::command]
+fn obtener_config_sync_personal(
+    state: State<'_, AppState>,
+) -> Result<sincronizacion_personal::EstadoConfigSyncPersonal, ErrorDominio> {
+    let repo = state
+        .repo
+        .lock()
+        .map_err(|_| ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."))?;
+    let secretos = sincronizacion_personal::AlmacenSecretosSo::nuevo(&state.dispositivo_id);
+    sincronizacion_personal::obtener_estado_config_sync(&repo, &secretos)
+}
+
+#[tauri::command]
+fn guardar_config_sync_personal(
+    state: State<'_, AppState>,
+    tipo: sincronizacion_personal::TipoDestinoSync,
+    destino: String,
+    rama: Option<String>,
+    usuario_git: Option<String>,
+    frase: Option<String>,
+    credencial_git: Option<String>,
+) -> Result<sincronizacion_personal::EstadoConfigSyncPersonal, ErrorDominio> {
+    let repo = state
+        .repo
+        .lock()
+        .map_err(|_| ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."))?;
+    let secretos = sincronizacion_personal::AlmacenSecretosSo::nuevo(&state.dispositivo_id);
+    let config = sincronizacion_personal::ConfigSyncPersonal {
+        tipo,
+        destino,
+        rama,
+        usuario_git,
+    };
+    sincronizacion_personal::guardar_configuracion_sync(
+        &repo,
+        &secretos,
+        &config,
+        frase.as_deref(),
+        credencial_git.as_deref(),
+    )
+}
+
+#[tauri::command]
+fn limpiar_config_sync_personal(state: State<'_, AppState>) -> Result<(), ErrorDominio> {
+    let repo = state
+        .repo
+        .lock()
+        .map_err(|_| ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."))?;
+    let secretos = sincronizacion_personal::AlmacenSecretosSo::nuevo(&state.dispositivo_id);
+    sincronizacion_personal::limpiar_configuracion_sync(&repo, &secretos)
+}
+
+#[tauri::command]
+async fn sincronizar_personal_ahora(
+    state: State<'_, AppState>,
+) -> Result<sincronizacion_personal::InformeSyncPersonal, ErrorDominio> {
+    let mut repo_clon = state
+        .repo
+        .lock()
+        .map_err(|_| ErrorDominio::nuevo("general", "Error de acceso al almacenamiento."))?
+        .clone();
+    let app_dir = state.app_dir.clone();
+    let dispositivo_id = state.dispositivo_id.clone();
+
+    tokio::task::spawn_blocking(move || {
+        let secretos = sincronizacion_personal::AlmacenSecretosSo::nuevo(&dispositivo_id);
+        sincronizacion_personal::sincronizar_con_destino_configurado(
+            &mut repo_clon,
+            &secretos,
+            &app_dir,
+            respaldo::ParametrosKdf::estandar(),
+        )
+    })
+    .await
+    .map_err(|_| ErrorDominio::nuevo("sincronizacion", "Error interno al sincronizar."))?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -436,17 +605,22 @@ pub fn run() {
             http_client: reqwest::Client::new(),
         })
         .setup(|app| {
-            let app_dir = app
-                .path()
-                .app_data_dir()
-                .expect("No se pudo obtener app_data_dir");
+            let app_dir = match std::env::var("CUENTAS_CLARAS_DATA_DIR") {
+                Ok(dir) if !dir.trim().is_empty() => PathBuf::from(dir),
+                _ => app
+                    .path()
+                    .app_data_dir()
+                    .expect("No se pudo obtener app_data_dir"),
+            };
             let db_path = app_dir.join("cuentas_claras.sqlite");
             let ruta_token_fallback = app_dir.join(".sesion_token");
             let server_url = std::env::var("CUENTAS_CLARAS_API_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:8000".to_string());
             println!("===> RUTA DE SQLITE: {:?}", db_path);
 
-            if let Ok(directorio_datos) = app.path().data_dir() {
+            if std::env::var("CUENTAS_CLARAS_DATA_DIR").is_err()
+                && let Ok(directorio_datos) = app.path().data_dir()
+            {
                 let anterior = directorio_datos
                     .join("com.tauri.dev")
                     .join("cuentas_claras.sqlite");
@@ -455,11 +629,16 @@ pub fn run() {
             }
             let repo = RepositorioSqlite::inicializar(db_path)
                 .expect("No se pudo inicializar el archivo SQLite local");
+            let dispositivo_id = repo
+                .dispositivo_id()
+                .expect("No se pudo obtener el identificador del dispositivo");
 
             app.manage(AppState {
                 repo: Mutex::new(repo),
                 server_url,
                 ruta_token_fallback,
+                app_dir,
+                dispositivo_id,
             });
             Ok(())
         })
@@ -497,6 +676,14 @@ pub fn run() {
             sincronizacion::listar_cola_gastos,
             sincronizacion::descartar_rechazo,
             sincronizacion::reiniciar_cursor,
+            ruta_respaldo_sugerida,
+            exportar_copia_seguridad,
+            verificar_archivo_cifrado,
+            importar_copia_seguridad,
+            obtener_config_sync_personal,
+            guardar_config_sync_personal,
+            limpiar_config_sync_personal,
+            sincronizar_personal_ahora,
         ])
         .run(tauri::generate_context!())
         .expect("Error al ejecutar la aplicación Tauri");
