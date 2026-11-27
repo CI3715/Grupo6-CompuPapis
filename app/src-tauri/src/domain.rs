@@ -237,6 +237,7 @@ fn ordenar_para_proyeccion(eventos: &[EventoLibro]) -> Vec<&EventoLibro> {
             .then_with(|| a.momento_registro.cmp(&b.momento_registro))
             .then_with(|| a.dispositivo_origen.cmp(&b.dispositivo_origen))
             .then_with(|| fase_causal(&a.tipo).cmp(&fase_causal(&b.tipo)))
+            .then_with(|| a.id.cmp(&b.id))
     });
     ordenados
 }
@@ -427,6 +428,22 @@ struct CorreccionHistorica {
 enum CorreccionAlmacenada {
     Actual(DatosMovimientoCorregido),
     Historica(CorreccionHistorica),
+}
+
+pub(crate) fn datos_evento_validos(tipo: &str, datos: &str) -> bool {
+    // Vemos si los datos corresponden al evento
+    match tipo {
+        "CuentaCreada" => serde_json::from_str::<DatosCuentaCreada>(datos).is_ok(),
+        "CategoriaCreada" => serde_json::from_str::<DatosCategoriaCreada>(datos).is_ok(),
+        "MovimientoRegistrado" => serde_json::from_str::<MovimientoAlmacenado>(datos).is_ok(),
+        "MovimientoCorregido" => serde_json::from_str::<CorreccionAlmacenada>(datos).is_ok(),
+        "GastoDeGrupoAplicado" => serde_json::from_str::<DatosGastoDeGrupoAplicado>(datos).is_ok(),
+        "MonedaCreada" => serde_json::from_str::<Moneda>(datos).is_ok(),
+        "TasaRegistrada" => serde_json::from_str::<TasaCambio>(datos).is_ok(),
+        "TasaEliminada" => serde_json::from_str::<DatosTasaEliminada>(datos).is_ok(),
+        "MonedaBaseCambiada" => serde_json::from_str::<DatosMonedaBaseCambiada>(datos).is_ok(),
+        _ => false,
+    }
 }
 
 fn proyectar_libro(eventos: &[EventoLibro]) -> Result<ProyeccionLibro, ErrorDominio> {

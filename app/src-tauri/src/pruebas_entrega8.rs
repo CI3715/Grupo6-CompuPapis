@@ -83,6 +83,7 @@ fn crear_cuenta_y_movimientos_base(repo: &mut RepositorioSqlite) -> String {
     cid
 }
 
+mod exportacion;
 mod fusion;
 mod respaldo;
 mod sincronizacion;
