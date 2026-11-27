@@ -354,7 +354,11 @@ impl RepositorioSqlite {
         &mut self,
         entrantes: &[EventoLibro],
     ) -> Result<ResultadoFusion, String> {
-        let existentes = self.obtener_eventos()?;
+        let mut conn = self.abrir()?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        let existentes = leer_eventos(&tx)?;
         let mut mapa_actual: HashMap<String, EventoLibro> = existentes
             .iter()
             .cloned()
@@ -430,13 +434,11 @@ impl RepositorioSqlite {
         }
 
         // Aplicar en una sola transacción atómica (Sección 2.4)
-        let mut conn = self.abrir()?;
-        let tx = conn.transaction().map_err(|e| e.to_string())?;
         let mut insertados_total = 0usize;
         for ev in &candidatos_nuevos {
             let filas = tx
                 .execute(
-                    "INSERT OR IGNORE INTO eventos_libro (id, tipo, momento_registro, dispositivo_origen, datos_json)
+                    "INSERT INTO eventos_libro (id, tipo, momento_registro, dispositivo_origen, datos_json)
                      VALUES (?1, ?2, ?3, ?4, ?5)",
                     params![
                         ev.id,
@@ -1072,38 +1074,42 @@ impl RepositorioEventos for RepositorioSqlite {
 
     fn obtener_eventos(&self) -> Result<Vec<EventoLibro>, String> {
         let conn = self.abrir()?;
-        let mut stmt = conn
-            .prepare("SELECT id, tipo, momento_registro, dispositivo_origen, datos_json FROM eventos_libro ORDER BY rowid ASC")
-            .map_err(|e| e.to_string())?;
-
-        let filas = stmt
-            .query_map([], |row| {
-                let id: String = row.get(0)?;
-                let tipo: String = row.get(1)?;
-                let momento_str: String = row.get(2)?;
-                let dispositivo_origen: String = row.get(3)?;
-                let datos_json: String = row.get(4)?;
-                Ok((id, tipo, momento_str, dispositivo_origen, datos_json))
-            })
-            .map_err(|e| e.to_string())?;
-
-        let mut eventos = Vec::new();
-        for fila in filas {
-            let (id, tipo, momento_str, dispositivo_origen, datos_json) =
-                fila.map_err(|e| e.to_string())?;
-            let momento_registro = DateTime::parse_from_rfc3339(&momento_str)
-                .map(|dt| dt.with_timezone(&Utc))
-                .map_err(|_| "El libro contiene una fecha de registro inválida.".to_string())?;
-            eventos.push(EventoLibro {
-                id,
-                tipo,
-                momento_registro,
-                dispositivo_origen,
-                datos_json,
-            });
-        }
-        Ok(eventos)
+        leer_eventos(&conn)
     }
+}
+
+fn leer_eventos(conn: &Connection) -> Result<Vec<EventoLibro>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id, tipo, momento_registro, dispositivo_origen, datos_json FROM eventos_libro ORDER BY rowid ASC")
+        .map_err(|e| e.to_string())?;
+
+    let filas = stmt
+        .query_map([], |row| {
+            let id: String = row.get(0)?;
+            let tipo: String = row.get(1)?;
+            let momento_str: String = row.get(2)?;
+            let dispositivo_origen: String = row.get(3)?;
+            let datos_json: String = row.get(4)?;
+            Ok((id, tipo, momento_str, dispositivo_origen, datos_json))
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut eventos = Vec::new();
+    for fila in filas {
+        let (id, tipo, momento_str, dispositivo_origen, datos_json) =
+            fila.map_err(|e| e.to_string())?;
+        let momento_registro = DateTime::parse_from_rfc3339(&momento_str)
+            .map(|dt| dt.with_timezone(&Utc))
+            .map_err(|_| "El libro contiene una fecha de registro inválida.".to_string())?;
+        eventos.push(EventoLibro {
+            id,
+            tipo,
+            momento_registro,
+            dispositivo_origen,
+            datos_json,
+        });
+    }
+    Ok(eventos)
 }
 
 /// Copia verificada del libro anterior al cambiar el identificador de la aplicación.
