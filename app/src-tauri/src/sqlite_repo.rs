@@ -215,30 +215,31 @@ impl RepositorioSqlite {
     /// Calcula un momento_registro determinista para un gasto de grupo aplicado:
     /// nunca anterior a la creación de la cuenta destino, garantizando que dos dispositivos
     /// con la misma cuenta y el mismo gasto produzcan exactamente el mismo evento (Sección 2.1).
-    fn momento_determinista_gasto_grupo(&self, cuenta_id: &str, fecha_gasto: &str) -> DateTime<Utc> {
+    fn momento_determinista_gasto_grupo(
+        &self,
+        cuenta_id: &str,
+        fecha_gasto: &str,
+    ) -> DateTime<Utc> {
         let base_fecha = NaiveDate::parse_from_str(fecha_gasto, "%Y-%m-%d")
             .ok()
             .and_then(|d| d.and_hms_opt(0, 0, 0))
             .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
             .unwrap_or_else(Utc::now);
 
-        let momento_cuenta = self
-            .obtener_eventos()
-            .ok()
-            .and_then(|evs| {
-                evs.into_iter().find_map(|e| {
-                    if e.tipo != "CuentaCreada" {
-                        return None;
-                    }
-                    let datos: crate::domain::DatosCuentaCreada =
-                        serde_json::from_str(&e.datos_json).ok()?;
-                    if datos.cuenta_id == cuenta_id {
-                        Some(e.momento_registro)
-                    } else {
-                        None
-                    }
-                })
-            });
+        let momento_cuenta = self.obtener_eventos().ok().and_then(|evs| {
+            evs.into_iter().find_map(|e| {
+                if e.tipo != "CuentaCreada" {
+                    return None;
+                }
+                let datos: crate::domain::DatosCuentaCreada =
+                    serde_json::from_str(&e.datos_json).ok()?;
+                if datos.cuenta_id == cuenta_id {
+                    Some(e.momento_registro)
+                } else {
+                    None
+                }
+            })
+        });
 
         match momento_cuenta {
             Some(mc) if base_fecha <= mc => mc + chrono::Duration::milliseconds(1),
@@ -313,7 +314,9 @@ impl RepositorioSqlite {
     pub fn eventos_enviados_destino(&self, destino_clave: &str) -> Result<HashSet<String>, String> {
         let conn = self.abrir()?;
         let mut stmt = conn
-            .prepare("SELECT evento_id FROM sync_personal_eventos_enviados WHERE destino_clave = ?1")
+            .prepare(
+                "SELECT evento_id FROM sync_personal_eventos_enviados WHERE destino_clave = ?1",
+            )
             .map_err(|e| e.to_string())?;
         let filas = stmt
             .query_map([destino_clave], |row| row.get::<_, String>(0))

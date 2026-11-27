@@ -190,14 +190,8 @@ fn fusion_idempotente_archivo_antiguo_no_borra_y_conflicto_se_rechaza() {
     let cid = crear_cuenta_y_movimientos_base(&mut repo_a);
 
     // Exportación inicial (3 eventos)
-    let (respaldo_antiguo, total_exp, _) = exportar_bytes(
-        &repo_a,
-        false,
-        None,
-        None,
-        ParametrosKdf::para_pruebas(),
-    )
-    .unwrap();
+    let (respaldo_antiguo, total_exp, _) =
+        exportar_bytes(&repo_a, false, None, None, ParametrosKdf::para_pruebas()).unwrap();
     assert_eq!(total_exp, 3);
 
     // Exportar no modifica el libro (RF-INT-01)
@@ -247,9 +241,7 @@ fn fusion_idempotente_archivo_antiguo_no_borra_y_conflicto_se_rechaza() {
     // el resto de eventos nuevos válidos sí se aplica normalmente (Sección 2.1 y 2.7)
     let mut eventos_existentes = repo_b.obtener_eventos().unwrap();
     let mut evento_conflictivo = eventos_existentes.remove(1);
-    evento_conflictivo.datos_json = evento_conflictivo
-        .datos_json
-        .replace("100.00", "999.99");
+    evento_conflictivo.datos_json = evento_conflictivo.datos_json.replace("100.00", "999.99");
 
     // Crear un cuarto evento válido en A y mezclarlo con el conflictivo
     let disp_a = repo_a.dispositivo_id().unwrap();
@@ -293,10 +285,18 @@ fn gastos_de_grupo_descargados_en_dos_dispositivos_convergen_una_sola_vez() {
 
     // Ambos parten de la misma cuenta USD
     let id1 = disp1.dispositivo_id().unwrap();
-    let cuenta = ejecutar_crear_cuenta(&mut disp1, "Efectivo USD", "efectivo", "USD", "200.00", &id1)
-        .unwrap();
+    let cuenta = ejecutar_crear_cuenta(
+        &mut disp1,
+        "Efectivo USD",
+        "efectivo",
+        "USD",
+        "200.00",
+        &id1,
+    )
+    .unwrap();
     let cid = cuenta.id().to_string();
-    let (exp, _, _) = exportar_bytes(&disp1, false, None, None, ParametrosKdf::para_pruebas()).unwrap();
+    let (exp, _, _) =
+        exportar_bytes(&disp1, false, None, None, ParametrosKdf::para_pruebas()).unwrap();
     importar_bytes(&mut disp2, &exp, None).unwrap();
 
     let grupo_id = Uuid::new_v4().to_string();
@@ -321,8 +321,18 @@ fn gastos_de_grupo_descargados_en_dos_dispositivos_convergen_una_sola_vez() {
     };
 
     // Ambos dispositivos descargan la misma parte del servidor por separado
-    assert_eq!(disp1.aplicar_lote_cambios(1, vec![cambio_servidor.clone()]).unwrap(), 1);
-    assert_eq!(disp2.aplicar_lote_cambios(1, vec![cambio_servidor]).unwrap(), 1);
+    assert_eq!(
+        disp1
+            .aplicar_lote_cambios(1, vec![cambio_servidor.clone()])
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        disp2
+            .aplicar_lote_cambios(1, vec![cambio_servidor])
+            .unwrap(),
+        1
+    );
 
     // Al fusionar disp2 en disp1, el evento derivado coincide y NO se duplica (Sección 2.1)
     let evs2 = disp2.obtener_eventos().unwrap();
@@ -571,7 +581,10 @@ where
         "166.67"
     );
     assert_eq!(
-        ejecutar_listar_cuentas(&tablet_nueva).unwrap().cuentas.len(),
+        ejecutar_listar_cuentas(&tablet_nueva)
+            .unwrap()
+            .cuentas
+            .len(),
         1
     );
 
@@ -608,7 +621,10 @@ fn contrato_transporte_memoria_ambos_ordenes_y_privacidad() {
 #[test]
 fn contrato_transporte_carpeta_compartida_ambos_ordenes_y_escritura_atomica() {
     let dir1 = DirTemp::nuevo("carpeta_1");
-    ejecutar_contrato_transporte(|_| TransporteCarpeta::nuevo(dir1.path().to_path_buf()), false);
+    ejecutar_contrato_transporte(
+        |_| TransporteCarpeta::nuevo(dir1.path().to_path_buf()),
+        false,
+    );
 
     // Verificar que los archivos .tmp-* son ignorados (nunca se lee un archivo a medio escribir)
     let disp_dir = dir1.path().join("dispositivos").join("otro-disp");
@@ -623,7 +639,10 @@ fn contrato_transporte_carpeta_compartida_ambos_ordenes_y_escritura_atomica() {
     );
 
     let dir2 = DirTemp::nuevo("carpeta_2");
-    ejecutar_contrato_transporte(|_| TransporteCarpeta::nuevo(dir2.path().to_path_buf()), true);
+    ejecutar_contrato_transporte(
+        |_| TransporteCarpeta::nuevo(dir2.path().to_path_buf()),
+        true,
+    );
 }
 
 #[test]
@@ -728,6 +747,17 @@ fn reintento_ante_remoto_actualizado_y_errores_sin_perdida_de_datos() {
 }
 
 #[test]
+fn git_conserva_carpeta_existente_que_no_es_repositorio() {
+    let dir = DirTemp::nuevo("git_carpeta_existente");
+    let clon = dir.path().join("clon");
+    std::fs::create_dir(&clon).unwrap();
+    std::fs::write(clon.join("archivo"), b"conservar").unwrap();
+    let mut transporte = TransporteGit::nuevo("remoto".into(), "main".into(), clon.clone(), None);
+    assert!(transporte.preparar().is_err());
+    assert_eq!(std::fs::read(clon.join("archivo")).unwrap(), b"conservar");
+}
+
+#[test]
 fn secretos_no_se_guardan_en_sqlite_ni_en_url_git() {
     let dir = DirTemp::nuevo("secretos");
     let repo = bd_en(dir.path(), "secretos");
@@ -738,6 +768,9 @@ fn secretos_no_se_guardan_en_sqlite_ni_en_url_git() {
         validar_url_sin_credenciales("https://usuario:token123@github.com/u/repo.git").is_err()
     );
     assert!(validar_url_sin_credenciales("https://github.com/u/repo.git").is_ok());
+    assert!(validar_url_sin_credenciales("https://token123@github.com/u/repo.git").is_err());
+    assert!(validar_url_sin_credenciales("ssh://git@github.com/u/repo.git").is_ok());
+    assert!(validar_url_sin_credenciales("ssh://git:secreto@github.com/u/repo.git").is_err());
 
     let cfg = ConfigSyncPersonal {
         tipo: TipoDestinoSync::Git,
@@ -773,9 +806,15 @@ fn sincronizacion_incremental_solo_envia_eventos_faltantes_rnf10() {
     let dir = DirTemp::nuevo("rnf10");
     let mut repo = bd_en(dir.path(), "grande");
     let disp = repo.dispositivo_id().unwrap();
-    let cuenta =
-        ejecutar_crear_cuenta(&mut repo, "Cuenta Principal", "banco", "USD", "1000.00", &disp)
-            .unwrap();
+    let cuenta = ejecutar_crear_cuenta(
+        &mut repo,
+        "Cuenta Principal",
+        "banco",
+        "USD",
+        "1000.00",
+        &disp,
+    )
+    .unwrap();
     let cid = cuenta.id().to_string();
 
     // Crear 25 movimientos iniciales

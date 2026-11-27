@@ -182,11 +182,10 @@ pub fn serializar_eventos_ndjson(
 }
 
 /// Parsea y valida por completo un archivo NDJSON en claro antes de aplicar nada (Sección 2.4).
-pub fn parsear_eventos_ndjson(contenido: &str) -> Result<(EncabezadoLibro, Vec<EventoLibro>), ErrorDominio> {
-    let mut lineas = contenido
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty());
+pub fn parsear_eventos_ndjson(
+    contenido: &str,
+) -> Result<(EncabezadoLibro, Vec<EventoLibro>), ErrorDominio> {
+    let mut lineas = contenido.lines().map(str::trim).filter(|l| !l.is_empty());
 
     let primera = lineas.next().ok_or_else(|| {
         ErrorDominio::nuevo(
@@ -251,7 +250,9 @@ pub fn parsear_eventos_ndjson(contenido: &str) -> Result<(EncabezadoLibro, Vec<E
             .map_err(|_| {
                 ErrorDominio::nuevo(
                     "archivo",
-                    &format!("El evento en la línea {num_linea} tiene una fecha de registro inválida."),
+                    &format!(
+                        "El evento en la línea {num_linea} tiene una fecha de registro inválida."
+                    ),
                 )
             })?;
 
@@ -559,8 +560,13 @@ pub fn exportar_a_archivo(
     frase: Option<&str>,
     confirmacion: Option<&str>,
 ) -> Result<ResumenExportacion, ErrorDominio> {
-    let (bytes, cantidad_eventos, fecha_exportacion) =
-        exportar_bytes(repo, cifrado, frase, confirmacion, ParametrosKdf::estandar())?;
+    let (bytes, cantidad_eventos, fecha_exportacion) = exportar_bytes(
+        repo,
+        cifrado,
+        frase,
+        confirmacion,
+        ParametrosKdf::estandar(),
+    )?;
     escribir_archivo_atomico(ruta, &bytes)?;
     Ok(ResumenExportacion {
         ruta: ruta.to_string_lossy().to_string(),

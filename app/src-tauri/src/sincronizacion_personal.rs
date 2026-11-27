@@ -256,12 +256,7 @@ impl TransporteMemoria {
     pub fn todos_los_bytes(&self) -> Vec<Vec<u8>> {
         self.estado
             .lock()
-            .map(|e| {
-                e.lotes
-                    .values()
-                    .flat_map(|m| m.values().cloned())
-                    .collect()
-            })
+            .map(|e| e.lotes.values().flat_map(|m| m.values().cloned()).collect())
             .unwrap_or_default()
     }
 }
@@ -385,7 +380,9 @@ impl TransporteCarpeta {
     }
 }
 
-fn listar_lotes_en_carpeta(dir_dispositivos: &Path) -> Result<Vec<ReferenciaLote>, ErrorTransporte> {
+fn listar_lotes_en_carpeta(
+    dir_dispositivos: &Path,
+) -> Result<Vec<ReferenciaLote>, ErrorTransporte> {
     if !dir_dispositivos.exists() {
         return Ok(Vec::new());
     }
@@ -397,7 +394,11 @@ fn listar_lotes_en_carpeta(dir_dispositivos: &Path) -> Result<Vec<ReferenciaLote
     })?;
 
     for ent in entradas_disp {
-        let Ok(ent) = ent else { continue };
+        let ent = ent.map_err(|_| {
+            ErrorTransporte::DestinoInaccesible(
+                "No se pudo leer la carpeta de sincronización; se reintentará.".into(),
+            )
+        })?;
         let path_disp = ent.path();
         if !path_disp.is_dir() {
             continue;
@@ -409,11 +410,17 @@ fn listar_lotes_en_carpeta(dir_dispositivos: &Path) -> Result<Vec<ReferenciaLote
             continue;
         }
 
-        let Ok(archivos) = std::fs::read_dir(&path_disp) else {
-            continue;
-        };
+        let archivos = std::fs::read_dir(&path_disp).map_err(|_| {
+            ErrorTransporte::DestinoInaccesible(
+                "No se pudieron leer todos los lotes de sincronización; se reintentará.".into(),
+            )
+        })?;
         for arch in archivos {
-            let Ok(arch) = arch else { continue };
+            let arch = arch.map_err(|_| {
+                ErrorTransporte::DestinoInaccesible(
+                    "No se pudieron leer todos los lotes de sincronización; se reintentará.".into(),
+                )
+            })?;
             let path_arch = arch.path();
             if !path_arch.is_file() {
                 continue;
@@ -641,8 +648,10 @@ impl TransporteGit {
     }
 
     fn head_tiene_commits(&self) -> Result<bool, ErrorTransporte> {
-        let (ok, _, _) =
-            self.ejecutar_git(Some(&self.directorio_clon), &["rev-parse", "--verify", "HEAD"])?;
+        let (ok, _, _) = self.ejecutar_git(
+            Some(&self.directorio_clon),
+            &["rev-parse", "--verify", "HEAD"],
+        )?;
         Ok(ok)
     }
 }
@@ -688,24 +697,22 @@ impl TransporteSincronizacion for TransporteGit {
         let git_dir = self.directorio_clon.join(".git");
         if !git_dir.exists() {
             if self.directorio_clon.exists() {
-                let _ = std::fs::remove_dir_all(&self.directorio_clon);
+                return Err(ErrorTransporte::ErrorOperacion(
+                    "La carpeta local de sincronización ya existe y no es un repositorio Git. Revisa su contenido antes de continuar.".into(),
+                ));
             }
             let ruta_str = self.directorio_clon.to_string_lossy().to_string();
-            let (ok, _, stderr) = self.ejecutar_git(None, &["clone", &self.url_remota, &ruta_str])?;
+            let (ok, _, stderr) =
+                self.ejecutar_git(None, &["clone", &self.url_remota, &ruta_str])?;
             if !ok {
                 return Err(self.clasificar_error_git(&stderr));
             }
             // Asegurar que la rama local activa sea la configurada
-            let _ = self.ejecutar_git(
-                Some(&self.directorio_clon),
-                &["checkout", "-B", &self.rama],
-            );
+            let _ = self.ejecutar_git(Some(&self.directorio_clon), &["checkout", "-B", &self.rama]);
             if self.rama_remota_existe()? {
                 let origen = format!("origin/{}", self.rama);
-                let _ = self.ejecutar_git(
-                    Some(&self.directorio_clon),
-                    &["reset", "--hard", &origen],
-                );
+                let _ =
+                    self.ejecutar_git(Some(&self.directorio_clon), &["reset", "--hard", &origen]);
             }
         } else {
             // Actualizar URL remota por si el usuario la cambió (sin credenciales incrustadas)
@@ -723,15 +730,11 @@ impl TransporteSincronizacion for TransporteGit {
             if self.rama_remota_existe()? {
                 let origen = format!("origin/{}", self.rama);
                 if self.head_tiene_commits()? {
-                    let (ok_rebase, _, _) = self.ejecutar_git(
-                        Some(&self.directorio_clon),
-                        &["rebase", &origen],
-                    )?;
+                    let (ok_rebase, _, _) =
+                        self.ejecutar_git(Some(&self.directorio_clon), &["rebase", &origen])?;
                     if !ok_rebase {
-                        let _ = self.ejecutar_git(
-                            Some(&self.directorio_clon),
-                            &["rebase", "--abort"],
-                        );
+                        let _ =
+                            self.ejecutar_git(Some(&self.directorio_clon), &["rebase", "--abort"]);
                         // Fallback limpio: merge no destructivo (los lotes viven en archivos únicos por dispositivo)
                         let (ok_merge, _, stderr_merge) = self.ejecutar_git(
                             Some(&self.directorio_clon),
@@ -927,7 +930,10 @@ pub fn validar_url_sin_credenciales(url: &str) -> Result<(), ErrorDominio> {
     if let Some(pos_esquema) = url.find("://") {
         let resto = &url[pos_esquema + 3..];
         let autoridad = resto.split('/').next().unwrap_or("");
-        if autoridad.contains('@') && autoridad.contains(':') {
+        if autoridad.contains('@')
+            && (!url.starts_with("ssh://")
+                || autoridad.split('@').next().unwrap_or("").contains(':'))
+        {
             return Err(ErrorDominio::nuevo(
                 "destino",
                 "No incluyas usuario ni contraseña en la URL del repositorio. Usa los campos de credenciales para guardarlos de forma segura en el sistema operativo.",
@@ -1088,13 +1094,9 @@ pub fn ejecutar_sincronizacion_personal(
 
     for intento in 0..MAX_REINTENTOS_PUBLICACION {
         // Paso 1: Traer
-        transporte
-            .preparar()
-            .map_err(|e| e.a_error_dominio())?;
+        transporte.preparar().map_err(|e| e.a_error_dominio())?;
 
-        let lotes_disponibles = transporte
-            .listar_lotes()
-            .map_err(|e| e.a_error_dominio())?;
+        let lotes_disponibles = transporte.listar_lotes().map_err(|e| e.a_error_dominio())?;
         let leidos = repo
             .lotes_leidos_destino(destino_clave)
             .map_err(|e| ErrorDominio::nuevo("almacenamiento", &e))?;
@@ -1156,9 +1158,7 @@ pub fn ejecutar_sincronizacion_personal(
             .map_err(|e| ErrorDominio::nuevo("almacenamiento", &e))?;
         let faltantes: Vec<_> = locales
             .into_iter()
-            .filter(|ev| {
-                !ya_en_destino.contains(&ev.id) && !ya_preparados.contains(ev.id.as_str())
-            })
+            .filter(|ev| !ya_en_destino.contains(&ev.id) && !ya_preparados.contains(ev.id.as_str()))
             .collect();
 
         if !faltantes.is_empty() {
